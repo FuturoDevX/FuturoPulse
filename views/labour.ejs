@@ -1,6 +1,6 @@
 <%- include('partials/header', { title: 'Wages & Margin' }) %>
 <%
-  const shortName = (n) => (n||'').replace('Futuro ','');
+  const CENTRE_NAMES = { 'GWH':'Gledswood Hills' }; const shortName = (n) => { const x = (n||'').replace('Futuro ',''); return CENTRE_NAMES[x] || x; };
   const money = (n) => '$' + Math.round(Number(n)||0).toLocaleString('en-AU');
   const h1 = (n) => (Math.round((Number(n)||0)*10)/10).toLocaleString('en-AU');
   const marginClass = (p) => p == null ? '' : (p <= 55 ? 'good' : p <= 65 ? 'warn' : 'bad');
