@@ -497,6 +497,40 @@ function exitsLatestDate() {
 }
 
 
+
+// ===== People & Culture (manual entry) =====
+const PC_TARGET_KEYS = ["enps", "turnover", "checkin_pct", "psych_safety"];
+function pcTargets() {
+  const m = {};
+  db.prepare("SELECT metric, target FROM pc_targets").all().forEach((r) => { m[r.metric] = r.target; });
+  return m;
+}
+function savePcTarget(metric, target) {
+  db.prepare("INSERT INTO pc_targets (metric, target) VALUES (?,?) ON CONFLICT(metric) DO UPDATE SET target=excluded.target").run(metric, target);
+}
+function savePcMetric(ownaId, month, v) {
+  db.prepare(`INSERT INTO pc_metrics (owna_id, month, enps, turnover, checkin_due, checkin_completed, psych_safety, updated_at)
+    VALUES (@owna_id,@month,@enps,@turnover,@checkin_due,@checkin_completed,@psych_safety,datetime('now'))
+    ON CONFLICT(owna_id, month) DO UPDATE SET enps=@enps, turnover=@turnover, checkin_due=@checkin_due,
+      checkin_completed=@checkin_completed, psych_safety=@psych_safety, updated_at=datetime('now')`)
+    .run({ owna_id: ownaId, month, ...v });
+}
+function pcMonths(limit = 24) {
+  return db.prepare("SELECT DISTINCT month FROM pc_metrics ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);
+}
+// Per-centre P&C for a month, with derived check-in % and target flags.
+function pcForMonth(month, ownaId) {
+  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE owna_id IN (SELECT owna_id FROM daily_metrics) OR ll_id IS NOT NULL ORDER BY name").all()
+    .filter((c) => !ownaId || c.owna_id === ownaId);
+  const t = pcTargets();
+  return centres.map((c) => {
+    const r = db.prepare("SELECT * FROM pc_metrics WHERE owna_id=? AND month=?").get(c.owna_id, month) || {};
+    const checkin_pct = (r.checkin_due) ? Math.round((r.checkin_completed || 0) / r.checkin_due * 1000) / 10 : null;
+    return { owna_id: c.owna_id, name: c.name, enps: r.enps, turnover: r.turnover,
+      checkin_due: r.checkin_due, checkin_completed: r.checkin_completed, checkin_pct, psych_safety: r.psych_safety };
+  });
+}
+
 // ===== Employment Hero labour + margin =====
 
 // Weeks available (most recent first).
@@ -586,4 +620,5 @@ module.exports = {
   forwardOccupancyByCentre, projection, centrePipelineDetail,
   occupancyTrend, occupancyTrendGroup,
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
+  pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, PC_TARGET_KEYS,
 };

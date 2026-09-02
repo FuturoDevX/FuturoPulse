@@ -14,6 +14,7 @@
     <div class="brand">Futuro Ops<span>OWNA Dashboard</span></div>
     <nav class="side-nav">
       <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>">Overview</a>
+      <a href="/pc" class="<%= currentPath === '/pc' ? 'active' : '' %>">People &amp; Culture</a>
       <% if (!locals.scopedOwnaId) { %>
         <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
         <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>
@@ -27,6 +28,7 @@
       <% if (user.role === 'admin') { %>
         <div class="side-nav-divider">Admin</div>
         <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>
+        <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">Enter P&amp;C</a>
       <% } %>
     </nav>
     <div class="side-nav-footer">

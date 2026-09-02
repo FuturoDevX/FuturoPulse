@@ -73,6 +73,13 @@ router.get("/centre/:id/pipeline", (req, res) => {
   res.render("centre-pipeline", { title: c.name + " — Pipeline", centre: c, detail, today: m.todayStr(), lastRun: lastRun() });
 });
 
+// People & Culture (manual metrics vs targets).
+router.get("/pc", (req, res) => {
+  const months = m.pcMonths();
+  const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : (months[0] || new Date().toISOString().slice(0,7));
+  res.render("pc", { title: "People & Culture", months, month, rows: m.pcForMonth(month, scopedOwnaId(req)), targets: m.pcTargets(), lastRun: lastRun() });
+});
+
 // Labour & margin (Employment Hero payroll + OWNA revenue).
 router.get("/labour", blockScoped, (req, res) => {
   const weeks = m.labourWeeks(16);

@@ -1,0 +1,42 @@
+<%- include('partials/header', { title: 'P&C Entry' }) %>
+<% const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+   const g = (id,f) => { const r=data[id]; return (r && r[f]!=null) ? r[f] : ''; }; %>
+<div class="page-head"><div>
+  <p class="crumb"><a href="/pc?month=<%= month %>">← People &amp; Culture</a></p>
+  <h1>Enter P&amp;C data</h1><p class="sub">Per centre, for the selected month.</p>
+</div></div>
+<% if (msg) { %><div class="flash"><%= msg %></div><% } %>
+<form method="POST" action="/admin/pc">
+  <div class="card" style="padding:14px 20px;">
+    <label style="font-size:12px;color:var(--muted);">Month</label>
+    <input type="month" name="month" value="<%= month %>" onchange="this.form.action='/admin/pc';this.form.method='GET';this.form.submit();" style="padding:7px;border:1px solid var(--border);border-radius:6px;">
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0;">Metrics by centre</h2>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Centre</th><th class="num">eNPS</th><th class="num">Turnover %</th><th class="num">Check-ins due</th><th class="num">Check-ins done</th><th class="num">Psych safety</th></tr></thead>
+      <tbody>
+        <% centres.forEach(function(c){ %>
+          <tr><td><%= shortName(c.name) %></td>
+            <td class="num"><input type="text" name="enps_<%= c.owna_id %>" value="<%= g(c.owna_id,'enps') %>" style="width:70px;text-align:right;"></td>
+            <td class="num"><input type="text" name="turnover_<%= c.owna_id %>" value="<%= g(c.owna_id,'turnover') %>" style="width:70px;text-align:right;"></td>
+            <td class="num"><input type="text" name="due_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_due') %>" style="width:70px;text-align:right;"></td>
+            <td class="num"><input type="text" name="done_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_completed') %>" style="width:70px;text-align:right;"></td>
+            <td class="num"><input type="text" name="psych_<%= c.owna_id %>" value="<%= g(c.owna_id,'psych_safety') %>" style="width:70px;text-align:right;"></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0;">Targets / benchmarks</h2>
+    <div class="user-form">
+      <div><label>eNPS (≥)</label><input type="text" name="target_enps" value="<%= targets.enps!=null?targets.enps:'' %>"></div>
+      <div><label>Turnover % (≤)</label><input type="text" name="target_turnover" value="<%= targets.turnover!=null?targets.turnover:'' %>"></div>
+      <div><label>Check-in % (≥)</label><input type="text" name="target_checkin_pct" value="<%= targets.checkin_pct!=null?targets.checkin_pct:'' %>"></div>
+      <div><label>Psych safety (≥)</label><input type="text" name="target_psych_safety" value="<%= targets.psych_safety!=null?targets.psych_safety:'' %>"></div>
+    </div>
+  </div>
+  <button type="submit">Save</button>
+</form>
+<%- include('partials/footer') %>

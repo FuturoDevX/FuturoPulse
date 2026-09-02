@@ -192,3 +192,20 @@ CREATE TABLE IF NOT EXISTS labour_budget (
   budget_occ   REAL,
   PRIMARY KEY (eh_centre, week_ending)
 );
+
+-- ===== People & Culture (manual entry, per centre per month) =====
+CREATE TABLE IF NOT EXISTS pc_metrics (
+  owna_id           TEXT NOT NULL,
+  month             TEXT NOT NULL,        -- YYYY-MM
+  enps              REAL,                 -- -100..100
+  turnover          REAL,                 -- %
+  checkin_due       INTEGER,
+  checkin_completed INTEGER,
+  psych_safety      REAL,
+  updated_at        TEXT,
+  PRIMARY KEY (owna_id, month)
+);
+CREATE TABLE IF NOT EXISTS pc_targets (
+  metric  TEXT PRIMARY KEY,               -- enps | turnover | checkin_pct | psych_safety
+  target  REAL
+);

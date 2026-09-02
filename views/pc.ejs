@@ -1,0 +1,42 @@
+<%- include('partials/header', { title: 'People & Culture' }) %>
+<%
+  const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const mLabel = (m) => { if(!m) return ''; const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); };
+  const num = (v,suf='') => (v==null||v==='') ? '—' : v+suf;
+  // colour vs target: better = high (enps/checkin/psych) or low (turnover)
+  const flag = (v, target, better) => { if(v==null||target==null) return ''; const ok = better==='low' ? v<=target : v>=target; return ok?'good-text':'bad-text'; };
+%>
+<div class="page-head">
+  <div><h1>People &amp; Culture</h1><p class="sub">By centre · <%= mLabel(month) %></p></div>
+  <div class="head-actions" style="display:flex;gap:10px;align-items:center;">
+    <% if (user.role === 'admin') { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/pc?month=<%= month %>">Enter data</a><% } %>
+    <form method="GET"><select name="month" onchange="this.form.submit()">
+      <% (months.length?months:[month]).forEach(function(mm){ %><option value="<%= mm %>" <%= mm===month?'selected':'' %>><%= mLabel(mm) %></option><% }); %>
+    </select></form>
+  </div>
+</div>
+<div class="card">
+  <table>
+    <thead><tr><th>Centre</th>
+      <th class="num">eNPS<br><span class="muted" style="font-weight:400;">≥ <%= num(targets.enps) %></span></th>
+      <th class="num">Turnover<br><span class="muted" style="font-weight:400;">≤ <%= num(targets.turnover,'%') %></span></th>
+      <th class="num">Check-ins<br><span class="muted" style="font-weight:400;">done / due</span></th>
+      <th class="num">Check-in %<br><span class="muted" style="font-weight:400;">≥ <%= num(targets.checkin_pct,'%') %></span></th>
+      <th class="num">Psych safety<br><span class="muted" style="font-weight:400;">≥ <%= num(targets.psych_safety) %></span></th>
+    </tr></thead>
+    <tbody>
+      <% rows.forEach(function(r){ %>
+        <tr>
+          <td><%= shortName(r.name) %></td>
+          <td class="num <%= flag(r.enps, targets.enps, 'high') %>" style="font-weight:600;"><%= num(r.enps) %></td>
+          <td class="num <%= flag(r.turnover, targets.turnover, 'low') %>" style="font-weight:600;"><%= num(r.turnover,'%') %></td>
+          <td class="num"><%= r.checkin_due==null?'—':(num(r.checkin_completed)+' / '+r.checkin_due) %></td>
+          <td class="num <%= flag(r.checkin_pct, targets.checkin_pct, 'high') %>" style="font-weight:600;"><%= num(r.checkin_pct,'%') %></td>
+          <td class="num <%= flag(r.psych_safety, targets.psych_safety, 'high') %>" style="font-weight:600;"><%= num(r.psych_safety) %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+</div>
+<p class="footnote">Manually entered each month (Admin → Enter data). Green = at/above target (turnover: at/below). eNPS −100..100; psychological safety on your scale; check-in % = completed ÷ due.</p>
+<%- include('partials/footer') %>
