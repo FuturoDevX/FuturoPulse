@@ -499,6 +499,65 @@ function exitsLatestDate() {
 
 
 
+
+// ===== Monthly action plan (RAG auto-suggest + manual) =====
+const AP_AREAS = [
+  { key: "occupancy", group: "Business Performance", label: "Occupancy — actual vs target" },
+  { key: "labour", group: "Business Performance", label: "Labour — actual vs budget" },
+  { key: "costs", group: "Business Performance", label: "Other costs vs budget" },
+  { key: "quality", group: "High Quality Practice", label: "Compliance snapshot" },
+  { key: "family", group: "Family Experience", label: "Family NPS / feedback" },
+  { key: "team", group: "Team Experience", label: "Turnover & absence" },
+  { key: "safety", group: "Safety Culture", label: "Child / adult injury rate" },
+  { key: "leadership", group: "Centre Leadership", label: "Roles in place / CM feedback" },
+];
+const rag = (v, greenAtLeast, amberAtLeast, lowerBetter) => {
+  if (v == null) return null;
+  if (lowerBetter) return v <= greenAtLeast ? "green" : v <= amberAtLeast ? "amber" : "red";
+  return v >= greenAtLeast ? "green" : v >= amberAtLeast ? "amber" : "red";
+};
+// Suggested RAG per area from live module data, for one centre.
+function actionPlanAuto(ownaId) {
+  const out = {};
+  // Occupancy: latest month
+  const occT = occupancyTrend(ownaId, 1); const occ = occT.length ? occT[occT.length - 1].occupancy : null;
+  if (occ != null) out.occupancy = { rating: rag(occ, 95, 85, false), reason: `Occupancy ${occ}% (target ~100%)` };
+  // Labour: latest complete week wage % of revenue
+  const lw = labourWeeks(1)[0];
+  if (lw) { const row = labourForWeek(lw).find((r) => r.owna_id === ownaId); if (row && row.wage_pct != null) out.labour = { rating: rag(row.wage_pct, 55, 65, true), reason: `Care wages ${row.wage_pct}% of revenue (week ${lw})` }; }
+  // Quality: compliance overall
+  const qc = qcCentre(ownaId);
+  if (qc && qc.overall_pct != null) out.quality = { rating: rag(qc.overall_pct, 90, 75, false), reason: `Compliance ${qc.overall_pct}% (${qc.actions.filter((a)=>!/^y/i.test((a.completed||"").trim())).length} open actions)` };
+  // Family (eNPS) + Team (turnover): latest P&C month
+  const pm = pcMonths(1)[0];
+  if (pm) { const pr = pcForMonth(pm, ownaId)[0]; const t = pcTargets();
+    if (pr && pr.enps != null) out.family = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps}` };
+    if (pr && pr.turnover != null) out.team = { rating: rag(pr.turnover, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${pr.turnover}%` };
+  }
+  return out;
+}
+function actionPlanMonths(limit = 24) {
+  return db.prepare("SELECT DISTINCT month FROM action_plans ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);
+}
+function actionPlanGet(ownaId, month) {
+  const p = db.prepare("SELECT * FROM action_plans WHERE owna_id=? AND month=?").get(ownaId, month);
+  const items = db.prepare("SELECT * FROM action_plan_items WHERE owna_id=? AND month=? ORDER BY category, sort, id").all(ownaId, month);
+  return { plan: p ? { ...p, areas: JSON.parse(p.areas_json || "{}") } : null, items, auto: actionPlanAuto(ownaId), areasDef: AP_AREAS };
+}
+function saveActionPlan(ownaId, month, overall, context, areas) {
+  db.prepare(`INSERT INTO action_plans (owna_id, month, overall, context, areas_json, updated_at) VALUES (?,?,?,?,?,datetime('now'))
+    ON CONFLICT(owna_id, month) DO UPDATE SET overall=excluded.overall, context=excluded.context, areas_json=excluded.areas_json, updated_at=datetime('now')`)
+    .run(ownaId, month, overall, context, JSON.stringify(areas || {}));
+}
+function replaceActionItems(ownaId, month, items) {
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM action_plan_items WHERE owna_id=? AND month=?").run(ownaId, month);
+    const ins = db.prepare("INSERT INTO action_plan_items (owna_id, month, category, focus_area, actions, owner, status, sort) VALUES (?,?,?,?,?,?,?,?)");
+    items.forEach((it, i) => { if ((it.focus_area || it.actions || "").trim()) ins.run(ownaId, month, it.category, it.focus_area, it.actions, it.owner, it.status, i); });
+  });
+  tx();
+}
+
 // ===== Quality & Compliance (uploaded audit) =====
 function qcSummary(ownaId) {
   const where = ownaId ? "WHERE a.owna_id = ?" : "";
@@ -641,4 +700,5 @@ module.exports = {
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, PC_TARGET_KEYS,
   qcSummary, qcCentre,
+  AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems,
 };

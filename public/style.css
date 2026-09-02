@@ -198,3 +198,7 @@ tr:hover td.hot { background: #ffedcc; }
 .qa-bar-wrap { background: #eef0f4; border-radius: 4px; height: 8px; margin: 6px 0 4px; overflow: hidden; }
 .qa-bar { height: 100%; } .qa-bar.good { background: #4caf7d; } .qa-bar.warn { background: #e0b64b; } .qa-bar.bad { background: #d9736b; }
 .qa-pct { font-weight: 700; font-size: 15px; } .qa-name { font-size: 11px; line-height: 1.25; margin-top: 2px; }
+
+/* RAG dots */
+.rag { display:inline-block; width:11px; height:11px; border-radius:50%; vertical-align:middle; }
+.rag-green { background:#4caf7d; } .rag-amber { background:#e0b64b; } .rag-red { background:#d9736b; } .rag-none { background:#cbd2db; }

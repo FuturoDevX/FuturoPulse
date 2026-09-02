@@ -1,6 +1,6 @@
 const express = require("express");
 const m = require("../services/metrics");
-const { blockScoped, scopedOwnaId } = require("../middleware/auth");
+const { blockScoped, scopedOwnaId, requireAdminOrOps } = require("../middleware/auth");
 const { lastRun } = require("../services/snapshot");
 const router = express.Router();
 
@@ -71,6 +71,42 @@ router.get("/centre/:id/pipeline", (req, res) => {
   if (scoped && c.owna_id !== scoped) return res.status(403).render("error", { message: "You can only view your own centre." });
   const detail = m.centrePipelineDetail(c.owna_id);
   res.render("centre-pipeline", { title: c.name + " — Pipeline", centre: c, detail, today: m.todayStr(), lastRun: lastRun() });
+});
+
+// Monthly action plans (view; exec/admin edit).
+const AP_CATS = [["urgent","Short-term urgent actions"],["bau","Recurring / BAU actions"],["support","Support-office jobs"],["keep","Keep in mind"]];
+function apCentresFor(req) {
+  const scoped = scopedOwnaId(req);
+  const all = m.centres().filter((c) => c.ll_id != null || true);
+  return scoped ? all.filter((c) => c.owna_id === scoped) : all;
+}
+function apResolve(req) {
+  const centres = apCentresFor(req);
+  const scoped = scopedOwnaId(req);
+  const owna = scoped || (centres.find((c) => c.owna_id === req.query.owna) ? req.query.owna : (centres[0] && centres[0].owna_id));
+  const months = m.actionPlanMonths(); const now = new Date().toISOString().slice(0,7);
+  const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : (months[0] || now);
+  return { centres, owna, months: months.length ? months : [now], month };
+}
+router.get("/action-plans", (req, res) => {
+  const { centres, owna, months, month } = apResolve(req);
+  const centre = m.centre(owna);
+  res.render("action-plan", { title: "Action Plans", centres, owna, months, month, centre,
+    data: owna ? m.actionPlanGet(owna, month) : null, cats: AP_CATS, canEdit: ["admin","exec","ops_manager"].includes(req.session.user.role) });
+});
+router.get("/action-plans/edit", requireAdminOrOps, (req, res) => {
+  const centres = m.centres(); const owna = centres.find((c)=>c.owna_id===req.query.owna) ? req.query.owna : centres[0].owna_id;
+  const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : new Date().toISOString().slice(0,7);
+  res.render("action-plan-edit", { title: "Edit Action Plan", centres, owna, month, centre: m.centre(owna), data: m.actionPlanGet(owna, month), cats: AP_CATS });
+});
+router.post("/action-plans/edit", requireAdminOrOps, (req, res) => {
+  const owna = req.body.owna; const month = req.body.month;
+  const areas = {}; m.AP_AREAS.forEach((a) => { areas[a.key] = { rating: req.body["rating_"+a.key] || "", reason: req.body["reason_"+a.key] || "" }; });
+  m.saveActionPlan(owna, month, req.body.overall || "", req.body.context || "", areas);
+  const items = [];
+  AP_CATS.forEach(([cat]) => { for (let i=0;i<6;i++){ items.push({ category: cat, focus_area: req.body[`f_${cat}_${i}`]||"", actions: req.body[`a_${cat}_${i}`]||"", owner: req.body[`o_${cat}_${i}`]||"", status: req.body[`s_${cat}_${i}`]||"" }); } });
+  m.replaceActionItems(owna, month, items);
+  res.redirect(`/action-plans?owna=${owna}&month=${month}`);
 });
 
 // Quality & Compliance (from uploaded audit).

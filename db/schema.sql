@@ -224,3 +224,20 @@ CREATE TABLE IF NOT EXISTS qc_actions (
   priority TEXT, owner TEXT, due_date TEXT, completed TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_qcact_owna ON qc_actions(owna_id);
+
+-- ===== Monthly action plans (per centre) =====
+CREATE TABLE IF NOT EXISTS action_plans (
+  owna_id     TEXT NOT NULL,
+  month       TEXT NOT NULL,          -- YYYY-MM
+  overall     TEXT,                   -- green|amber|red
+  context     TEXT,
+  areas_json  TEXT,                   -- {key:{rating,reason}}
+  updated_at  TEXT,
+  PRIMARY KEY (owna_id, month)
+);
+CREATE TABLE IF NOT EXISTS action_plan_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  owna_id TEXT, month TEXT, category TEXT,   -- urgent|bau|support|keep
+  focus_area TEXT, actions TEXT, owner TEXT, status TEXT, sort INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_apitems ON action_plan_items(owna_id, month);

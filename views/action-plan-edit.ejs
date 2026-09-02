@@ -1,0 +1,56 @@
+<%- include('partials/header', { title: 'Edit Action Plan' }) %>
+<%
+  const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const areas = (data && data.plan) ? data.plan.areas : {}; const auto = data ? data.auto : {};
+  const itemsBy = (cat) => (data?data.items:[]).filter(i=>i.category===cat);
+%>
+<div class="page-head"><div>
+  <p class="crumb"><a href="/action-plans?owna=<%= owna %>&month=<%= month %>">← Action Plan</a></p>
+  <h1>Edit — <%= shortName(centre.name) %></h1>
+</div></div>
+<form method="POST" action="/action-plans/edit">
+  <input type="hidden" name="owna" value="<%= owna %>">
+  <div class="card" style="padding:14px 20px;">
+    <div class="user-form">
+      <div><label>Centre</label><select name="owna_sel" onchange="location.href='/action-plans/edit?owna='+this.value+'&month=<%= month %>'"><% centres.forEach(function(c){ %><option value="<%= c.owna_id %>" <%= c.owna_id===owna?'selected':'' %>><%= shortName(c.name) %></option><% }); %></select></div>
+      <div><label>Month</label><input type="month" name="month" value="<%= month %>" onchange="location.href='/action-plans/edit?owna=<%= owna %>&month='+this.value"></div>
+      <div><label>Overall rating</label><select name="overall"><% ['','green','amber','red'].forEach(function(r){ %><option value="<%= r %>" <%= (data&&data.plan&&data.plan.overall)===r?'selected':'' %>><%= r||'—' %></option><% }); %></select></div>
+    </div>
+  </div>
+  <div class="card"><label>Centre context</label><textarea name="context" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;"><%= (data&&data.plan)?data.plan.context||'':'' %></textarea></div>
+  <div class="card">
+    <h2 style="margin-top:0;">Status assessment <span class="muted" style="font-weight:400;font-size:13px;">· pre-filled from data — adjust as needed</span></h2>
+    <table>
+      <thead><tr><th>Area</th><th>Rating</th><th>Reasoning</th></tr></thead>
+      <tbody>
+        <% data.areasDef.forEach(function(a){ var av=areas[a.key]||{}; var rating=av.rating||(auto[a.key]&&auto[a.key].rating)||''; var reason=av.reason||(auto[a.key]&&auto[a.key].reason)||''; %>
+          <tr>
+            <td><%= a.label %></td>
+            <td><select name="rating_<%= a.key %>"><% ['','green','amber','red'].forEach(function(r){ %><option value="<%= r %>" <%= rating===r?'selected':'' %>><%= r||'—' %></option><% }); %></select></td>
+            <td><input type="text" name="reason_<%= a.key %>" value="<%= reason %>" style="width:100%;"></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <% cats.forEach(function(cat){ var items=itemsBy(cat[0]); %>
+    <div class="card">
+      <h2 style="margin-top:0;"><%= cat[1] %></h2>
+      <table>
+        <thead><tr><th>Focus area</th><th>Actions</th><th>Owner</th><th>Status</th></tr></thead>
+        <tbody>
+          <% for (var i=0;i<6;i++){ var it=items[i]||{}; %>
+            <tr>
+              <td><input type="text" name="f_<%= cat[0] %>_<%= i %>" value="<%= it.focus_area||'' %>" style="width:100%;"></td>
+              <td><input type="text" name="a_<%= cat[0] %>_<%= i %>" value="<%= it.actions||'' %>" style="width:100%;"></td>
+              <td><input type="text" name="o_<%= cat[0] %>_<%= i %>" value="<%= it.owner||'' %>" style="width:120px;"></td>
+              <td><input type="text" name="s_<%= cat[0] %>_<%= i %>" value="<%= it.status||'' %>" style="width:120px;" placeholder="Not started/Underway/Done"></td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  <% }); %>
+  <button type="submit">Save action plan</button>
+</form>
+<%- include('partials/footer') %>
