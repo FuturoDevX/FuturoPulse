@@ -809,23 +809,91 @@ function occupancyCalculator(capacity, occupancyNow, targets = [5, 10]) {
   }));
 }
 
-// Rule-based, data-driven improvement tips for a centre.
-function centreInsights(ownaId, capacity, occupancyNow, pipeline) {
+// Rule-based, data-driven improvement tips for a centre. Each rule only fires when the data warrants it.
+function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
   const dow = centreDowOccupancy(ownaId);
   const valid = dow.filter((d) => d.occupancy != null);
   const tips = [];
+  const today = todayStr();
+  const money = (n) => "$" + Math.round(n).toLocaleString("en-AU");
+  const ago = (days) => new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const ahead = (days) => new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
+
+  // Recent 28-day actuals (past only): occupancy, attendance, avg daily fee, absences.
+  const recent = db.prepare(`
+    SELECT COALESCE(SUM(booked),0) booked, COALESCE(SUM(attended),0) attended, COALESCE(SUM(absent),0) absent,
+           COALESCE(SUM(fee_total),0) fee, MAX(capacity) cap, COUNT(DISTINCT metric_date) d
+    FROM daily_metrics WHERE owna_id=? AND metric_date BETWEEN ? AND ?`).get(ownaId, ago(28), today);
+  const avgDailyFee = recent.booked ? recent.fee / recent.booked : null; // $ per child-day
+  const recentOcc = (recent.cap && recent.d) ? pct(recent.booked, recent.cap * recent.d) : occupancyNow;
+
+  // 1) Day-of-week balance, with the $ opportunity of closing the gap folded in.
   if (valid.length >= 2) {
     const peak = valid.reduce((a, b) => (b.occupancy > a.occupancy ? b : a));
     const low = valid.reduce((a, b) => (b.occupancy < a.occupancy ? b : a));
     const spread = Math.round((peak.occupancy - low.occupancy) * 10) / 10;
-    if (spread >= 8) tips.push(`${peak.dow} runs fullest at ${peak.occupancy}%, while ${low.dow} sits at ${low.occupancy}% — a ${spread}pp gap. Encouraging some ${peak.dow} families to add a ${low.dow} day (or steering casual demand there) would lift your quietest day and overall occupancy.`);
+    if (spread >= 8) {
+      let t = `${peak.dow} runs fullest at ${peak.occupancy}%, while ${low.dow} sits at ${low.occupancy}% — a ${spread}pp gap. Encouraging some ${peak.dow} families to add a ${low.dow} day (or steering casual demand there) would lift your quietest day and overall occupancy.`;
+      const extra = Math.max(0, Math.round((peak.avg_booked || 0) - (low.avg_booked || 0)));
+      if (extra > 0 && avgDailyFee) t += ` That's about ${extra} more ${low.dow} place${extra === 1 ? "" : "s"} ≈ ${money(extra * avgDailyFee)}/week in fees.`;
+      tips.push(t);
+    }
   }
+
+  // Waitlist vs free places.
   if (pipeline && pipeline.waitlist > 0) {
-    const free = capacity && occupancyNow != null ? Math.round(capacity * (1 - occupancyNow / 100)) : null;
+    const free = capacity && recentOcc != null ? Math.round(capacity * (1 - recentOcc / 100)) : null;
     if (free && free > 0) tips.push(`You have ${pipeline.waitlist} on the waitlist and roughly ${free} place${free === 1 ? "" : "s"} free on an average day — converting waitlist families into permanent bookings is the fastest occupancy win.`);
   }
+
+  // Casual conversion.
   const avgCasual = valid.length ? Math.round(valid.reduce((s, d) => s + (d.avg_casual || 0), 0) / valid.length) : 0;
   if (avgCasual >= 3) tips.push(`Around ${avgCasual} casual bookings a day — casuals are good revenue but volatile. Offering these families a permanent day locks in the place and steadies your roster.`);
+
+  // 2) Occupancy trend over the last 3 complete months.
+  const tr = occupancyTrend(ownaId, 6).filter((t) => t.month < today.slice(0, 7));
+  if (tr.length >= 4) {
+    const cur = tr[tr.length - 1], prev = tr[tr.length - 4];
+    const delta = Math.round((cur.occupancy - prev.occupancy) * 10) / 10;
+    if (delta <= -4) tips.push(`Occupancy has slipped ${Math.abs(delta)}pp over the last 3 months (${prev.occupancy}% → ${cur.occupancy}%) — worth acting before it compounds.`);
+    else if (delta >= 5) tips.push(`Occupancy is up ${delta}pp over the last 3 months (${prev.occupancy}% → ${cur.occupancy}%) — good momentum; keep the pipeline warm to hold it.`);
+  }
+
+  // 3) Forward-booking dip: next 4 weeks scheduled vs recent actual.
+  const fwd = db.prepare(`
+    SELECT COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) d
+    FROM daily_metrics WHERE owna_id=? AND metric_date > ? AND metric_date <= ?`).get(ownaId, today, ahead(28));
+  if (fwd.d >= 5 && fwd.cap && recentOcc != null) {
+    const fwdOcc = pct(fwd.booked, fwd.cap * fwd.d);
+    const dip = Math.round((recentOcc - fwdOcc) * 10) / 10;
+    if (dip >= 4) tips.push(`Bookings for the next 4 weeks average ${fwdOcc}%, ${dip}pp below your recent ${recentOcc}% — a casual drive or re-enrolment push would close the gap.`);
+  }
+
+  // 4) Exits vs pipeline gap over the next 90 days.
+  const leaving90 = db.prepare(`SELECT COUNT(*) n FROM child_exits WHERE owna_id=? AND upcoming=1 AND finish_date <= ?`).get(ownaId, ahead(90)).n;
+  const starts = pipeline ? (pipeline.starts_future || 0) : 0;
+  if (leaving90 > 0 && leaving90 > starts) {
+    const gap = leaving90 - starts;
+    tips.push(`${leaving90} ${leaving90 === 1 ? "child is" : "children are"} scheduled to leave in the next 90 days and you have ${starts} expected start${starts === 1 ? "" : "s"} — you'll need about ${gap} more enrolment${gap === 1 ? "" : "s"} just to hold occupancy.`);
+  }
+
+  // 5) Tour-to-enrolment follow-up: tours booked outnumbering locked-in future starts.
+  if (pipeline && (pipeline.tour_scheduled || 0) >= 5 && (pipeline.tour_scheduled || 0) > starts) {
+    tips.push(`${pipeline.tour_scheduled} tours are booked but only ${starts} expected start${starts === 1 ? "" : "s"} ${starts === 1 ? "is" : "are"} locked in — make sure every tour has a clear follow-up so more of them convert.`);
+  }
+
+  // 6) Absence = sellable capacity (only where a waitlist means real demand to backfill).
+  if (recent.booked && recent.d && pipeline && pipeline.waitlist > 0) {
+    const attRate = pct(recent.attended, recent.booked);
+    const emptyPerWeek = Math.round(recent.absent / recent.d * 5);
+    if (emptyPerWeek >= 8) tips.push(`About ${emptyPerWeek} booked places go unattended each week (attendance ${attRate}%) — with ${pipeline.waitlist} on the waitlist, those booked-but-absent days can be on-sold as casual: extra revenue on a place you've already staffed.`);
+  }
+
+  // 7) Wage % / margin pressure.
+  if (labour && labour.wage_pct != null && labour.wage_pct > 65) {
+    tips.push(`Care wages are ${labour.wage_pct}% of revenue (target ≤65%). Lifting occupancy on quiet days, or trimming roster hours there, would restore margin.`);
+  }
+
   const calc = capacity ? occupancyCalculator(capacity, occupancyNow) : [];
   return { dow, tips, calc, occupancyNow, capacity };
 }

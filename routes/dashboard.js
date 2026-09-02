@@ -187,6 +187,8 @@ router.get("/centre/:id", (req, res) => {
     return a;
   }, { booked: 0, attended: 0, absent: 0, casual: 0, fee_total: 0, days: 0, pastBooked: 0, pastDays: 0 });
   const capacityDays = c.capacity * agg.days;
+  const pipeline = m.llForCentre(c.owna_id);
+  const labour = m.centreLabourLatest(c.owna_id);
 
   res.render("centre", {
     title: c.name,
@@ -204,14 +206,14 @@ router.get("/centre/:id", (req, res) => {
     presets: presetsFor(),
     fwdPresets: fwdPresetsFor(),
     today: m.todayStr(),
-    pipeline: m.llForCentre(c.owna_id),
+    pipeline,
     occTrend: m.occupancyTrend(c.owna_id, 24),
     exits: m.centreExits(c.owna_id, "past", 100),
     exitsUpcoming: m.centreExits(c.owna_id, "upcoming", 100),
     exitReasons: m.exitReasons(c.owna_id),
-    labour: m.centreLabourLatest(c.owna_id),
+    labour,
     labourTrend: m.labourTrend(c.owna_id, 12),
-    insights: m.centreInsights(c.owna_id, c.capacity, m.pct(agg.booked, capacityDays), m.llForCentre(c.owna_id)),
+    insights: m.centreInsights(c.owna_id, c.capacity, m.pct(agg.booked, capacityDays), pipeline, labour),
     lastRun: lastRun(),
   });
 });
