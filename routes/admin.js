@@ -1,5 +1,6 @@
 const express = require("express");
-const { requireAdminOrOps } = require("../middleware/auth");
+const { requireAdminOrOps, requireAdmin } = require("../middleware/auth");
+const bcrypt = require("bcryptjs");
 const { runSnapshot, lastRun } = require("../services/snapshot");
 const { owna } = require("../services/owna");
 const router = express.Router();
@@ -42,6 +43,40 @@ router.post("/labour-budget", requireAdminOrOps, (req, res) => {
     if (wages != null || hours != null || occ != null || support != null) m.saveLabourBudget(c, "default", { wages, hours, occ, support });
   }
   res.redirect("/admin/labour-budget?saved=1");
+});
+
+
+// ===== User management (admin only) =====
+router.get("/users", requireAdmin, (req, res) => {
+  const users = db.prepare(`SELECT id, email, name, role, location_id FROM users ORDER BY role, email`).all();
+  const centres = db.prepare(`SELECT owna_id, name FROM centres ORDER BY name`).all();
+  res.render("admin-users", { title: "Users", users, centres, msg: req.query.msg, err: req.query.err });
+});
+router.post("/users", requireAdmin, (req, res) => {
+  const email = (req.body.email || "").trim().toLowerCase();
+  const name = (req.body.name || "").trim();
+  const role = ["admin", "exec", "centre"].includes(req.body.role) ? req.body.role : "exec";
+  const location_id = role === "centre" ? (req.body.location_id || null) : null;
+  const password = req.body.password || "";
+  if (!email || password.length < 6) return res.redirect("/admin/users?err=" + encodeURIComponent("Email and a 6+ char password are required."));
+  if (role === "centre" && !location_id) return res.redirect("/admin/users?err=" + encodeURIComponent("Pick a centre for a centre-scoped user."));
+  if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return res.redirect("/admin/users?err=" + encodeURIComponent("That email already exists."));
+  db.prepare("INSERT INTO users (email, name, password_hash, role, location_id) VALUES (?,?,?,?,?)")
+    .run(email, name, bcrypt.hashSync(password, 10), role, location_id);
+  res.redirect("/admin/users?msg=" + encodeURIComponent("User added: " + email));
+});
+router.post("/users/:id/delete", requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (id === req.session.user.id) return res.redirect("/admin/users?err=" + encodeURIComponent("You can't delete your own account."));
+  db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  res.redirect("/admin/users?msg=" + encodeURIComponent("User removed."));
+});
+router.post("/users/:id/reset", requireAdmin, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const password = req.body.password || "";
+  if (password.length < 6) return res.redirect("/admin/users?err=" + encodeURIComponent("New password must be 6+ chars."));
+  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(password, 10), id);
+  res.redirect("/admin/users?msg=" + encodeURIComponent("Password reset."));
 });
 
 module.exports = router;

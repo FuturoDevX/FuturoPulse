@@ -1,0 +1,60 @@
+<%- include('partials/header', { title: 'Users' }) %>
+<% const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ',''); %>
+<div class="page-head"><div>
+  <h1>Users &amp; access</h1>
+  <p class="sub">Exec logins see every centre. Centre logins see only their own centre's data.</p>
+</div></div>
+<% if (msg) { %><div class="flash"><%= msg %></div><% } %>
+<% if (err) { %><div class="flash bad"><%= err %></div><% } %>
+
+<div class="card">
+  <h2 style="margin-top:0;">Add a user</h2>
+  <form method="POST" action="/admin/users" class="user-form">
+    <div><label>Name</label><input type="text" name="name" placeholder="Full name"></div>
+    <div><label>Email</label><input type="email" name="email" required placeholder="name@futuro.nsw.edu.au"></div>
+    <div><label>Role</label>
+      <select name="role" id="roleSel" onchange="document.getElementById('centreWrap').style.display = this.value==='centre' ? 'block':'none';">
+        <option value="exec">Exec — sees everything</option>
+        <option value="centre">Centre — sees only their centre</option>
+        <option value="admin">Admin — full access + manage users</option>
+      </select>
+    </div>
+    <div id="centreWrap" style="display:none;"><label>Centre</label>
+      <select name="location_id">
+        <option value="">— pick centre —</option>
+        <% centres.forEach(function(c){ %><option value="<%= c.owna_id %>"><%= shortName(c.name) %></option><% }); %>
+      </select>
+    </div>
+    <div><label>Temporary password</label><input type="text" name="password" required placeholder="min 6 chars"></div>
+    <div style="align-self:end;"><button type="submit">Add user</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Existing users</h2>
+  <table>
+    <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Centre</th><th></th></tr></thead>
+    <tbody>
+      <% users.forEach(function(u){ var c = centres.find(x=>x.owna_id===u.location_id); %>
+        <tr>
+          <td><%= u.email %></td>
+          <td><%= u.name || '—' %></td>
+          <td><span class="badge role-<%= u.role %>"><%= u.role %></span></td>
+          <td><%= c ? shortName(c.name) : (u.role==='centre' ? '(none)' : 'All') %></td>
+          <td class="num" style="white-space:nowrap;">
+            <form method="POST" action="/admin/users/<%= u.id %>/reset" class="inline" onsubmit="return confirm('Reset password for <%= u.email %>?')">
+              <input type="text" name="password" placeholder="new pw" style="width:110px;padding:5px;font-size:12px;">
+              <button type="submit" class="secondary-btn" style="padding:5px 10px;font-size:12px;">Reset</button>
+            </form>
+            <% if (u.id !== user.id) { %>
+              <form method="POST" action="/admin/users/<%= u.id %>/delete" class="inline" onsubmit="return confirm('Remove <%= u.email %>?')">
+                <button type="submit" class="secondary-btn" style="padding:5px 10px;font-size:12px;color:var(--bad);border-color:#f0c0c0;">Remove</button>
+              </form>
+            <% } %>
+          </td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+</div>
+<%- include('partials/footer') %>

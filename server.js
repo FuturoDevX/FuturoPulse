@@ -43,7 +43,12 @@ app.use("/", require("./routes/auth"));
 app.use(requireLogin);
 // Centre list for the sidebar, available to every authenticated view.
 const metrics = require("./services/metrics");
-app.use((req, res, next) => { res.locals.navCentres = metrics.centres(); next(); });
+app.use((req, res, next) => {
+  const all = metrics.centres();
+  const scoped = res.locals.scopedOwnaId;
+  res.locals.navCentres = scoped ? all.filter((c) => c.owna_id === scoped) : all;
+  next();
+});
 app.use("/admin", require("./routes/admin"));
 app.use("/", require("./routes/dashboard"));
 

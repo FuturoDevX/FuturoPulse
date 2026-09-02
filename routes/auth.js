@@ -14,7 +14,7 @@ router.post("/login", (req, res) => {
   if (!user || !bcrypt.compareSync(password || "", user.password_hash)) {
     return res.status(401).render("login", { error: "Invalid email or password." });
   }
-  req.session.user = { id: user.id, email: user.email, name: user.name, role: user.role };
+  req.session.user = { id: user.id, email: user.email, name: user.name, role: user.role, location_id: user.location_id };
   res.redirect("/");
 });
 

@@ -14,14 +14,20 @@
     <div class="brand">Futuro Ops<span>OWNA Dashboard</span></div>
     <nav class="side-nav">
       <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>">Overview</a>
-      <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
-      <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>
-      <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>">Projection</a>
-      <a href="/labour" class="<%= currentPath === '/labour' ? 'active' : '' %>">Wages &amp; Margin</a>
+      <% if (!locals.scopedOwnaId) { %>
+        <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
+        <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>
+        <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>">Projection</a>
+        <a href="/labour" class="<%= currentPath === '/labour' ? 'active' : '' %>">Wages &amp; Margin</a>
+      <% } %>
       <div class="side-nav-divider">Centres</div>
       <% (locals.navCentres || []).forEach(function(c){ %>
         <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= c.name.replace('Futuro Childcare & Education - ','') %></a>
       <% }); %>
+      <% if (user.role === 'admin') { %>
+        <div class="side-nav-divider">Admin</div>
+        <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>
+      <% } %>
     </nav>
     <div class="side-nav-footer">
       <span class="badge role-<%= user.role %>"><%= user.role.replace('_',' ') %></span>

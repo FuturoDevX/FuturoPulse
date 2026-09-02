@@ -17,6 +17,7 @@ function addColumnIfMissing(table, col, decl) {
   }
 }
 addColumnIfMissing("centres", "ll_id", "INTEGER"); // link OWNA centre -> LineLeader centre
+addColumnIfMissing("users", "location_id", "TEXT"); // owna_id for centre-scoped users (NULL = all centres)
 addColumnIfMissing("labour_weekly", "cleaning_h", "REAL DEFAULT 0");
 addColumnIfMissing("labour_weekly", "cleaning_amt", "REAL DEFAULT 0");
 addColumnIfMissing("labour_budget", "budget_support", "REAL");

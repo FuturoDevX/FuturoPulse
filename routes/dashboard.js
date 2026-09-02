@@ -1,5 +1,6 @@
 const express = require("express");
 const m = require("../services/metrics");
+const { blockScoped, scopedOwnaId } = require("../middleware/auth");
 const { lastRun } = require("../services/snapshot");
 const router = express.Router();
 
@@ -40,7 +41,9 @@ function fwdPresetsFor() {
 // Overview: all centres side by side.
 router.get("/", (req, res) => {
   const { from, to } = resolveRange(req);
-  const rows = m.overview(from, to);
+  let rows = m.overview(from, to);
+  const scoped = scopedOwnaId(req);
+  if (scoped) rows = rows.filter((r) => r.owna_id === scoped);
   res.render("overview", {
     title: "Operations Overview",
     from, to,
@@ -55,7 +58,7 @@ router.get("/", (req, res) => {
 });
 
 // Enrolment pipeline / waitlist (LineLeader).
-router.get("/pipeline", (req, res) => {
+router.get("/pipeline", blockScoped, (req, res) => {
   const p = m.llPipeline();
   res.render("pipeline", { title: "Enrolment Pipeline", pipeline: p, lastRun: lastRun() });
 });
@@ -64,12 +67,14 @@ router.get("/pipeline", (req, res) => {
 router.get("/centre/:id/pipeline", (req, res) => {
   const c = m.centre(req.params.id);
   if (!c) return res.status(404).render("error", { message: "Centre not found." });
+  const scoped = scopedOwnaId(req);
+  if (scoped && c.owna_id !== scoped) return res.status(403).render("error", { message: "You can only view your own centre." });
   const detail = m.centrePipelineDetail(c.owna_id);
   res.render("centre-pipeline", { title: c.name + " — Pipeline", centre: c, detail, today: m.todayStr(), lastRun: lastRun() });
 });
 
 // Labour & margin (Employment Hero payroll + OWNA revenue).
-router.get("/labour", (req, res) => {
+router.get("/labour", blockScoped, (req, res) => {
   const weeks = m.labourWeeks(16);
   const week = weeks.includes(req.query.week) ? req.query.week : weeks[0];
   res.render("labour", {
@@ -82,14 +87,14 @@ router.get("/labour", (req, res) => {
 });
 
 // Enrolment projection / scenario (OWNA occupancy + CRM pipeline).
-router.get("/projection", (req, res) => {
+router.get("/projection", blockScoped, (req, res) => {
   const scope = ["committed", "likely", "all"].includes(req.query.scope) ? req.query.scope : "likely";
   const days = [30, 90, 180].includes(parseInt(req.query.days, 10)) ? parseInt(req.query.days, 10) : 90;
   res.render("projection", { title: "Enrolment Projection", proj: m.projection(scope, days), lastRun: lastRun() });
 });
 
 // Exit report (OWNA departures + LineLeader reasons), group-wide.
-router.get("/exits", (req, res) => {
+router.get("/exits", blockScoped, (req, res) => {
   res.render("exits", {
     title: "Exit Report",
     summary: m.exitsSummary(),
@@ -104,6 +109,8 @@ router.get("/centre/:id", (req, res) => {
   const { from, to } = resolveRange(req);
   const c = m.centre(req.params.id);
   if (!c) return res.status(404).render("error", { message: "Centre not found." });
+  const scoped = scopedOwnaId(req);
+  if (scoped && c.owna_id !== scoped) return res.status(403).render("error", { message: "You can only view your own centre." });
 
   const daily = m.centreDaily(c.owna_id, from, to);
   const today = m.todayStr();
