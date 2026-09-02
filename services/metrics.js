@@ -519,7 +519,13 @@ function ownaWeek(ownaId, weekEnding) {
 // Full labour table for one week (per centre) with revenue, occupancy and margin.
 function labourForWeek(weekEnding) {
   const rows = db.prepare(`SELECT * FROM labour_weekly WHERE week_ending = ?`).all(weekEnding);
-  const mapped = rows.map((r) => {
+  const mapped = rows.map((r0) => {
+    const r = { ...r0 };
+    if (!r.owna_id) { // head office / pre-open: not split into support, shown as one line
+      r.worked_h += (r.kitchen_h || 0) + (r.cleaning_h || 0);
+      r.worked_amt += (r.kitchen_amt || 0) + (r.cleaning_amt || 0);
+      r.kitchen_h = 0; r.kitchen_amt = 0; r.cleaning_h = 0; r.cleaning_amt = 0;
+    }
     const ow = ownaWeek(r.owna_id, weekEnding);
     // Care labour only — kitchen is its own cost centre, excluded from centre totals & margin.
     const care_hours = r.worked_h + r.leave_h;

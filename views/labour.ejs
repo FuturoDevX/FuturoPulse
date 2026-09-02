@@ -10,7 +10,7 @@
   const deltaWages = (d) => d==null ? '<span class="muted">—</span>' : '<span class="'+(d>0?'bad':'good')+'-text">'+(d<0?'−':(d>0?'+':''))+'$'+Math.abs(d).toLocaleString('en-AU')+'</span>';
   const deltaHours = (d) => d==null ? '<span class="muted">—</span>' : '<span class="'+(d>0?'bad':'good')+'-text">'+(d>0?'+':'')+(Math.round(d*10)/10)+'</span>';
   const deltaOcc = (d) => d==null ? '<span class="muted">—</span>' : '<span class="'+(d>=0?'good':'bad')+'-text">'+(d>=0?'+':'')+d+'%</span>';
-  const support = rows.filter(r => (r.kitchen_h||0)>0 || (r.kitchen_amt||0)>0 || (r.cleaning_h||0)>0 || (r.cleaning_amt||0)>0);
+  const support = rows.filter(r => r.owna_id && ((r.kitchen_h||0)>0 || (r.cleaning_h||0)>0));
   const t = rows.reduce((a,r)=>{a.emp+=r.employees;a.wh+=r.worked_h;a.lh+=r.leave_h;a.ch+=r.care_hours;a.wa+=r.worked_amt;a.la+=r.leave_amt;a.ma+=r.matwc_amt;a.cw+=r.care_wages;a.rev+=r.revenue;a.cas+=r.casual_h;a.kh+=r.kitchen_h;a.ka+=r.kitchen_amt;a.clh+=(r.cleaning_h||0);a.cla+=(r.cleaning_amt||0);return a;},{emp:0,wh:0,lh:0,ch:0,wa:0,la:0,ma:0,cw:0,rev:0,cas:0,kh:0,ka:0,clh:0,cla:0});
   const carePct = t.rev>0 ? Math.round(t.cw/t.rev*1000)/10 : null;
   const allPct  = t.rev>0 ? Math.round((t.cw+t.ka+t.cla)/t.rev*1000)/10 : null;
