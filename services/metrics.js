@@ -608,21 +608,41 @@ function replaceActionItems(ownaId, month, items) {
 }
 
 // ===== Quality & Compliance (uploaded audit) =====
+// The most recent audit per centre (by audit date, falling back to upload time).
 function qcSummary(ownaId) {
-  const where = ownaId ? "WHERE a.owna_id = ?" : "";
+  const where = ownaId ? "AND a.owna_id = ?" : "";
   const args = ownaId ? [ownaId] : [];
-  const audits = db.prepare(`SELECT * FROM qc_audits a ${where} ORDER BY centre_name`).all(...args);
+  const audits = db.prepare(`
+    SELECT a.* FROM qc_audits a
+    JOIN (SELECT owna_id, MAX(COALESCE(audit_date, uploaded_at)) md FROM qc_audits GROUP BY owna_id) x
+      ON a.owna_id = x.owna_id AND COALESCE(a.audit_date, a.uploaded_at) = x.md
+    WHERE 1=1 ${where} ORDER BY a.centre_name`).all(...args);
   return audits.map((a) => {
-    const open = db.prepare("SELECT COUNT(*) n FROM qc_actions WHERE owna_id=? AND (completed IS NULL OR completed='' OR completed NOT LIKE 'Y%')").get(a.owna_id).n;
-    const high = db.prepare("SELECT COUNT(*) n FROM qc_actions WHERE owna_id=? AND priority LIKE 'High%' AND (completed IS NULL OR completed='' OR completed NOT LIKE 'Y%')").get(a.owna_id).n;
+    const open = db.prepare("SELECT COUNT(*) n FROM qc_actions WHERE owna_id=? AND term=? AND (completed IS NULL OR completed='' OR completed NOT LIKE 'Y%')").get(a.owna_id, a.term).n;
+    const high = db.prepare("SELECT COUNT(*) n FROM qc_actions WHERE owna_id=? AND term=? AND priority LIKE 'High%' AND (completed IS NULL OR completed='' OR completed NOT LIKE 'Y%')").get(a.owna_id, a.term).n;
     return { ...a, qa: JSON.parse(a.qa_json || "[]"), open_actions: open, open_high: high };
   });
 }
-function qcCentre(ownaId) {
-  const a = db.prepare("SELECT * FROM qc_audits WHERE owna_id=?").get(ownaId);
+// Audits available for a centre, most recent first.
+function qcTerms(ownaId) {
+  return db.prepare(`SELECT term, audit_date, overall_pct FROM qc_audits WHERE owna_id=? ORDER BY COALESCE(audit_date, uploaded_at) DESC`).all(ownaId);
+}
+// One centre's audit for a term (latest term if not given), plus actions.
+function qcCentre(ownaId, term) {
+  const a = term
+    ? db.prepare("SELECT * FROM qc_audits WHERE owna_id=? AND term=?").get(ownaId, term)
+    : db.prepare("SELECT * FROM qc_audits WHERE owna_id=? ORDER BY COALESCE(audit_date, uploaded_at) DESC LIMIT 1").get(ownaId);
   if (!a) return null;
-  const actions = db.prepare("SELECT * FROM qc_actions WHERE owna_id=? ORDER BY (completed LIKE 'Y%'), CASE priority WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, quality_area").all(ownaId);
+  const actions = db.prepare("SELECT * FROM qc_actions WHERE owna_id=? AND term=? ORDER BY (completed LIKE 'Y%'), CASE priority WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, quality_area").all(ownaId, a.term);
   return { ...a, qa: JSON.parse(a.qa_json || "[]"), actions };
+}
+// Overall + per-QA % across a centre's audits, chronological (oldest → newest), for trend charts.
+function qcTrend(ownaId) {
+  const rows = db.prepare(`SELECT term, audit_date, overall_pct, qa_json FROM qc_audits WHERE owna_id=? ORDER BY COALESCE(audit_date, uploaded_at)`).all(ownaId);
+  return rows.map((r) => {
+    const qa = {}; JSON.parse(r.qa_json || "[]").forEach((q) => { qa[q.code] = q.pct; });
+    return { term: r.term, audit_date: r.audit_date, overall_pct: r.overall_pct, qa };
+  });
 }
 
 // ===== People & Culture (manual entry) =====
@@ -820,6 +840,6 @@ module.exports = {
   occupancyTrend, occupancyTrendGroup,
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, PC_TARGET_KEYS,
-  qcSummary, qcCentre,
+  qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
 };

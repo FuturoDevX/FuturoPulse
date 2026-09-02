@@ -63,18 +63,21 @@ function importAuditBuffer(buffer, term) {
   const p = parseAudit(buffer);
   const c = matchCentre(p.centreName);
   if (!c) throw new Error(`Could not match "${p.centreName}" to a centre.`);
+  // Each audit is one row per (centre, term). Re-uploading the same term replaces it; a new term is added,
+  // so history accumulates and trends can be tracked over time.
+  const auditTerm = (term && term.trim()) || p.auditDate || "Unknown";
   const tx = db.transaction(() => {
-    db.prepare(`INSERT INTO qc_audits (owna_id, centre_name, auditor, audit_date, term, overall_pct, qa_json, uploaded_at)
+    db.prepare(`INSERT INTO qc_audits (owna_id, term, centre_name, auditor, audit_date, overall_pct, qa_json, uploaded_at)
       VALUES (?,?,?,?,?,?,?,datetime('now'))
-      ON CONFLICT(owna_id) DO UPDATE SET centre_name=excluded.centre_name, auditor=excluded.auditor, audit_date=excluded.audit_date,
-        term=excluded.term, overall_pct=excluded.overall_pct, qa_json=excluded.qa_json, uploaded_at=datetime('now')`)
-      .run(c.owna_id, p.centreName, p.auditor, p.auditDate, term || null, p.overall_pct, JSON.stringify(p.qa));
-    db.prepare("DELETE FROM qc_actions WHERE owna_id = ?").run(c.owna_id);
-    const ins = db.prepare(`INSERT INTO qc_actions (owna_id, quality_area, issue, action, progress, priority, owner, due_date, completed) VALUES (?,?,?,?,?,?,?,?,?)`);
-    for (const a of p.actions) ins.run(c.owna_id, a.quality_area, a.issue, a.action, a.progress, a.priority, a.owner, a.due_date, a.completed);
+      ON CONFLICT(owna_id, term) DO UPDATE SET centre_name=excluded.centre_name, auditor=excluded.auditor, audit_date=excluded.audit_date,
+        overall_pct=excluded.overall_pct, qa_json=excluded.qa_json, uploaded_at=datetime('now')`)
+      .run(c.owna_id, auditTerm, p.centreName, p.auditor, p.auditDate, p.overall_pct, JSON.stringify(p.qa));
+    db.prepare("DELETE FROM qc_actions WHERE owna_id = ? AND term = ?").run(c.owna_id, auditTerm);
+    const ins = db.prepare(`INSERT INTO qc_actions (owna_id, term, quality_area, issue, action, progress, priority, owner, due_date, completed) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+    for (const a of p.actions) ins.run(c.owna_id, auditTerm, a.quality_area, a.issue, a.action, a.progress, a.priority, a.owner, a.due_date, a.completed);
   });
   tx();
-  return { centre: c.name, owna_id: c.owna_id, qa: p.qa.length, actions: p.actions.length, overall_pct: p.overall_pct };
+  return { centre: c.name, owna_id: c.owna_id, term: auditTerm, qa: p.qa.length, actions: p.actions.length, overall_pct: p.overall_pct };
 }
 
 module.exports = { parseAudit, importAuditBuffer };

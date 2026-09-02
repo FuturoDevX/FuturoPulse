@@ -212,15 +212,17 @@ CREATE TABLE IF NOT EXISTS pc_targets (
 
 -- ===== Quality & Compliance (uploaded audit) =====
 CREATE TABLE IF NOT EXISTS qc_audits (
-  owna_id     TEXT PRIMARY KEY,        -- latest audit per centre
-  centre_name TEXT, auditor TEXT, audit_date TEXT, term TEXT,
+  owna_id     TEXT NOT NULL,
+  term        TEXT NOT NULL,           -- audit period, e.g. "Term 2 2026" (one row per centre per audit)
+  centre_name TEXT, auditor TEXT, audit_date TEXT,
   overall_pct REAL,
   qa_json     TEXT,                    -- JSON: [{code,name,items,y,n,pct}]
-  uploaded_at TEXT
+  uploaded_at TEXT,
+  PRIMARY KEY (owna_id, term)
 );
 CREATE TABLE IF NOT EXISTS qc_actions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  owna_id TEXT, quality_area TEXT, issue TEXT, action TEXT, progress TEXT,
+  owna_id TEXT, term TEXT, quality_area TEXT, issue TEXT, action TEXT, progress TEXT,
   priority TEXT, owner TEXT, due_date TEXT, completed TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_qcact_owna ON qc_actions(owna_id);

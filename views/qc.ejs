@@ -7,48 +7,111 @@
 %>
 <div class="page-head"><div>
   <h1>Quality &amp; Compliance</h1>
-  <p class="sub">From the bi-annual compliance audit (NQF Quality Areas QA1–QA7)</p>
-</div><% if (user.role==='admin') { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;align-self:center;" href="/admin/qc">Upload audit</a><% } %></div>
+  <p class="sub">Bi-annual compliance audit · NQF Quality Areas QA1–QA7<%= audit ? ' · ' + shortName(audit.centre_name) : '' %></p>
+</div>
+<div class="head-actions" style="display:flex;gap:8px;align-items:center;">
+  <% if (!locals.scopedOwnaId && centres.length > 1) { %>
+  <form method="GET" style="display:inline;"><select name="owna" onchange="this.form.submit()"><% centres.forEach(function(c){ %><option value="<%= c.owna_id %>" <%= c.owna_id===owna?'selected':'' %>><%= shortName(c.name) %></option><% }); %></select></form>
+  <% } %>
+  <% if (terms.length) { %>
+  <form method="GET" style="display:inline;"><input type="hidden" name="owna" value="<%= owna %>"><select name="term" onchange="this.form.submit()"><% terms.forEach(function(t){ %><option value="<%= t.term %>" <%= t.term===term?'selected':'' %>><%= t.term %> (<%= t.overall_pct %>%)</option><% }); %></select></form>
+  <% } %>
+  <% if (user.role==='admin') { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/qc">Upload audit</a><% } %>
+</div></div>
 
-<% if (!summary.length) { %>
-  <div class="card"><p class="muted">No audit uploaded yet. <% if (user.role==='admin'){ %>Go to <a href="/admin/qc">Upload audit</a>.<% } %></p></div>
-<% } %>
+<% if (!audit) { %>
+  <div class="card"><p class="muted" style="margin:0;">No audit uploaded yet. <% if (user.role==='admin'){ %>Go to <a href="/admin/qc">Upload audit</a>.<% } %></p></div>
+<% } else { %>
 
-<% summary.forEach(function(c){ %>
-  <div class="card">
-    <div class="pc-head">
-      <h2 style="margin:0;"><%= shortName(c.centre_name) %> <span class="badge <%= pctClass(c.overall_pct) %>"><%= c.overall_pct %>% overall</span></h2>
-      <span class="muted" style="font-size:13px;">Audited <%= c.audit_date || '—' %> · <%= c.auditor || '' %> <%= c.term ? '· '+c.term : '' %></span>
-    </div>
-    <div class="qa-grid">
-      <% (c.qa||[]).forEach(function(q){ %>
-        <div class="qa-cell">
-          <div class="qa-code"><%= q.code %></div>
-          <div class="qa-bar-wrap"><div class="qa-bar <%= pctClass(q.pct) %>" style="width:<%= Math.min(q.pct||0,100) %>%;"></div></div>
-          <div class="qa-pct <%= pctClass(q.pct) %>-text"><%= q.pct %>%</div>
-          <div class="qa-name muted"><%= q.name %></div>
+<div class="card">
+  <div class="pc-head">
+    <h2 style="margin:0;"><%= shortName(audit.centre_name) %> <span class="badge <%= pctClass(audit.overall_pct) %>"><%= audit.overall_pct %>% overall</span></h2>
+    <span class="muted" style="font-size:13px;"><%= audit.term %> · audited <%= audit.audit_date || '—' %><%= audit.auditor ? ' · ' + audit.auditor : '' %></span>
+  </div>
+  <div class="qa-grid">
+    <% (audit.qa||[]).forEach(function(q){ %>
+      <div class="qa-cell">
+        <div class="qa-code"><%= q.code %></div>
+        <div class="qa-bar-wrap"><div class="qa-bar <%= pctClass(q.pct) %>" style="width:<%= Math.min(q.pct||0,100) %>%;"></div></div>
+        <div class="qa-pct <%= pctClass(q.pct) %>-text"><%= q.pct %>%</div>
+        <div class="qa-name muted"><%= q.name %></div>
+      </div>
+    <% }); %>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Compliance over time <span class="muted" style="font-weight:400;font-size:13px;">· <%= shortName(audit.centre_name) %>, by audit</span></h2>
+  <% if (trend.length < 2) { %>
+    <p class="muted" style="margin:0;">Only one audit on record (<%= trend.length ? trend[0].term : '—' %>). Trends appear here once a second audit is uploaded — each new term is kept, so history builds up automatically.</p>
+  <% } else {
+       const oMax = Math.max(100, ...trend.map(t=>t.overall_pct||0));
+       const codes = ['QA1','QA2','QA3','QA4','QA5','QA6','QA7'];
+  %>
+    <h3 class="card-sub">Overall %</h3>
+    <div class="chart" style="height:150px;">
+      <% trend.forEach(function(t){ %>
+        <div class="chart-col" title="<%= t.term %>: <%= t.overall_pct %>%">
+          <div class="chart-bar <%= pctClass(t.overall_pct) %>" style="height:<%= Math.round((t.overall_pct||0)/oMax*100) %>%;"></div>
+          <div class="chart-x"><%= t.term %><br><span><%= t.overall_pct %>%</span></div>
         </div>
       <% }); %>
     </div>
-    <% var open = (c.actions||[]).filter(a=>!isDone(a.completed)); %>
-    <h3 class="stage-h" style="margin-top:18px;">Open action items <span class="badge bad"><%= open.length %></span> <span class="muted" style="font-weight:400;">of <%= (c.actions||[]).length %></span></h3>
-    <div style="overflow-x:auto;">
-    <table>
-      <thead><tr><th>QA</th><th>Issue</th><th>Action required</th><th>Priority</th><th>Owner</th><th>Due</th></tr></thead>
+    <h3 class="card-sub">By Quality Area</h3>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Audit</th><% codes.forEach(function(cd){ %><th class="num"><%= cd %></th><% }); %><th class="num">Overall</th></tr></thead>
       <tbody>
-        <% (c.actions||[]).slice(0,60).forEach(function(a){ %>
-          <tr class="<%= isDone(a.completed)?'future-row':'' %>">
-            <td><%= a.quality_area %></td>
-            <td><%= isDone(a.completed) ? '<s>'+(a.issue||'') : (a.issue||'') %><%= isDone(a.completed)?'</s>':'' %></td>
-            <td style="max-width:320px;white-space:normal;"><%= (a.action||'').slice(0,180) %></td>
-            <td><%- prPill(a.priority) %></td>
-            <td><%= a.owner || '—' %></td>
-            <td><%= a.due_date || (isDone(a.completed)?'done':'—') %></td>
+        <% trend.slice().reverse().forEach(function(t){ %>
+          <tr>
+            <td><strong><%= t.term %></strong><br><span class="muted" style="font-size:11px;"><%= t.audit_date || '' %></span></td>
+            <% codes.forEach(function(cd){ var v=t.qa[cd]; %><td class="num <%= pctClass(v) %>-text"><%= v==null?'—':v+'%' %></td><% }); %>
+            <td class="num <%= pctClass(t.overall_pct) %>-text"><strong><%= t.overall_pct %>%</strong></td>
           </tr>
         <% }); %>
       </tbody>
-    </table>
-    </div>
+    </table></div>
+  <% } %>
+</div>
+
+<div class="card">
+  <% var open = (audit.actions||[]).filter(a=>!isDone(a.completed)); %>
+  <h2 style="margin-top:0;">Action items <span class="badge bad"><%= open.length %> open</span> <span class="muted" style="font-weight:400;font-size:13px;">of <%= (audit.actions||[]).length %> · <%= audit.term %></span></h2>
+  <% if (!(audit.actions||[]).length) { %>
+    <p class="muted" style="margin:0;">No action items recorded for this audit.</p>
+  <% } else { %>
+  <div style="overflow-x:auto;">
+  <table data-paginate="10">
+    <thead><tr><th>QA</th><th>Issue</th><th>Action required</th><th>Priority</th><th>Owner</th><th>Due</th></tr></thead>
+    <tbody>
+      <% (audit.actions||[]).forEach(function(a){ %>
+        <tr class="<%= isDone(a.completed)?'future-row':'' %>">
+          <td><%= a.quality_area %></td>
+          <td style="white-space:normal;"><%= isDone(a.completed) ? '<s>'+(a.issue||'') : (a.issue||'') %><%= isDone(a.completed)?'</s>':'' %></td>
+          <td style="max-width:320px;white-space:normal;"><%= (a.action||'').slice(0,180) %></td>
+          <td><%- prPill(a.priority) %></td>
+          <td><%= a.owner || '—' %></td>
+          <td><%= a.due_date || (isDone(a.completed)?'done':'—') %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
   </div>
-<% }); %>
+  <% } %>
+</div>
+
+<% } %>
+
+<script>
+document.querySelectorAll('table[data-paginate]').forEach(function(t){
+  var per = parseInt(t.getAttribute('data-paginate')) || 10;
+  var tb = t.tBodies[0]; if(!tb) return;
+  var rows = Array.prototype.slice.call(tb.rows);
+  if(rows.length <= per) return;
+  var expanded = false;
+  var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'btn-more';
+  function render(){ rows.forEach(function(r,i){ r.hidden = !expanded && i >= per; }); btn.textContent = expanded ? 'Show fewer' : ('Show all ' + rows.length + ' →'); }
+  btn.onclick = function(){ expanded = !expanded; render(); };
+  t.parentNode.insertBefore(btn, t.nextSibling); render();
+});
+</script>
 <%- include('partials/footer') %>

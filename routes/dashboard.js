@@ -115,11 +115,20 @@ router.get("/safety", (req, res) => {
   res.render("safety", { title: "Safety & Incidents", rep, lastRun: lastRun() });
 });
 
-// Quality & Compliance (from uploaded audit).
+// Quality & Compliance (from uploaded audits) — navigate by centre and audit period.
 router.get("/qc", (req, res) => {
   const scoped = scopedOwnaId(req);
-  const summary = m.qcSummary(scoped).map((sc) => ({ ...sc, actions: (m.qcCentre(sc.owna_id) || {}).actions || [] }));
-  res.render("qc", { title: "Quality & Compliance", summary, lastRun: lastRun() });
+  const centresList = m.qcSummary(scoped).map((a) => ({ owna_id: a.owna_id, name: a.centre_name }));
+  const owna = scoped || (centresList.find((c) => c.owna_id === req.query.owna) ? req.query.owna : (centresList[0] && centresList[0].owna_id));
+  const terms = owna ? m.qcTerms(owna) : [];
+  const term = terms.find((t) => t.term === req.query.term) ? req.query.term : (terms[0] && terms[0].term);
+  res.render("qc", {
+    title: "Quality & Compliance",
+    centres: centresList, owna, terms, term,
+    audit: owna ? m.qcCentre(owna, term) : null,
+    trend: owna ? m.qcTrend(owna) : [],
+    lastRun: lastRun(),
+  });
 });
 
 // People & Culture (manual metrics vs targets).
