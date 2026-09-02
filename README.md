@@ -45,3 +45,40 @@ Default login is `ADMIN_EMAIL` / `ADMIN_DEFAULT_PASSWORD` from `.env` — **chan
 - Occupancy >100% is real (overbooking). If you'd rather cap it, switch the numerator to attended child-days.
 - `.env` (with the API key) and `data/` are gitignored. Don't commit them.
 - Room-level and week-on-week trend views are easy follow-ons off the same `daily_metrics` table.
+
+## Deploying to Render (persistent disk)
+
+The app is committed and ready. It deploys via `render.yaml` (a Blueprint) with a
+**persistent disk mounted at `/data`** — the SQLite DB lives there (`DB_PATH=/data/owna.db`),
+so it survives deploys and is on a real filesystem (never keep the DB inside OneDrive).
+
+**One-time setup (needs your GitHub + Render logins):**
+
+1. **Create a private GitHub repo** under the FuturoDevX org (e.g. `FuturoOpsDashboard`).
+2. **Push this app** to it (run inside `OWNA-Dashboard-App/`):
+   ```bash
+   git remote add origin https://github.com/FuturoDevX/FuturoOpsDashboard.git
+   git branch -M main
+   git push -u origin main
+   ```
+3. **Render → New → Blueprint** → connect the repo. Render reads `render.yaml`,
+   creates the web service + the 1 GB disk, and prompts for the `sync: false` secrets:
+   - `OWNA_API_KEY`
+   - `LINELEADER_USERNAME`, `LINELEADER_PASSWORD`
+   - `EH_PAYROLL_API_KEY`, `EH_PAYROLL_BUSINESS_ID`
+   - `ADMIN_DEFAULT_PASSWORD`
+   (`SESSION_SECRET` is auto-generated; base URLs and tuning are already set.)
+4. **Deploy.** `preDeployCommand` runs `node db/init.js` (schema + admin + migrations).
+
+**After first deploy — populate the data (the disk starts empty):**
+
+- Log in (admin email from env / the password you set) and click **↻ Refresh data**
+  (runs the full OWNA + LineLeader + Employment Hero snapshot).
+- For 2 years of occupancy history, open Render's **Shell** on the service and run:
+  ```bash
+  npm run backfill 730
+  ```
+- The nightly cron (02:15) keeps everything current after that.
+- **Change the admin password** after first login.
+
+Give teammates the URL + the read-only `viewer` login (or add named accounts).
