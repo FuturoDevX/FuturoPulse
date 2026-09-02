@@ -4,7 +4,6 @@
   const shortName = (n) => n.replace('Futuro Childcare & Education - ','');
   const money = (n) => '$' + Number(n||0).toLocaleString('en-AU', { maximumFractionDigits: 0 });
   const dow = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short' });
-  const maxOcc = Math.max(100, ...daily.map(d => d.occupancy));
 %>
 
 <div class="page-head">
@@ -115,23 +114,6 @@
   <% } %>
 </div>
 <% } %>
-
-<div class="card">
-  <h2 style="margin-top:0;">Daily occupancy <span class="muted" style="font-weight:400;font-size:13px;">· % of licensed places booked<% if (to > today) { %>; lighter bars are future bookings<% } %></span></h2>
-  <% if (!daily.length) { %>
-    <p class="muted">No data for this range.</p>
-  <% } else { %>
-    <div class="chart with-100">
-      <div class="chart-100" style="bottom:<%= (100/maxOcc*100).toFixed(1) %>%;"><span>100%</span></div>
-      <% daily.forEach(function(d){ %>
-        <div class="chart-col" title="<%= d.metric_date %> — <%= d.occupancy %>% (<%= d.booked %>/<%= d.capacity %> places)<%= d.metric_date > today ? ' · scheduled' : '' %>">
-          <div class="chart-bar <%= occClass(d.occupancy) %> <%= d.metric_date > today ? 'future' : '' %>" style="height:<%= Math.round((d.occupancy / maxOcc) * 100) %>%;"></div>
-          <div class="chart-x"><strong class="<%= occClass(d.occupancy) %>-text"><%= d.occupancy %>%</strong><br><%= dow(d.metric_date) %> <%= d.metric_date.slice(5) %></div>
-        </div>
-      <% }); %>
-    </div>
-  <% } %>
-</div>
 
 <% if (occTrend && occTrend.length > 1) {
      const mMax = Math.max(100, ...occTrend.map(t => t.occupancy));
