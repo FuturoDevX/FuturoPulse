@@ -1,6 +1,9 @@
 const express = require("express");
 const { requireAdminOrOps, requireAdmin } = require("../middleware/auth");
 const bcrypt = require("bcryptjs");
+const multer = require("multer");
+const { importAuditBuffer } = require("../services/qc-import");
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const { runSnapshot, lastRun } = require("../services/snapshot");
 const { owna } = require("../services/owna");
 const router = express.Router();
@@ -100,6 +103,21 @@ router.post("/pc", requireAdmin, (req, res) => {
   }
   ["enps", "turnover", "checkin_pct", "psych_safety"].forEach((k) => { const v = num(req.body["target_" + k]); if (v != null) m.savePcTarget(k, v); });
   res.redirect("/admin/pc?month=" + month + "&msg=" + encodeURIComponent("Saved."));
+});
+
+
+// ===== Quality & Compliance upload (admin) =====
+router.get("/qc", requireAdmin, (req, res) => {
+  res.render("admin-qc", { title: "Q&C Upload", summary: m.qcSummary(), msg: req.query.msg, err: req.query.err });
+});
+router.post("/qc/upload", requireAdmin, upload.single("audit"), (req, res) => {
+  if (!req.file) return res.redirect("/admin/qc?err=" + encodeURIComponent("No file uploaded."));
+  try {
+    const r = importAuditBuffer(req.file.buffer, (req.body.term || "").trim());
+    res.redirect("/admin/qc?msg=" + encodeURIComponent(`Imported ${r.centre}: ${r.overall_pct}% overall, ${r.qa} QAs, ${r.actions} actions.`));
+  } catch (e) {
+    res.redirect("/admin/qc?err=" + encodeURIComponent("Import failed: " + e.message));
+  }
 });
 
 module.exports = router;

@@ -15,6 +15,7 @@
     <nav class="side-nav">
       <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>">Overview</a>
       <a href="/pc" class="<%= currentPath === '/pc' ? 'active' : '' %>">People &amp; Culture</a>
+      <a href="/qc" class="<%= currentPath === '/qc' ? 'active' : '' %>">Quality &amp; Compliance</a>
       <% if (!locals.scopedOwnaId) { %>
         <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
         <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>
@@ -29,6 +30,7 @@
         <div class="side-nav-divider">Admin</div>
         <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>
         <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">Enter P&amp;C</a>
+        <a href="/admin/qc" class="<%= currentPath === '/admin/qc' ? 'active' : '' %>">Upload Q&amp;C audit</a>
       <% } %>
     </nav>
     <div class="side-nav-footer">

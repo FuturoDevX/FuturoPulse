@@ -190,3 +190,11 @@ tr:hover td.hot { background: #ffedcc; }
 .user-form input, .user-form select { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
 .badge.role-exec { background: #e8eefc; color: var(--navy); }
 .badge.role-centre { background: #f5eff1; color: var(--berry); }
+
+/* Q&C QA grid */
+.qa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 12px; }
+.qa-cell { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.qa-code { font-weight: 700; color: var(--navy); font-size: 13px; }
+.qa-bar-wrap { background: #eef0f4; border-radius: 4px; height: 8px; margin: 6px 0 4px; overflow: hidden; }
+.qa-bar { height: 100%; } .qa-bar.good { background: #4caf7d; } .qa-bar.warn { background: #e0b64b; } .qa-bar.bad { background: #d9736b; }
+.qa-pct { font-weight: 700; font-size: 15px; } .qa-name { font-size: 11px; line-height: 1.25; margin-top: 2px; }

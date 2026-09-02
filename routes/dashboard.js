@@ -73,6 +73,13 @@ router.get("/centre/:id/pipeline", (req, res) => {
   res.render("centre-pipeline", { title: c.name + " — Pipeline", centre: c, detail, today: m.todayStr(), lastRun: lastRun() });
 });
 
+// Quality & Compliance (from uploaded audit).
+router.get("/qc", (req, res) => {
+  const scoped = scopedOwnaId(req);
+  const summary = m.qcSummary(scoped).map((sc) => ({ ...sc, actions: (m.qcCentre(sc.owna_id) || {}).actions || [] }));
+  res.render("qc", { title: "Quality & Compliance", summary, lastRun: lastRun() });
+});
+
 // People & Culture (manual metrics vs targets).
 router.get("/pc", (req, res) => {
   const months = m.pcMonths();

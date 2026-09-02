@@ -10,12 +10,14 @@
     "backfill": "node db/backfill.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
     "ejs": "^3.1.10",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
-    "node-cron": "^3.0.3"
+    "multer": "^2.0.1",
+    "node-cron": "^3.0.3",
+    "xlsx": "^0.18.5"
   }
 }

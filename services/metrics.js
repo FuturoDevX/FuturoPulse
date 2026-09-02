@@ -498,6 +498,25 @@ function exitsLatestDate() {
 
 
 
+
+// ===== Quality & Compliance (uploaded audit) =====
+function qcSummary(ownaId) {
+  const where = ownaId ? "WHERE a.owna_id = ?" : "";
+  const args = ownaId ? [ownaId] : [];
+  const audits = db.prepare(`SELECT * FROM qc_audits a ${where} ORDER BY centre_name`).all(...args);
+  return audits.map((a) => {
+    const open = db.prepare("SELECT COUNT(*) n FROM qc_actions WHERE owna_id=? AND (completed IS NULL OR completed='' OR completed NOT LIKE 'Y%')").get(a.owna_id).n;
+    const high = db.prepare("SELECT COUNT(*) n FROM qc_actions WHERE owna_id=? AND priority LIKE 'High%' AND (completed IS NULL OR completed='' OR completed NOT LIKE 'Y%')").get(a.owna_id).n;
+    return { ...a, qa: JSON.parse(a.qa_json || "[]"), open_actions: open, open_high: high };
+  });
+}
+function qcCentre(ownaId) {
+  const a = db.prepare("SELECT * FROM qc_audits WHERE owna_id=?").get(ownaId);
+  if (!a) return null;
+  const actions = db.prepare("SELECT * FROM qc_actions WHERE owna_id=? ORDER BY (completed LIKE 'Y%'), CASE priority WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, quality_area").all(ownaId);
+  return { ...a, qa: JSON.parse(a.qa_json || "[]"), actions };
+}
+
 // ===== People & Culture (manual entry) =====
 const PC_TARGET_KEYS = ["enps", "turnover", "checkin_pct", "psych_safety"];
 function pcTargets() {
@@ -621,4 +640,5 @@ module.exports = {
   occupancyTrend, occupancyTrendGroup,
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, PC_TARGET_KEYS,
+  qcSummary, qcCentre,
 };
