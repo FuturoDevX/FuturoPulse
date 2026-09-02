@@ -534,16 +534,56 @@ function actionPlanAuto(ownaId) {
     if (pr && pr.enps != null) out.family = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps}` };
     if (pr && pr.turnover != null) out.team = { rating: rag(pr.turnover, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${pr.turnover}%` };
   }
-  // Safety: reportable child incidents (regulator-notified / medical / emergency) in the latest month.
-  const inc = incidentsMonth(ownaId);
-  if (inc) out.safety = { rating: rag(inc.reportable, 0, 1, true), reason: `${inc.reportable} reportable of ${inc.total} incidents (${inc.injuries} injuries) · ${inc.month}` };
+  // Safety: notifiable child incidents (regulatory authority completed) in the latest complete month.
+  const inc = incidentsMonth(ownaId, null, true);
+  if (inc) out.safety = { rating: rag(inc.reportable, 0, 2, true),
+    reason: `${inc.reportable} notifiable to regulator · ${inc.total} incidents (${inc.injuries} injuries, ${inc.serious} serious) · ${inc.month}` };
   return out;
 }
-function incidentsMonth(ownaId, month) {
-  // month may be YYYY-MM; if no exact row, use the latest available for the centre.
-  let r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? AND month=?").get(ownaId, month);
-  if (!r) r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? ORDER BY month DESC LIMIT 1").get(ownaId);
-  return r || null;
+function incidentsMonth(ownaId, month, preferComplete) {
+  // Exact month if given/available; else the latest available. preferComplete skips
+  // the partial current calendar month so ratings aren't understated mid-month.
+  if (month) {
+    const r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? AND month=?").get(ownaId, month);
+    if (r) return r;
+  }
+  const nowMonth = new Date().toISOString().slice(0, 7);
+  if (preferComplete) {
+    const r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? AND month<? ORDER BY month DESC LIMIT 1").get(ownaId, nowMonth);
+    if (r) return r;
+  }
+  return db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? ORDER BY month DESC LIMIT 1").get(ownaId) || null;
+}
+
+// Rolling incident report: per-centre month-by-month grid + last-complete-month headline.
+function incidentsReport(scopedOwnaId, monthsBack = 12) {
+  let months = db.prepare("SELECT DISTINCT month FROM incidents_monthly ORDER BY month DESC LIMIT ?").all(monthsBack).map((r) => r.month);
+  months.reverse(); // chronological (oldest → newest)
+  if (!months.length) return { months: [], rows: [], totals: [], lastComplete: null, currentMonth: new Date().toISOString().slice(0, 7), headline: null };
+  const nowMonth = new Date().toISOString().slice(0, 7);
+  const lastComplete = months.filter((mo) => mo < nowMonth).slice(-1)[0] || months[months.length - 1];
+
+  let centreRows = db.prepare(`SELECT DISTINCT c.owna_id, c.name FROM incidents_monthly i JOIN centres c ON c.owna_id = i.owna_id ORDER BY c.name`).all();
+  if (scopedOwnaId) centreRows = centreRows.filter((c) => c.owna_id === scopedOwnaId);
+  const get = db.prepare("SELECT total, injuries, illness, serious, reportable FROM incidents_monthly WHERE owna_id=? AND month=?");
+  const rateOf = (rep) => rag(rep, 0, 2, true); // notifiable: 0 green, 1-2 amber, 3+ red
+
+  const rows = centreRows.map((c) => {
+    const cells = months.map((mo) => {
+      const row = get.get(c.owna_id, mo);
+      const r = row || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 };
+      return { month: mo, ...r, hasData: !!row, rating: rateOf(r.reportable) };
+    });
+    const hc = cells.find((x) => x.month === lastComplete) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0, rating: rateOf(0) };
+    return { owna_id: c.owna_id, name: c.name.replace("Futuro Childcare & Education - ", ""), cells, headline: hc };
+  });
+  const totals = months.map((mo) => {
+    const t = { month: mo, total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 };
+    rows.forEach((r) => { const cell = r.cells.find((x) => x.month === mo); ["total","injuries","illness","serious","reportable"].forEach((k) => t[k] += cell[k]); });
+    return t;
+  });
+  const headline = { ...(totals.find((t) => t.month === lastComplete) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 }), rating: rateOf((totals.find((t) => t.month === lastComplete) || {}).reportable || 0) };
+  return { months, rows, totals, lastComplete, currentMonth: nowMonth, headline };
 }
 function actionPlanMonths(limit = 24) {
   return db.prepare("SELECT DISTINCT month FROM action_plans ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);
@@ -709,5 +749,5 @@ module.exports = {
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, PC_TARGET_KEYS,
   qcSummary, qcCentre,
-  AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth,
+  AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
 };

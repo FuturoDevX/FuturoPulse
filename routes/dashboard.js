@@ -109,6 +109,12 @@ router.post("/action-plans/edit", requireAdminOrOps, (req, res) => {
   res.redirect(`/action-plans?owna=${owna}&month=${month}`);
 });
 
+// Safety & Incidents (OWNA child incident reports, rolling 12 months).
+router.get("/safety", (req, res) => {
+  const rep = m.incidentsReport(scopedOwnaId(req), 12);
+  res.render("safety", { title: "Safety & Incidents", rep, lastRun: lastRun() });
+});
+
 // Quality & Compliance (from uploaded audit).
 router.get("/qc", (req, res) => {
   const scoped = scopedOwnaId(req);

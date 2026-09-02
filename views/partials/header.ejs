@@ -17,6 +17,7 @@
       <a href="/pc" class="<%= currentPath === '/pc' ? 'active' : '' %>">People &amp; Culture</a>
       <a href="/qc" class="<%= currentPath === '/qc' ? 'active' : '' %>">Quality &amp; Compliance</a>
       <a href="/action-plans" class="<%= currentPath.indexOf('/action-plans')===0 ? 'active' : '' %>">Action Plans</a>
+      <a href="/safety" class="<%= currentPath === '/safety' ? 'active' : '' %>">Safety &amp; Incidents</a>
       <% if (!locals.scopedOwnaId) { %>
         <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
         <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>

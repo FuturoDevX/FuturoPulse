@@ -178,10 +178,15 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
 async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}) {
   const from = daysAgo(windowDays), to = today();
   const centres = await owna.listCentres();
-  const upsert = db.prepare(`INSERT INTO incidents_monthly (owna_id, month, total, injuries, reportable, updated_at)
-    VALUES (@owna_id,@month,@total,@injuries,@reportable,datetime('now'))
-    ON CONFLICT(owna_id, month) DO UPDATE SET total=@total, injuries=@injuries, reportable=@reportable, updated_at=datetime('now')`);
-  const injTxt = (v) => { const t = String(v || "").trim().toLowerCase(); return t && t !== "n/a" && t !== "na" && t !== "none"; };
+  const upsert = db.prepare(`INSERT INTO incidents_monthly (owna_id, month, total, injuries, illness, serious, reportable, updated_at)
+    VALUES (@owna_id,@month,@total,@injuries,@illness,@serious,@reportable,datetime('now'))
+    ON CONFLICT(owna_id, month) DO UPDATE SET total=@total, injuries=@injuries, illness=@illness, serious=@serious, reportable=@reportable, updated_at=datetime('now')`);
+  const txt = (v) => { const t = String(v || "").trim().toLowerCase(); return t && t !== "n/a" && t !== "na" && t !== "none" ? t : ""; };
+  // Classify from OWNA's structured `affected` array (e.g. ["Cut/open wound"], ["High temperature"]).
+  // `medicalAttention`/`emergencyServices` booleans are never ticked in practice, so we do not rely on them.
+  const ILLNESS  = /temperature|fever|rash|vomit|diarrh|nausea|illness|infectious|respiratory|hand.?foot|unwell|\bsick\b|cough/;
+  const NONINJURY = /behaviour|behavior|meltdown|recount of events|no injury|no mark|no visible|no sign|monitor/;
+  const SERIOUS  = /head|concuss|bite|anaphylax|fracture|broken|crush|jam|\beye\b|dental|tooth|burn|dislocat|chok|unconscious|seizure|bleed|nose ?bleed/;
   let rows = 0;
   for (const c of centres) {
     let inc;
@@ -190,11 +195,16 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
     for (const r of inc) {
       const month = (r.incidentDate || "").slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(month)) continue;
-      let m = byMonth.get(month); if (!m) { m = { total: 0, injuries: 0, reportable: 0 }; byMonth.set(month, m); }
+      let m = byMonth.get(month); if (!m) { m = { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 }; byMonth.set(month, m); }
       m.total += 1;
-      if (injTxt(r.injurytrauma)) m.injuries += 1;
-      const reportable = injTxt(r.regulatoryAuthority) || r.regulatoryAuthorityDatetime || r.emergencyServices || r.medicalAttention;
-      if (reportable) m.reportable += 1;
+      const affected = (Array.isArray(r.affected) ? r.affected : []).map((x) => String(x).toLowerCase());
+      const joined = affected.join(" | ");
+      const isIllness = ILLNESS.test(joined);
+      const isNonInjury = NONINJURY.test(joined);
+      if (isIllness) m.illness += 1;
+      else if (affected.length && !isNonInjury) m.injuries += 1;
+      if (!isIllness && SERIOUS.test(joined)) m.serious += 1;
+      if (txt(r.regulatoryAuthority)) m.reportable += 1;   // centre actually completed the regulatory-authority field
     }
     const write = db.transaction((entries) => { for (const [month, m] of entries) { upsert.run({ owna_id: c.id, month, ...m }); rows += 1; } });
     write([...byMonth.entries()]);

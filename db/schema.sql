@@ -246,9 +246,11 @@ CREATE INDEX IF NOT EXISTS idx_apitems ON action_plan_items(owna_id, month);
 CREATE TABLE IF NOT EXISTS incidents_monthly (
   owna_id     TEXT NOT NULL,
   month       TEXT NOT NULL,          -- YYYY-MM
-  total       INTEGER DEFAULT 0,
-  injuries    INTEGER DEFAULT 0,
-  reportable  INTEGER DEFAULT 0,      -- regulatory authority notified / emergency / medical attention
+  total       INTEGER DEFAULT 0,      -- all incident reports
+  injuries    INTEGER DEFAULT 0,      -- physical-injury incidents (affected type: cut, bruise, bite, head bump, etc.)
+  illness     INTEGER DEFAULT 0,      -- illness incidents (temperature, rash, vomiting, infectious, respiratory)
+  serious     INTEGER DEFAULT 0,      -- higher-severity injuries (head/concussion, bite, anaphylaxis, fracture, crush, eye, burn)
+  reportable  INTEGER DEFAULT 0,      -- notifiable: regulatoryAuthority field completed by the centre
   updated_at  TEXT,
   PRIMARY KEY (owna_id, month)
 );

@@ -1,0 +1,106 @@
+<%- include('partials/header', { title: 'Safety & Incidents' }) %>
+<%
+  const mLabel = (m) => { if(!m) return ''; const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); };
+  const mShort = (m) => { if(!m) return ''; const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short'}); };
+  const dot = (r) => '<span class="rag rag-'+(r||'none')+'"></span>';
+  const h = rep.headline || {};
+  const isPartial = (m) => m === rep.currentMonth;
+%>
+<div class="page-head">
+  <div>
+    <h1>Safety &amp; Incidents</h1>
+    <p class="sub">OWNA child incident reports · rolling 12 months · headline figures = last complete month (<%= mLabel(rep.lastComplete) %>)</p>
+  </div>
+</div>
+
+<% if (!rep.months.length) { %>
+  <div class="card"><p class="muted" style="margin:0;">No incident data has been captured yet. It populates on the nightly sync from OWNA.</p></div>
+<% } else { %>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= h.total %></div><div class="l">Incident reports</div></div>
+  <div class="card stat"><div class="n"><%= h.injuries %></div><div class="l">Physical injuries</div></div>
+  <div class="card stat"><div class="n"><%= h.serious %></div><div class="l">Serious injuries</div></div>
+  <div class="card stat"><div class="n"><%= h.illness %></div><div class="l">Illness</div></div>
+  <div class="card stat <%= h.rating==='red' ? 'hot-card' : '' %>"><div class="n"><%= h.reportable %></div><div class="l"><%- dot(h.rating) %> Notifiable to regulator</div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">By centre — <%= mLabel(rep.lastComplete) %></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Centre</th><th style="width:130px;">Notifiable</th>
+      <th style="text-align:right;">Incidents</th><th style="text-align:right;">Injuries</th>
+      <th style="text-align:right;">Serious</th><th style="text-align:right;">Illness</th>
+    </tr></thead>
+    <tbody>
+      <% rep.rows.forEach(function(r){ var c=r.headline; %>
+        <tr>
+          <td><strong><%= r.name %></strong></td>
+          <td><%- dot(c.rating) %> <span style="text-transform:capitalize;"><%= c.rating %></span> · <%= c.reportable %></td>
+          <td style="text-align:right;"><%= c.total %></td>
+          <td style="text-align:right;"><%= c.injuries %></td>
+          <td style="text-align:right;"><%= c.serious %></td>
+          <td style="text-align:right;"><%= c.illness %></td>
+        </tr>
+      <% }); %>
+      <% if (rep.rows.length > 1) { var t=rep.headline; %>
+        <tr style="border-top:2px solid var(--line,#e5e7eb);font-weight:700;">
+          <td>All centres</td>
+          <td><%- dot(t.rating) %> · <%= t.reportable %></td>
+          <td style="text-align:right;"><%= t.total %></td>
+          <td style="text-align:right;"><%= t.injuries %></td>
+          <td style="text-align:right;"><%= t.serious %></td>
+          <td style="text-align:right;"><%= t.illness %></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Incident volume — 12-month trend</h2>
+  <p class="footnote" style="margin-top:0;">Each cell: incident count, with the dot showing the notifiable-to-regulator rating (green 0 · amber 1–2 · red 3+). “N” = notifiable count that month.</p>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Centre</th>
+      <% rep.months.forEach(function(mo){ %><th style="text-align:center;<%= isPartial(mo)?'opacity:.6;':'' %>"><%= mShort(mo) %><% if(isPartial(mo)){ %>*<% } %></th><% }); %>
+    </tr></thead>
+    <tbody>
+      <% rep.rows.forEach(function(r){ %>
+        <tr>
+          <td><strong><%= r.name %></strong></td>
+          <% r.cells.forEach(function(cell){ %>
+            <td style="text-align:center;<%= isPartial(cell.month)?'opacity:.6;':'' %>">
+              <% if(!cell.hasData){ %><span class="muted">—</span><% } else { %>
+                <%- dot(cell.rating) %><br>
+                <span style="font-size:13px;"><%= cell.total %></span>
+                <% if(cell.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">N<%= cell.reportable %></span><% } %>
+              <% } %>
+            </td>
+          <% }); %>
+        </tr>
+      <% }); %>
+      <% if (rep.rows.length > 1) { %>
+        <tr style="border-top:2px solid var(--line,#e5e7eb);font-weight:700;">
+          <td>All centres</td>
+          <% rep.totals.forEach(function(t){ var rt = (t.reportable<=0?'green':t.reportable<=2?'amber':'red'); %>
+            <td style="text-align:center;<%= isPartial(t.month)?'opacity:.6;':'' %>">
+              <%- dot(rt) %><br><span style="font-size:13px;"><%= t.total %></span>
+              <% if(t.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">N<%= t.reportable %></span><% } %>
+            </td>
+          <% }); %>
+        </tr>
+      <% } %>
+    </tbody>
+  </table></div>
+  <p class="footnote">
+    * Current month is partial (fills in as the month runs).
+    <strong>Notifiable</strong> = the centre completed OWNA’s “regulatory authority” field on the report (the notifiable-to-regulator signal that drives the Safety Culture rating in the action plan).
+    <strong>Injuries</strong> = physical-injury reports (cuts, bruises, bites, head bumps…); <strong>Serious</strong> = head/concussion, bite, anaphylaxis, fracture, crush, eye, burn; <strong>Illness</strong> = temperature, rash, vomiting, infectious.
+    <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
+  </p>
+</div>
+
+<% } %>
+<%- include('partials/footer') %>
