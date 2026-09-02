@@ -1,0 +1,187 @@
+<%- include('partials/header', { title: centre.name }) %>
+<%
+  function occClass(p){ return p >= 85 ? 'good' : p >= 70 ? 'warn' : 'bad'; }
+  const shortName = (n) => n.replace('Futuro Childcare & Education - ','');
+  const money = (n) => '$' + Number(n||0).toLocaleString('en-AU', { maximumFractionDigits: 0 });
+  const dow = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short' });
+  const maxOcc = Math.max(100, ...daily.map(d => d.occupancy));
+%>
+
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/?from=<%= from %>&to=<%= to %>">Overview</a> / <%= shortName(centre.name) %></p>
+    <h1><%= shortName(centre.name) %></h1>
+    <p class="sub">
+      <%= centre.suburb ? centre.suburb + ', ' : '' %><%= centre.state || '' %>
+      · <%= centre.capacity %> places · <%= centre.enrolled %> enrolled
+      <% if (centre.approval_no) { %> · <%= centre.approval_no %><% } %>
+    </p>
+  </div>
+</div>
+
+<%- include('partials/rangebar', { action: '/centre/' + centre.owna_id, from, to, presets, fwdPresets }) %>
+
+<% if (to > today) { %><div class="fwd-links"><span class="fwd-note">Showing scheduled bookings past today (<%= today %>)</span></div><% } %>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n <%= occClass(summary.occupancy) %>-text"><%= summary.occupancy %>%</div><div class="l">Occupancy</div></div>
+  <div class="card stat"><div class="n"><%= summary.attendance_rate %>%</div><div class="l">Attendance rate</div></div>
+  <div class="card stat"><div class="n"><%= summary.avg_daily_booked %></div><div class="l">Avg booked / day</div></div>
+  <div class="card stat"><div class="n"><%= summary.casual %></div><div class="l">Casual days</div></div>
+  <div class="card stat"><div class="n"><%= money(summary.fee_total) %></div><div class="l">Fees billed</div></div>
+  <div class="card stat"><div class="n"><%= money(summary.ccs_total) %></div><div class="l">CCS paid</div></div>
+</div>
+
+<% if (pipeline) { %>
+<div class="card pipeline-card">
+  <div class="pc-head">
+    <h2 style="margin:0;">Enrolment pipeline <span class="muted" style="font-weight:400;font-size:13px;">· LineLeader</span></h2>
+    <a class="row-link" href="/centre/<%= centre.owna_id %>/pipeline">Centre pipeline detail →</a>
+  </div>
+  <div class="grid kpis" style="margin:14px 0 0;">
+    <div class="card stat <%= pipeline.waitlist>0?'hot-card':'' %>"><div class="n"><%= pipeline.waitlist %></div><div class="l">On waitlist</div></div>
+    <div class="card stat"><div class="n"><%= pipeline.tour_scheduled %></div><div class="l">Tours scheduled</div></div>
+    <div class="card stat"><div class="n"><%= pipeline.offers_accepted %></div><div class="l">Offers accepted</div></div>
+    <div class="card stat"><div class="n good-text"><%= pipeline.starts_future %></div><div class="l">Expected starts (upcoming)</div></div>
+    <div class="card stat"><div class="n bad-text"><%= pipeline.withdrawn %></div><div class="l">Withdrawn (120d)</div></div>
+  </div>
+</div>
+<% } %>
+
+<div class="card">
+  <h2 style="margin-top:0;">Daily occupancy <span class="muted" style="font-weight:400;font-size:13px;">· % of licensed places booked<% if (to > today) { %>; lighter bars are future bookings<% } %></span></h2>
+  <% if (!daily.length) { %>
+    <p class="muted">No data for this range.</p>
+  <% } else { %>
+    <div class="chart with-100">
+      <div class="chart-100" style="bottom:<%= (100/maxOcc*100).toFixed(1) %>%;"><span>100%</span></div>
+      <% daily.forEach(function(d){ %>
+        <div class="chart-col" title="<%= d.metric_date %> — <%= d.occupancy %>% (<%= d.booked %>/<%= d.capacity %> places)<%= d.metric_date > today ? ' · scheduled' : '' %>">
+          <div class="chart-bar <%= occClass(d.occupancy) %> <%= d.metric_date > today ? 'future' : '' %>" style="height:<%= Math.round((d.occupancy / maxOcc) * 100) %>%;"></div>
+          <div class="chart-x"><strong class="<%= occClass(d.occupancy) %>-text"><%= d.occupancy %>%</strong><br><%= dow(d.metric_date) %> <%= d.metric_date.slice(5) %></div>
+        </div>
+      <% }); %>
+    </div>
+  <% } %>
+</div>
+
+<% if (occTrend && occTrend.length > 1) {
+     const mMax = Math.max(100, ...occTrend.map(t => t.occupancy));
+     const mth = (m) => { const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
+%>
+<div class="card">
+  <h2 style="margin-top:0;">Occupancy over time <span class="muted" style="font-weight:400;font-size:13px;">· monthly, last <%= occTrend.length %> months</span></h2>
+  <div class="chart" style="height:170px;">
+    <% occTrend.forEach(function(t){ %>
+      <div class="chart-col" title="<%= mth(t.month) %>: <%= t.occupancy %>% occupancy, <%= t.attendance_rate %>% attendance">
+        <div class="chart-bar <%= occClass(t.occupancy) %>" style="height:<%= Math.round(t.occupancy / mMax * 100) %>%;"></div>
+        <div class="chart-x"><%= mth(t.month) %><br><span><%= t.occupancy %>%</span></div>
+      </div>
+    <% }); %>
+  </div>
+  <p class="footnote">Occupancy = booked child-days ÷ (places × operating days) each month. History is backfilled from OWNA.</p>
+</div>
+<% } %>
+
+<div class="card">
+  <h2 style="margin-top:0;">Daily detail</h2>
+  <table>
+    <thead>
+      <tr><th>Date</th><th class="num">Booked</th><th style="width:150px;">Occupancy</th><th class="num">Attended</th><th class="num">Absent</th><th class="num">Attend.%</th><th class="num">Casual</th><th class="num">Fees</th></tr>
+    </thead>
+    <tbody>
+      <% daily.forEach(function(d){ var fut = d.metric_date > today; %>
+        <tr class="<%= fut ? 'future-row' : '' %>">
+          <td><%= dow(d.metric_date) %> <%= d.metric_date %><%= fut ? ' ·' : '' %><% if(fut){ %><span class="tag-fut">scheduled</span><% } %></td>
+          <td class="num"><%= d.booked %></td>
+          <td><div class="bar-wrap"><div class="bar <%= occClass(d.occupancy) %>" style="width:<%= Math.min(d.occupancy,100) %>%;"></div><span class="bar-val"><%= d.occupancy %>%</span></div></td>
+          <td class="num"><%= fut ? '—' : d.attended %></td>
+          <td class="num"><%= fut ? '—' : d.absent %></td>
+          <td class="num"><%= fut ? '—' : d.attendance_rate + '%' %></td>
+          <td class="num"><%= d.casual %></td>
+          <td class="num"><%= money(d.fee_total) %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>Total (<%= summary.days %> days)</td>
+        <td class="num"><%= summary.booked %></td>
+        <td><div class="bar-wrap"><div class="bar <%= occClass(summary.occupancy) %>" style="width:<%= Math.min(summary.occupancy,100) %>%;"></div><span class="bar-val"><%= summary.occupancy %>%</span></div></td>
+        <td class="num"><%= summary.attended %></td>
+        <td class="num"><%= summary.absent %></td>
+        <td class="num"><%= summary.attendance_rate %>%</td>
+        <td class="num"><%= summary.casual %></td>
+        <td class="num"><%= money(summary.fee_total) %></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+<p class="footnote">Fees billed = gross session fees before CCS. CCS paid = subsidy payments clearing in the range (posted weekly).</p>
+
+<div class="card" id="exits">
+  <div class="pc-head">
+    <h2 style="margin:0;">Exit report <span class="muted" style="font-weight:400;font-size:13px;">· last 12 months</span></h2>
+    <a class="row-link" href="/exits">All centres →</a>
+  </div>
+  <% var upN = (exitsUpcoming||[]).length; var pastN = (exits||[]).length; %>
+  <p class="sub" style="margin:8px 0 14px;"><strong><%= pastN %></strong> departures · <strong><%= upN %></strong> scheduled to leave · reasons where recorded from LineLeader</p>
+
+  <% if (exitReasons.total) { %>
+    <div style="margin-bottom:18px;">
+      <% exitReasons.rows.forEach(function(r){ var wpct = exitReasons.total ? Math.round(r.n/exitReasons.total*100) : 0; var cls = r.reason==='Another Centre'||r.reason==='Staff/Teacher Issue'?'bad':(r.reason==='Aged Out-Too Old'?'muted-reason':'navy'); %>
+        <div class="reason-row">
+          <div class="reason-label <%= cls %>"><%= r.reason %></div>
+          <div class="reason-bar-wrap"><div class="reason-bar <%= cls %>" style="width:<%= wpct %>%;"></div></div>
+          <div class="reason-n"><%= r.n %></div>
+        </div>
+      <% }); %>
+    </div>
+  <% } %>
+
+  <% if (pastN) { %>
+    <div style="overflow-x:auto;">
+    <table>
+      <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Left</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+      <tbody>
+        <% exits.forEach(function(e){ %>
+          <tr>
+            <td><%= e.child_name %></td>
+            <td><%= e.room || '—' %></td>
+            <td><%= e.start_date || '—' %></td>
+            <td><%= e.finish_date %></td>
+            <td class="num"><%= (e.tenure_days && e.tenure_days > 0) ? (Math.round(e.tenure_days/30.4)) + ' mo' : '—' %></td>
+            <td><% if (!e.reason) { %><span class="muted">Not recorded</span><% } else if (e.reason==='Unknown') { %><span class="muted">Unknown</span><% } else { %><span class="reason-tag <%= e.reason==='Another Centre'||e.reason==='Staff/Teacher Issue'?'bad':'' %>"><%= e.reason %></span><% } %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+    </div>
+  <% } else { %>
+    <p class="muted">No departures recorded in the last 12 months.</p>
+  <% } %>
+
+  <% if (upN) { %>
+    <h2>Scheduled to leave</h2>
+    <div style="overflow-x:auto;">
+    <table>
+      <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Leaving</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+      <tbody>
+        <% exitsUpcoming.forEach(function(e){ %>
+          <tr class="future-row">
+            <td><%= e.child_name %></td>
+            <td><%= e.room || '—' %></td>
+            <td><%= e.start_date || '—' %></td>
+            <td><%= e.finish_date %> <span class="tag-fut">scheduled</span></td>
+            <td class="num"><%= (e.tenure_days && e.tenure_days > 0) ? (Math.round(e.tenure_days/30.4)) + ' mo' : '—' %></td>
+            <td><% if (!e.reason || e.reason==='Unknown') { %><span class="muted"><%= e.reason || 'Not recorded' %></span><% } else { %><span class="reason-tag"><%= e.reason %></span><% } %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

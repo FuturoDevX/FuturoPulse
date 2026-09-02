@@ -1,0 +1,124 @@
+<%- include('partials/header', { title: 'Enrolment Projection' }) %>
+<%
+  const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const occClass = (p) => p >= 85 ? 'good' : p >= 70 ? 'warn' : 'bad';
+  const p = proj;
+  const tBaseCapDays = p.rows.reduce((s,r)=>s + r.capacity*r.days, 0);
+  const tBaseBooked = p.rows.reduce((s,r)=>s + Math.round(r.base_occ/100*r.capacity*r.days), 0);
+  const tProjBooked = p.rows.reduce((s,r)=>s + Math.round(r.proj_occ/100*r.capacity*r.days), 0);
+  const tFamilies = p.rows.reduce((s,r)=>s + r.pipeline_children, 0);
+  const baseAll = tBaseCapDays ? Math.round(tBaseBooked/tBaseCapDays*1000)/10 : 0;
+  const projAll = tBaseCapDays ? Math.round(tProjBooked/tBaseCapDays*1000)/10 : 0;
+  const qs = (scope, days) => `?scope=${scope}&days=${days}`;
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Enrolment Projection</h1>
+    <p class="sub">If the CRM pipeline enrolled on their expected start dates &amp; weekly schedule, on top of OWNA's booked occupancy · next <%= p.days %> days (to <%= p.to %>)</p>
+  </div>
+</div>
+
+<div class="card" style="padding:16px 20px;">
+  <div class="proj-controls">
+    <div>
+      <div class="pc-lbl">Scenario</div>
+      <div class="btn-group">
+        <% Object.keys(p.scopes).forEach(function(k){ %>
+          <a class="seg <%= p.scope===k ? 'on' : '' %>" href="<%= qs(k, p.days) %>"><%= p.scopes[k].label.split(' (')[0] %></a>
+        <% }); %>
+      </div>
+      <div class="pc-hint"><%= p.scopeLabel %></div>
+    </div>
+    <div>
+      <div class="pc-lbl">Horizon</div>
+      <div class="btn-group">
+        <% [30,90,180].forEach(function(d){ %>
+          <a class="seg <%= p.days===d ? 'on' : '' %>" href="<%= qs(p.scope, d) %>"><%= d===180 ? '6 mo' : d+' d' %></a>
+        <% }); %>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n <%= occClass(baseAll) %>-text"><%= baseAll %>%</div><div class="l">Occupancy now (booked)</div></div>
+  <div class="card stat"><div class="n <%= occClass(projAll) %>-text"><%= projAll %>%</div><div class="l">Projected with pipeline</div></div>
+  <div class="card stat"><div class="n" style="color:var(--berry);">+<%= Math.round((projAll-baseAll)*10)/10 %>pt</div><div class="l">Uplift</div></div>
+  <div class="card stat"><div class="n"><%= tFamilies %></div><div class="l">Pipeline families included</div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">By centre</h2>
+  <table>
+    <thead>
+      <tr><th>Centre</th><th class="num">Places</th><th style="width:230px;">Booked → Projected</th><th class="num">Now</th><th class="num">Projected</th><th class="num">Uplift</th><th class="num">Families</th></tr>
+    </thead>
+    <tbody>
+      <% p.rows.forEach(function(r){ var up = Math.round((r.proj_occ-r.base_occ)*10)/10; %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= r.owna_id %>"><%= shortName(r.name) %></a></td>
+          <td class="num"><%= r.capacity %></td>
+          <td>
+            <div class="bar-wrap" title="now <%= r.base_occ %>% → projected <%= r.proj_occ %>%">
+              <div class="bar <%= occClass(r.proj_occ) %>" style="width:<%= Math.min(r.proj_occ,100) %>%; opacity:.4;"></div>
+              <div class="bar <%= occClass(r.base_occ) %>" style="width:<%= Math.min(r.base_occ,100) %>%; position:absolute; top:0; left:0;"></div>
+              <span class="bar-val"><%= r.base_occ %>% → <%= r.proj_occ %>%</span>
+            </div>
+          </td>
+          <td class="num"><%= r.base_occ %>%</td>
+          <td class="num <%= occClass(r.proj_occ) %>-text" style="font-weight:600;"><%= r.proj_occ %>%</td>
+          <td class="num" style="color:var(--berry);font-weight:600;">+<%= up %></td>
+          <td class="num"><%= r.pipeline_children %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All centres</td><td class="num"><%= p.rows.reduce((s,r)=>s+r.capacity,0) %></td><td></td>
+        <td class="num"><%= baseAll %>%</td><td class="num"><%= projAll %>%</td>
+        <td class="num" style="color:var(--berry);">+<%= Math.round((projAll-baseAll)*10)/10 %></td>
+        <td class="num"><%= tFamilies %></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+<%
+  // Shared vertical scale across all centre charts (so bars are comparable).
+  let maxOcc = 110;
+  p.rows.forEach(r => (r.weekly||[]).forEach(w => { if (w.proj_occ > maxOcc) maxOcc = w.proj_occ; }));
+  maxOcc = Math.ceil(maxOcc / 10) * 10;
+  const wkLabel = (d) => { const x = new Date(d + 'T00:00:00'); return x.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' }); };
+%>
+<div class="card">
+  <h2 style="margin-top:0;">Weekly projection by centre</h2>
+  <p class="sub" style="margin:0 0 6px;">Solid = booked now · <span style="color:var(--berry);">shaded</span> = pipeline added · dashed line = 100% of licensed places</p>
+  <div class="proj-charts">
+    <% p.rows.forEach(function(r){ %>
+      <div class="proj-chart-block">
+        <div class="pcb-head"><span><%= shortName(r.name) %></span><span class="<%= occClass(r.proj_occ) %>-text" style="font-weight:600;"><%= r.proj_occ %>%</span></div>
+        <div class="proj-chart" style="--full: <%= (100/maxOcc*100).toFixed(1) %>%;">
+          <div class="pc-100line" style="bottom: <%= (100/maxOcc*100).toFixed(1) %>%;"></div>
+          <% (r.weekly||[]).forEach(function(w){ var addPart = Math.max(0, w.proj_occ - w.base_occ); %>
+            <div class="pc-col" title="<%= wkLabel(w.week) %>: <%= w.base_occ %>% booked → <%= w.proj_occ %>% projected">
+              <div class="pc-stack">
+                <div class="pc-add" style="height: <%= (addPart/maxOcc*100).toFixed(1) %>%;"></div>
+                <div class="pc-base <%= occClass(w.base_occ) %>" style="height: <%= (w.base_occ/maxOcc*100).toFixed(1) %>%;"></div>
+              </div>
+            </div>
+          <% }); %>
+        </div>
+        <div class="proj-chart-x">
+          <% (r.weekly||[]).forEach(function(w,i){ %><span><%= (i % 2 === 0) ? wkLabel(w.week) : '' %></span><% }); %>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+</div>
+
+<p class="footnote">
+  Each CRM family in scope is placed on every weekday of its schedule from its expected start date, added on top of OWNA's already-booked future. Over 100% means waitlist demand exceeds licensed places (a places constraint, not a demand one). Pre-open centres (Oran Park, Park Rd, Cobbitty) aren't shown here — they have no OWNA occupancy base yet, but their pipeline is on the Enrolment Pipeline page. Families with no schedule recorded in LineLeader can't be placed on days and are excluded (conservative). This is a planning scenario, not a forecast — it assumes 100% of the selected pipeline converts.
+</p>
+
+<%- include('partials/footer') %>

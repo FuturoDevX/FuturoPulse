@@ -1,0 +1,67 @@
+<%- include('partials/header', { title: 'Exit Report' }) %>
+<%
+  const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const totPast = summary.reduce((s,r)=>s+r.past,0);
+  const totUp = summary.reduce((s,r)=>s+r.upcoming,0);
+  const totKnown = summary.reduce((s,r)=>s+r.reason_known,0);
+  const reasonColour = (r) => r==='Another Centre' ? 'bad' : (r==='Staff/Teacher Issue' ? 'bad' : (r==='Aged Out-Too Old' ? 'muted-reason' : 'navy'));
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Exit Report</h1>
+    <p class="sub">Departures from OWNA (finish dates), reasons from LineLeader where recorded · last 12 months<%= asAt ? ' · as at ' + asAt.slice(0,10) : '' %></p>
+  </div>
+</div>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= totPast %></div><div class="l">Departures (last 12m)</div></div>
+  <div class="card stat"><div class="n"><%= totUp %></div><div class="l">Scheduled to leave</div></div>
+  <div class="card stat"><div class="n"><%= totPast ? Math.round(totKnown/totPast*100) : 0 %>%</div><div class="l">With a recorded reason</div></div>
+  <div class="card stat"><div class="n bad-text"><%= (reasons.rows.find(r=>r.reason==='Another Centre')||{}).n || 0 %></div><div class="l">Lost to another centre</div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">By centre</h2>
+  <table>
+    <thead>
+      <tr><th>Centre</th><th class="num">Departures</th><th class="num">Scheduled</th><th class="num">Avg tenure</th><th class="num">Reason known</th><th>Top reason</th><th></th></tr>
+    </thead>
+    <tbody>
+      <% summary.forEach(function(r){ %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= r.owna_id %>#exits"><%= shortName(r.name) %></a></td>
+          <td class="num"><%= r.past %></td>
+          <td class="num"><%= r.upcoming %></td>
+          <td class="num"><%= r.avg_tenure_months ? r.avg_tenure_months + ' mo' : '—' %></td>
+          <td class="num"><%= r.reason_known %><span class="muted"> / <%= r.past %></span></td>
+          <td><%= r.top_reason %></td>
+          <td class="num"><a class="row-link" href="/centre/<%= r.owna_id %>#exits">Details →</a></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All centres</td><td class="num"><%= totPast %></td><td class="num"><%= totUp %></td><td class="num">—</td>
+        <td class="num"><%= totKnown %></td><td></td><td></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Why they left <span class="muted" style="font-weight:400;font-size:13px;">· past departures, all centres</span></h2>
+  <% reasons.rows.forEach(function(r){ var wpct = reasons.total ? Math.round(r.n/reasons.total*100) : 0; %>
+    <div class="reason-row">
+      <div class="reason-label <%= reasonColour(r.reason) %>"><%= r.reason %></div>
+      <div class="reason-bar-wrap"><div class="reason-bar <%= reasonColour(r.reason) %>" style="width:<%= wpct %>%;"></div></div>
+      <div class="reason-n"><%= r.n %> <span class="muted">(<%= wpct %>%)</span></div>
+    </div>
+  <% }); %>
+</div>
+
+<p class="footnote">
+  Departures come from OWNA child finish dates (authoritative). Reasons are matched from LineLeader by child name + date of birth — “Not recorded” means no matching LineLeader withdrawal, and “Unknown” means LineLeader has the withdrawal but no reason was entered. Actionable reasons to watch: <strong>Another Centre</strong> (lost to a competitor) and <strong>Staff/Teacher Issue</strong>; <em>Aged Out</em> is natural graduation to school.
+</p>
+
+<%- include('partials/footer') %>

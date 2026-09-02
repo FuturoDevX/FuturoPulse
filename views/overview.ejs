@@ -1,0 +1,97 @@
+<%- include('partials/header', { title: 'Operations Overview' }) %>
+<%
+  function occClass(p){ return p >= 85 ? 'good' : p >= 70 ? 'warn' : 'bad'; }
+  const shortName = (n) => n.replace('Futuro Childcare & Education - ','');
+  const money = (n) => '$' + Number(n||0).toLocaleString('en-AU', { maximumFractionDigits: 0 });
+  const rangeQS = `from=${from}&to=${to}`;
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Operations Overview</h1>
+    <p class="sub">All centres · <%= from %> → <%= to %></p>
+  </div>
+  <div class="head-actions">
+    <% if (['admin','ops_manager'].includes(user.role)) { %>
+      <form method="POST" action="/admin/refresh" class="inline">
+        <button type="submit" class="secondary-btn">↻ Refresh data</button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<%- include('partials/rangebar', { action: '/', from, to, presets, fwdPresets }) %>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n <%= occClass(totals.occupancy) %>-text"><%= totals.occupancy %>%</div><div class="l">Avg occupancy</div></div>
+  <div class="card stat"><div class="n"><%= totals.attendance_rate %>%</div><div class="l">Attendance rate</div></div>
+  <div class="card stat"><div class="n"><%= totals.booked.toLocaleString('en-AU') %></div><div class="l">Booked child-days</div></div>
+  <div class="card stat"><div class="n"><%= money(totals.fee_total) %></div><div class="l">Fees billed</div></div>
+  <div class="card stat"><div class="n"><%= totals.casual.toLocaleString('en-AU') %></div><div class="l">Casual days</div></div>
+  <div class="card stat"><div class="n"><%= totals.capacity %></div><div class="l">Total places</div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">By centre</h2>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Centre</th><th>Places</th><th class="num">Avg/day</th>
+        <th style="width:160px;">Occupancy</th>
+        <th class="num" title="Projected occupancy over the next 30 days from scheduled bookings">Fcast 30d</th>
+        <th class="num">Attend.</th>
+        <th class="num">Casual</th><th class="num">Fees billed</th>
+        <th class="num" title="Families on the LineLeader waitlist">Waitlist</th>
+        <th class="num" title="Upcoming expected starts (LineLeader)">Upcoming</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% rows.forEach(function(r){ %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= r.owna_id %>?<%= rangeQS %>"><%= shortName(r.name) %></a></td>
+          <td><%= r.capacity %></td>
+          <td class="num"><%= r.avg_daily_booked %></td>
+          <td>
+            <div class="bar-wrap" title="<%= r.booked %> booked child-days">
+              <div class="bar <%= occClass(r.occupancy) %>" style="width:<%= Math.min(r.occupancy,100) %>%;"></div>
+              <span class="bar-val"><%= r.occupancy %>%</span>
+            </div>
+          </td>
+          <% var f = fcast[r.owna_id]; %>
+          <td class="num"><% if (f && f.days) { %><span class="<%= occClass(f.occupancy) %>-text" style="font-weight:600;"><%= f.occupancy %>%</span><% } else { %><span class="muted">—</span><% } %></td>
+          <td class="num"><%= r.attendance_rate %>%</td>
+          <td class="num"><%= r.casual %></td>
+          <td class="num"><%= money(r.fee_total) %></td>
+          <% var ll = llMap[r.owna_id]; %>
+          <td class="num <%= ll && ll.waitlist>0 ? 'hot' : '' %>"><%= ll ? ll.waitlist : '—' %></td>
+          <td class="num"><%= ll ? ll.starts_future : '—' %></td>
+          <td class="num"><a class="row-link" href="/centre/<%= r.owna_id %>?<%= rangeQS %>">Details →</a></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <% var llTotWait=0, llTotUp=0; Object.values(llMap).forEach(function(x){llTotWait+=x.waitlist;llTotUp+=x.starts_future;});
+         var fB=0, fCD=0; rows.forEach(function(r){ var f=fcast[r.owna_id]; if(f&&f.days){ fB+=f.booked; fCD+=r.capacity*f.days; } });
+         var fcastAll = fCD ? Math.round(fB/fCD*1000)/10 : 0; %>
+      <tr class="total-row">
+        <td>All centres</td><td><%= totals.capacity %></td><td class="num">—</td>
+        <td><div class="bar-wrap"><div class="bar <%= occClass(totals.occupancy) %>" style="width:<%= Math.min(totals.occupancy,100) %>%;"></div><span class="bar-val"><%= totals.occupancy %>%</span></div></td>
+        <td class="num"><span class="<%= occClass(fcastAll) %>-text"><%= fcastAll %>%</span></td>
+        <td class="num"><%= totals.attendance_rate %>%</td>
+        <td class="num"><%= totals.casual %></td>
+        <td class="num"><%= money(totals.fee_total) %></td>
+        <td class="num"><%= llTotWait %></td>
+        <td class="num"><%= llTotUp %></td><td></td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+</div>
+
+<p class="footnote">
+  Occupancy = booked child-days ÷ (places × days). Fees billed = sum of session fees (gross, before CCS subsidy).
+  <% if (lastRun) { %>· Data as at <%= lastRun.finished_at || lastRun.started_at %> (<%= lastRun.status %>)<% } else { %>· No snapshot yet — click “Refresh from OWNA”.<% } %>
+</p>
+
+<%- include('partials/footer') %>

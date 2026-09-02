@@ -1,0 +1,116 @@
+<%- include('partials/header', { title: centre.name + ' — Pipeline' }) %>
+<%
+  const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const d = detail;
+  const dt = (s) => s ? new Date(s + (s.length<=10 ? 'T00:00:00' : '')).toLocaleDateString('en-AU', { day:'numeric', month:'short', year:'numeric' }) : '—';
+  const dtt = (s) => s ? new Date(s).toLocaleDateString('en-AU', { weekday:'short', day:'numeric', month:'short' }) + ' ' + new Date(s).toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'}) : '—';
+  const mth = (m) => { const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
+%>
+
+<% if (!d) { %>
+  <div class="page-head"><div><h1><%= shortName(centre.name) %> — Pipeline</h1></div></div>
+  <div class="card"><p class="muted">This centre isn't linked to a LineLeader centre, so there's no pipeline data.</p></div>
+<% } else {
+  const wlTrend = d.waitlistTrend || [];
+  const maxTrend = Math.max(1, ...wlTrend.map(x => x.n));
+%>
+
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/centre/<%= centre.owna_id %>">← <%= shortName(centre.name) %></a> / Pipeline</p>
+    <h1><%= shortName(centre.name) %> — Enrolment Pipeline</h1>
+    <p class="sub">Where every family sits in the flow, upcoming tours, and how the waitlist has grown · from LineLeader</p>
+  </div>
+</div>
+
+<!-- Funnel -->
+<div class="card">
+  <h2 style="margin-top:0;">Funnel <span class="muted" style="font-weight:400;font-size:13px;">· families at each stage</span></h2>
+  <div class="funnel">
+    <% d.funnel.forEach(function(s){ %>
+      <div class="funnel-step <%= s.id===4 ? 'hot' : '' %>">
+        <div class="fs-n"><%= s.count %></div>
+        <div class="fs-l"><%= s.name %></div>
+      </div>
+      <% if (s.id !== 5) { %><div class="funnel-arrow">→</div><% } %>
+    <% }); %>
+  </div>
+</div>
+
+<div class="two-col">
+  <!-- Upcoming tours -->
+  <div class="card">
+    <h2 style="margin-top:0;">Upcoming tours &amp; orientations <span class="badge good"><%= d.upcomingTours.length %></span></h2>
+    <% if (!d.upcomingTours.length) { %>
+      <p class="muted">None scheduled.</p>
+    <% } else { %>
+      <table>
+        <thead><tr><th>When</th><th>Family</th><th>Type</th></tr></thead>
+        <tbody>
+          <% d.upcomingTours.forEach(function(t){ %>
+            <tr>
+              <td><%= dtt(t.tour_date) %></td>
+              <td><%= t.family_name || '—' %><% if (t.current_stage) { %><br><span class="muted" style="font-size:11px;">now: <%= t.current_stage %></span><% } %></td>
+              <td><span class="reason-tag"><%= t.type_name || 'Tour' %></span></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+      <p class="footnote" style="margin-top:10px;">This is every booked visit on the calendar. The funnel counts a family's <em>current stage</em>, so a booked tour can belong to a family who has already moved on (e.g. Offer Accepted), and orientations happen after acceptance — which is why this can exceed "Tour Scheduled".</p>
+    <% } %>
+  </div>
+
+  <!-- Waitlist over time -->
+  <div class="card">
+    <h2 style="margin-top:0;">Waitlist joins over time</h2>
+    <p class="sub" style="margin:0 0 10px;">When the current waitlist families joined (by month)</p>
+    <% if (!wlTrend.length) { %>
+      <p class="muted">No waitlist join dates recorded.</p>
+    <% } else { %>
+      <div class="chart" style="height:150px;">
+        <% wlTrend.forEach(function(w){ %>
+          <div class="chart-col" title="<%= mth(w.month) %>: <%= w.n %> joined">
+            <div class="chart-bar good" style="height:<%= Math.round(w.n/maxTrend*100) %>%;"></div>
+            <div class="chart-x"><%= mth(w.month) %><br><span><%= w.n %></span></div>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
+  </div>
+</div>
+
+<!-- Members by stage -->
+<div class="card">
+  <h2 style="margin-top:0;">Who's in the pipeline <span class="muted" style="font-weight:400;font-size:13px;">· children, most recent first</span></h2>
+  <% d.stages.slice().reverse().forEach(function(st){ var list = d.membersByStage[st[0]] || []; if (!list.length) return; %>
+    <div class="stage-block">
+      <h3 class="stage-h <%= st[0]===4 ? 'hot-h' : '' %>"><%= st[1] %> <span class="badge"><%= list.length %></span></h3>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Child</th><th>Family</th>
+            <% if (st[0]===4) { %><th>Joined waitlist</th><% } %>
+            <th><%= st[0]===5 || st[0]===12 ? 'Expected start' : (st[0]===4 ? 'Wanted start' : 'Expected start') %></th>
+          </tr></thead>
+          <tbody>
+            <% list.slice(0,50).forEach(function(mem){ %>
+              <tr>
+                <td><%= mem.child_name || '—' %></td>
+                <td><%= mem.family_name || '—' %></td>
+                <% if (st[0]===4) { %><td><%= dt(mem.wait_list_date) %></td><% } %>
+                <td><%= dt(mem.expected_start) %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+      <% if (list.length > 50) { %><p class="footnote">Showing 50 of <%= list.length %>.</p><% } %>
+    </div>
+  <% }); %>
+</div>
+
+<p class="footnote">
+  Funnel counts are families (matches the rest of the dashboard); the member lists below are children, so a family with siblings appears once per child. "Joined waitlist" is the LineLeader wait-list date. Tours come from LineLeader tasks (Tour + Orientation Day).
+</p>
+
+<% } %>
+<%- include('partials/footer') %>

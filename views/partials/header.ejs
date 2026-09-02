@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Futuro OWNA Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<% const user = locals.user; %>
+<% if (user) { %>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">Futuro Ops<span>OWNA Dashboard</span></div>
+    <nav class="side-nav">
+      <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>">Overview</a>
+      <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
+      <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>
+      <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>">Projection</a>
+      <a href="/labour" class="<%= currentPath === '/labour' ? 'active' : '' %>">Wages &amp; Margin</a>
+      <div class="side-nav-divider">Centres</div>
+      <% (locals.navCentres || []).forEach(function(c){ %>
+        <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= c.name.replace('Futuro Childcare & Education - ','') %></a>
+      <% }); %>
+    </nav>
+    <div class="side-nav-footer">
+      <span class="badge role-<%= user.role %>"><%= user.role.replace('_',' ') %></span>
+      <form method="POST" action="/logout" class="inline">
+        <button type="submit" class="secondary">Log out</button>
+      </form>
+    </div>
+  </aside>
+  <main>
+    <% if (locals.msg) { %><div class="flash"><%= msg %></div><% } %>
+<% } else { %>
+  <main class="no-sidebar">
+<% } %>

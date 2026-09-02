@@ -1,0 +1,63 @@
+# Render Blueprint — New → Blueprint → point at this repo.
+# Secrets use `sync: false` so Render prompts for them (never commit real values).
+# The SQLite DB lives on a PERSISTENT DISK (/data), not the repo — required so data
+# survives deploys and so it's on a real filesystem (SQLite + OneDrive don't mix).
+services:
+  - type: web
+    name: futuro-owna-dashboard
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    # Create schema + admin + run migrations on every deploy (idempotent).
+    preDeployCommand: node db/init.js
+    startCommand: npm start
+    autoDeploy: true
+    disk:
+      name: owna-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 18.20.4
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3003
+      - key: DB_PATH
+        value: /data/owna.db          # on the persistent disk
+      - key: SESSION_SECRET
+        generateValue: true
+      # OWNA
+      - key: OWNA_API_KEY
+        sync: false
+      - key: OWNA_BASE_URL
+        value: https://api.owna.com.au
+      - key: SNAPSHOT_WINDOW_DAYS
+        value: 120
+      - key: SNAPSHOT_FORWARD_DAYS
+        value: 240
+      - key: SNAPSHOT_CRON
+        value: 15 2 * * *
+      - key: EXIT_LOOKBACK_DAYS
+        value: 365
+      # LineLeader (ChildcareCRM)
+      - key: LINELEADER_BASE_URL
+        value: https://live.childcarecrm.com.au
+      - key: LINELEADER_USERNAME
+        sync: false
+      - key: LINELEADER_PASSWORD
+        sync: false
+      # Employment Hero Payroll (KeyPay)
+      - key: EH_PAYROLL_BASE_URL
+        value: https://api.yourpayroll.com.au
+      - key: EH_PAYROLL_API_KEY
+        sync: false
+      - key: EH_PAYROLL_BUSINESS_ID
+        sync: false
+      - key: EH_LABOUR_WEEKS
+        value: 16
+      # Default admin (change password after first login)
+      - key: ADMIN_EMAIL
+        value: christo.kruger@futuro.nsw.edu.au
+      - key: ADMIN_DEFAULT_PASSWORD
+        sync: false

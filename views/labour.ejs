@@ -1,0 +1,136 @@
+<%- include('partials/header', { title: 'Wages & Margin' }) %>
+<%
+  const shortName = (n) => (n||'').replace('Futuro ','');
+  const money = (n) => '$' + Math.round(Number(n)||0).toLocaleString('en-AU');
+  const h1 = (n) => (Math.round((Number(n)||0)*10)/10).toLocaleString('en-AU');
+  const marginClass = (p) => p == null ? '' : (p <= 55 ? 'good' : p <= 65 ? 'warn' : 'bad');
+  const occClass = (p) => p == null ? '' : (p >= 85 ? 'good' : p >= 70 ? 'warn' : 'bad');
+  const wkLabel = (d) => new Date(d+'T00:00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'2-digit'});
+  // vs-budget delta formatting. lowerBad: over budget is bad (wages/hours). higherGood: above is good (occupancy).
+  const deltaWages = (d) => d==null ? '<span class="muted">—</span>' : '<span class="'+(d>0?'bad':'good')+'-text">'+(d<0?'−':(d>0?'+':''))+'$'+Math.abs(d).toLocaleString('en-AU')+'</span>';
+  const deltaHours = (d) => d==null ? '<span class="muted">—</span>' : '<span class="'+(d>0?'bad':'good')+'-text">'+(d>0?'+':'')+(Math.round(d*10)/10)+'</span>';
+  const deltaOcc = (d) => d==null ? '<span class="muted">—</span>' : '<span class="'+(d>=0?'good':'bad')+'-text">'+(d>=0?'+':'')+d+'%</span>';
+  const support = rows.filter(r => (r.kitchen_h||0)>0 || (r.kitchen_amt||0)>0 || (r.cleaning_h||0)>0 || (r.cleaning_amt||0)>0);
+  const t = rows.reduce((a,r)=>{a.emp+=r.employees;a.wh+=r.worked_h;a.lh+=r.leave_h;a.ch+=r.care_hours;a.wa+=r.worked_amt;a.la+=r.leave_amt;a.ma+=r.matwc_amt;a.cw+=r.care_wages;a.rev+=r.revenue;a.cas+=r.casual_h;a.kh+=r.kitchen_h;a.ka+=r.kitchen_amt;a.clh+=(r.cleaning_h||0);a.cla+=(r.cleaning_amt||0);return a;},{emp:0,wh:0,lh:0,ch:0,wa:0,la:0,ma:0,cw:0,rev:0,cas:0,kh:0,ka:0,clh:0,cla:0});
+  const carePct = t.rev>0 ? Math.round(t.cw/t.rev*1000)/10 : null;
+  const allPct  = t.rev>0 ? Math.round((t.cw+t.ka+t.cla)/t.rev*1000)/10 : null;
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Wages &amp; Margin</h1>
+    <p class="sub">Educator &amp; support-team wage cost by centre (Employment Hero) vs revenue (OWNA). Support team (kitchen + cleaning) is separate · week ending <%= wkLabel(week) %></p>
+  </div>
+  <div class="head-actions" style="display:flex;gap:10px;align-items:center;">
+    <% if (['admin','ops_manager'].includes(user.role)) { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/labour-budget">Set budgets</a><% } %>
+  <form method="GET">
+    <select name="week" onchange="this.form.submit()">
+      <% weeks.forEach(function(w){ %><option value="<%= w %>" <%= w===week?'selected':'' %>>Week ending <%= wkLabel(w) %></option><% }); %>
+    </select>
+  </form>
+  </div>
+</div>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= money(t.rev) %></div><div class="l">Revenue</div></div>
+  <div class="card stat"><div class="n"><%= money(t.cw) %></div><div class="l">Educator wages</div></div>
+  <div class="card stat"><div class="n <%= marginClass(carePct) %>-text"><%= carePct==null?'—':carePct+'%' %></div><div class="l">Educator wages % of revenue</div></div>
+  <div class="card stat"><div class="n"><%= money(t.ka + t.cla) %></div><div class="l">Support-team wages</div></div>
+  <div class="card stat"><div class="n <%= marginClass(allPct) %>-text"><%= allPct==null?'—':allPct+'%' %></div><div class="l">All-in (incl support) % rev</div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Educator wages by centre</h2>
+  <div style="overflow-x:auto;">
+  <table class="labour-tbl">
+    <thead>
+      <tr>
+        <th>Centre</th><th class="num">Occ.</th><th class="num">Revenue</th><th class="num">Emp</th>
+        <th class="num">Worked h</th><th class="num">Leave h</th><th class="num">Educator h</th>
+        <th class="num">Worked $</th><th class="num">Leave $</th><th class="num">Mat/WC $</th>
+        <th class="num">Educator wages</th><th class="num">Wages % rev</th><th class="num">vs Bud Occ</th><th class="num">vs Bud Wages</th><th class="num">vs Bud Hours</th><th class="num">Casual h</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% rows.forEach(function(r){ %>
+        <tr>
+          <td><%= shortName(r.eh_centre) %></td>
+          <td class="num"><% if(r.occupancy==null){ %>—<% }else{ %><span class="<%= occClass(r.occupancy) %>-text"><%= r.occupancy %>%</span><% } %></td>
+          <td class="num"><%= r.revenue ? money(r.revenue) : '—' %></td>
+          <td class="num"><%= r.employees %></td>
+          <td class="num"><%= h1(r.worked_h) %></td>
+          <td class="num"><%= h1(r.leave_h) %></td>
+          <td class="num"><%= h1(r.care_hours) %></td>
+          <td class="num"><%= money(r.worked_amt) %></td>
+          <td class="num"><%= money(r.leave_amt) %></td>
+          <td class="num"><%= r.matwc_amt ? money(r.matwc_amt) : '$0' %></td>
+          <td class="num" style="font-weight:600;"><%= money(r.care_wages) %></td>
+          <td class="num"><% if(r.wage_pct==null){ %>—<% }else{ %><span class="<%= marginClass(r.wage_pct) %>-text" style="font-weight:600;"><%= r.wage_pct %>%</span><% } %></td>
+          <td class="num"><%- deltaOcc(r.vs_occ) %></td>
+          <td class="num"><%- deltaWages(r.vs_wages) %></td>
+          <td class="num"><%- deltaHours(r.vs_hours) %></td>
+          <td class="num"><%= h1(r.casual_h) %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>Total (educators)</td><td class="num">—</td><td class="num"><%= money(t.rev) %></td><td class="num"><%= t.emp %></td>
+        <td class="num"><%= h1(t.wh) %></td><td class="num"><%= h1(t.lh) %></td><td class="num"><%= h1(t.ch) %></td>
+        <td class="num"><%= money(t.wa) %></td><td class="num"><%= money(t.la) %></td><td class="num"><%= money(t.ma) %></td>
+        <td class="num"><%= money(t.cw) %></td><td class="num <%= marginClass(carePct) %>-text"><%= carePct==null?'—':carePct+'%' %></td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num"><%= h1(t.cas) %></td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Support Team <span class="muted" style="font-weight:400;font-size:13px;">· kitchen + cleaning, separate cost centre</span></h2>
+  <div style="overflow-x:auto;">
+  <table class="labour-tbl">
+    <thead><tr><th>Centre</th><th class="num">Kitchen h</th><th class="num">Kitchen $</th><th class="num">Cleaning h</th><th class="num">Cleaning $</th><th class="num">Support h</th><th class="num">Support $</th><th class="num">vs Budget</th><th class="num">% of centre rev</th></tr></thead>
+    <tbody>
+      <% support.forEach(function(r){ var sh=(r.kitchen_h||0)+(r.cleaning_h||0); var sa=(r.kitchen_amt||0)+(r.cleaning_amt||0); var sp = r.revenue>0 ? Math.round(sa/r.revenue*1000)/10 : null; %>
+        <tr>
+          <td><%= shortName(r.eh_centre) %></td>
+          <td class="num"><%= h1(r.kitchen_h) %></td>
+          <td class="num"><%= money(r.kitchen_amt) %></td>
+          <td class="num"><%= h1(r.cleaning_h) %></td>
+          <td class="num"><%= money(r.cleaning_amt) %></td>
+          <td class="num"><%= h1(sh) %></td>
+          <td class="num" style="font-weight:600;"><%= money(sa) %></td>
+          <td class="num"><%- deltaWages(r.vs_support) %></td>
+          <td class="num"><%= sp==null?'—':sp+'%' %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot><tr class="total-row"><td>Total support</td><td class="num"><%= h1(t.kh) %></td><td class="num"><%= money(t.ka) %></td><td class="num"><%= h1(t.clh) %></td><td class="num"><%= money(t.cla) %></td><td class="num"><%= h1(t.kh+t.clh) %></td><td class="num"><%= money(t.ka+t.cla) %></td><td class="num">—</td><td class="num"><%= t.rev>0?(Math.round((t.ka+t.cla)/t.rev*1000)/10)+'%':'—' %></td></tr></tfoot>
+  </table>
+  </div>
+</div>
+
+<%
+  const tr = trend.filter(x=>x.wage_pct!=null);
+  const maxPct = Math.max(70, ...tr.map(x=>x.wage_pct));
+%>
+<div class="card">
+  <h2 style="margin-top:0;">Educator wages as % of revenue — trend <span class="muted" style="font-weight:400;font-size:13px;">· all centres, weekly</span></h2>
+  <% if(!tr.length){ %><p class="muted">Not enough weeks yet.</p><% }else{ %>
+    <div class="chart with-100" style="height:170px;">
+      <div class="chart-100" style="bottom:<%= (65/maxPct*100).toFixed(1) %>%;"><span>65% target</span></div>
+      <% tr.forEach(function(x){ %>
+        <div class="chart-col" title="<%= wkLabel(x.week) %>: <%= x.wage_pct %>% (wages <%= money(x.wages) %> / rev <%= money(x.revenue) %>)">
+          <div class="chart-bar <%= marginClass(x.wage_pct) %>" style="height:<%= Math.round(x.wage_pct/maxPct*100) %>%;"></div>
+          <div class="chart-x"><strong class="<%= marginClass(x.wage_pct) %>-text"><%= x.wage_pct %>%</strong><br><%= wkLabel(x.week).replace(/ \d{2}$/,'') %></div>
+        </div>
+      <% }); %>
+    </div>
+  <% } %>
+</div>
+
+<p class="footnote">
+  Revenue &amp; occupancy from OWNA; hours &amp; wages from Employment Hero (finalised weekly pay runs). <strong>Support team (kitchen + cleaning) is its own cost centre</strong> — excluded from each centre's care wages &amp; margin, shown separately. "All-in %" adds kitchen back for the true total labour ratio. Casual = casual-employed staff's hours (included in Worked). <strong>Note:</strong> weeks with more than one pay run are summed (wage totals may run high — tell me your pay-run rule to reconcile). Budget columns need your weekly targets.
+</p>
+
+<%- include('partials/footer') %>

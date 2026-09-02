@@ -1,0 +1,29 @@
+<%- include('partials/header', { title: 'Wage Budgets' }) %>
+<% const shortName = (n) => (n||'').replace('Futuro ',''); %>
+<div class="page-head"><div>
+  <p class="crumb"><a href="/labour">← Wages &amp; Margin</a></p>
+  <h1>Weekly wage budgets</h1>
+  <p class="sub">Standing weekly target per centre. Educator wages/hours = worked+leave (excl. support); support wages = kitchen+cleaning. Occupancy in %.</p>
+</div></div>
+<% if (saved) { %><div class="flash">Budgets saved.</div><% } %>
+<div class="card">
+  <form method="POST" action="/admin/labour-budget">
+    <table>
+      <thead><tr><th>Centre</th><th class="num">Budget wages ($/wk)</th><th class="num">Budget hours (/wk)</th><th class="num">Budget occupancy (%)</th><th class="num">Support wages ($/wk)</th></tr></thead>
+      <tbody>
+        <% centres.forEach(function(c){ var b = budgets[c] || {}; %>
+          <tr>
+            <td><%= shortName(c) %></td>
+            <td class="num"><input type="text" name="wages_<%= c %>" value="<%= b.budget_wages != null ? b.budget_wages : '' %>" style="width:120px;text-align:right;" placeholder="—"></td>
+            <td class="num"><input type="text" name="hours_<%= c %>" value="<%= b.budget_hours != null ? b.budget_hours : '' %>" style="width:100px;text-align:right;" placeholder="—"></td>
+            <td class="num"><input type="text" name="occ_<%= c %>" value="<%= b.budget_occ != null ? b.budget_occ : '' %>" style="width:90px;text-align:right;" placeholder="—"></td>
+            <td class="num"><input type="text" name="support_<%= c %>" value="<%= b.budget_support != null ? b.budget_support : '' %>" style="width:120px;text-align:right;" placeholder="—"></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+    <button type="submit" style="margin-top:16px;">Save budgets</button>
+  </form>
+</div>
+<p class="footnote">These apply to every week. Per-week overrides can be added later. Leave a field blank to skip it.</p>
+<%- include('partials/footer') %>

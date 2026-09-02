@@ -1,0 +1,67 @@
+<%- include('partials/header', { title: 'Enrolment Pipeline' }) %>
+<%
+  const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const p = pipeline;
+  const t = p.totals || {};
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Enrolment Pipeline</h1>
+    <p class="sub">Leads &amp; waitlist from LineLeader<%= p.date ? ' · as at ' + p.date : '' %></p>
+  </div>
+</div>
+
+<% if (!p.rows.length) { %>
+  <div class="card"><p class="muted">No LineLeader data yet. Run a refresh (need LineLeader credentials in .env).</p></div>
+<% } else { %>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= (t[4]||0).toLocaleString('en-AU') %></div><div class="l">On waitlist</div></div>
+  <div class="card stat"><div class="n"><%= (t[5]||0).toLocaleString('en-AU') %></div><div class="l">Offers accepted</div></div>
+  <div class="card stat"><div class="n"><%= ((t[1]||0)+(t[2]||0)+(t[11]||0)+(t[3]||0)).toLocaleString('en-AU') %></div><div class="l">Active leads</div></div>
+  <div class="card stat"><div class="n"><%= (t.started||0).toLocaleString('en-AU') %></div><div class="l">Expected starts (120d)</div></div>
+  <div class="card stat"><div class="n"><%= (t.withdrawn||0).toLocaleString('en-AU') %></div><div class="l">Withdrawn (120d)</div></div>
+  <div class="card stat"><div class="n <%= (t.net||0) >= 0 ? 'good-text' : 'bad-text' %>"><%= (t.net||0) >= 0 ? '+' : '' %><%= (t.net||0).toLocaleString('en-AU') %></div><div class="l">Indicative net</div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Funnel by centre</h2>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Centre</th>
+        <% p.funnel.forEach(function(f){ %><th class="num"><%= f[1].replace(' (Started)','') %></th><% }); %>
+        <th class="num" title="Started minus withdrawn in the snapshot window">Net</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% p.rows.forEach(function(r){ %>
+        <tr>
+          <td><%= shortName(r.name) %></td>
+          <% p.funnel.forEach(function(f){ var v=r.counts[f[0]]||0; %>
+            <td class="num <%= f[0]===4 && v>0 ? 'hot' : '' %>"><%= v %></td>
+          <% }); %>
+          <td class="num <%= r.net>=0 ? 'good-text':'bad-text' %>"><%= r.net>=0?'+':'' %><%= r.net %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All centres</td>
+        <% p.funnel.forEach(function(f){ %><td class="num"><%= t[f[0]]||0 %></td><% }); %>
+        <td class="num <%= (t.net||0)>=0 ? 'good-text':'bad-text' %>"><%= (t.net||0)>=0?'+':'' %><%= t.net||0 %></td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+</div>
+
+<p class="footnote">
+  Waitlist column highlighted. “Expected starts” counts enrolment records with an expected-start date in the last 120 days (includes places not yet confirmed enrolled), so “Indicative net” is directional, not a hard headcount; “Withdrawn” is exact. Live enrolled headcount is on the Overview.
+  Centres like Oran Park, Park Rd and Cobbitty appear here (building a pipeline) before they show in the OWNA occupancy view.
+</p>
+<% } %>
+
+<%- include('partials/footer') %>

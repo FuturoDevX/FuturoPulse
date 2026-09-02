@@ -1,0 +1,20 @@
+<form method="GET" class="rangebar" action="<%= action %>">
+  <label>From <input type="date" name="from" value="<%= from %>" /></label>
+  <label>To <input type="date" name="to" value="<%= to %>" /></label>
+  <button type="submit">Apply</button>
+  <div class="range-presets">
+    <span class="rp-label">Past</span>
+    <a href="<%= action %>?<%= presets.week %>">7d</a>
+    <a href="<%= action %>?<%= presets.month %>">30d</a>
+    <a href="<%= action %>?<%= presets.quarter %>">90d</a>
+    <a href="<%= action %>?<%= presets.year %>">1yr</a>
+    <% if (typeof fwdPresets !== 'undefined' && fwdPresets) { %>
+      <span class="rp-sep"></span>
+      <span class="rp-label ahead">Ahead</span>
+      <a class="ahead" href="<%= action %>?<%= fwdPresets.next7 %>">7d</a>
+      <a class="ahead" href="<%= action %>?<%= fwdPresets.next30 %>">30d</a>
+      <a class="ahead" href="<%= action %>?<%= fwdPresets.next90 %>">90d</a>
+      <a class="ahead" href="<%= action %>?<%= fwdPresets.next180 %>">6mo</a>
+    <% } %>
+  </div>
+</form>
