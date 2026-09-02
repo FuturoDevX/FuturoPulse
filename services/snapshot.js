@@ -181,12 +181,14 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
   const upsert = db.prepare(`INSERT INTO incidents_monthly (owna_id, month, total, injuries, illness, serious, reportable, updated_at)
     VALUES (@owna_id,@month,@total,@injuries,@illness,@serious,@reportable,datetime('now'))
     ON CONFLICT(owna_id, month) DO UPDATE SET total=@total, injuries=@injuries, illness=@illness, serious=@serious, reportable=@reportable, updated_at=datetime('now')`);
-  const txt = (v) => { const t = String(v || "").trim().toLowerCase(); return t && t !== "n/a" && t !== "na" && t !== "none" ? t : ""; };
+  const flag = (v) => v === true || ["yes", "y", "true", "1"].includes(String(v).trim().toLowerCase());
   // Classify from OWNA's structured `affected` array (e.g. ["Cut/open wound"], ["High temperature"]).
-  // `medicalAttention`/`emergencyServices` booleans are never ticked in practice, so we do not rely on them.
+  // Serious Incident (National Regulations reg 12): OWNA's own report asks "emergency services attend?"
+  // and "medical attention sought from a registered practitioner/hospital?" — the two reg-12 criteria.
+  // The explicit "Is this a Serious Incident?" Yes/No is NOT returned by the API, so we derive it from
+  // those two booleans. `serious` = emergency services attended; `reportable` = serious incident (either flag).
   const ILLNESS  = /temperature|fever|rash|vomit|diarrh|nausea|illness|infectious|respiratory|hand.?foot|unwell|\bsick\b|cough/;
   const NONINJURY = /behaviour|behavior|meltdown|recount of events|no injury|no mark|no visible|no sign|monitor/;
-  const SERIOUS  = /head|concuss|bite|anaphylax|fracture|broken|crush|jam|\beye\b|dental|tooth|burn|dislocat|chok|unconscious|seizure|bleed|nose ?bleed/;
   let rows = 0;
   for (const c of centres) {
     let inc;
@@ -203,8 +205,9 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
       const isNonInjury = NONINJURY.test(joined);
       if (isIllness) m.illness += 1;
       else if (affected.length && !isNonInjury) m.injuries += 1;
-      if (!isIllness && SERIOUS.test(joined)) m.serious += 1;
-      if (txt(r.regulatoryAuthority)) m.reportable += 1;   // centre actually completed the regulatory-authority field
+      const emerg = flag(r.emergencyServices), med = flag(r.medicalAttention);
+      if (emerg) m.serious += 1;                 // emergency services attended
+      if (emerg || med) m.reportable += 1;       // serious incident (reg 12): emergency services OR medical attention
     }
     const write = db.transaction((entries) => { for (const [month, m] of entries) { upsert.run({ owna_id: c.id, month, ...m }); rows += 1; } });
     write([...byMonth.entries()]);

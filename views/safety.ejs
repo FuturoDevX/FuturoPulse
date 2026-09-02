@@ -19,19 +19,19 @@
 
 <div class="grid kpis">
   <div class="card stat"><div class="n"><%= h.total %></div><div class="l">Incident reports</div></div>
-  <div class="card stat"><div class="n"><%= h.injuries %></div><div class="l">Physical injuries</div></div>
-  <div class="card stat"><div class="n"><%= h.serious %></div><div class="l">Serious injuries</div></div>
+  <div class="card stat"><div class="n"><%= h.injuries %></div><div class="l">Injuries</div></div>
   <div class="card stat"><div class="n"><%= h.illness %></div><div class="l">Illness</div></div>
-  <div class="card stat <%= h.rating==='red' ? 'hot-card' : '' %>"><div class="n"><%= h.reportable %></div><div class="l"><%- dot(h.rating) %> Notifiable to regulator</div></div>
+  <div class="card stat"><div class="n"><%= h.serious %></div><div class="l">Emergency services</div></div>
+  <div class="card stat <%= h.rating==='red' ? 'hot-card' : (h.rating==='amber' ? '' : '') %>"><div class="n"><%= h.reportable %></div><div class="l"><%- dot(h.rating) %> Serious incidents · Reg 12</div></div>
 </div>
 
 <div class="card">
   <h2 style="margin-top:0;">By centre — <%= mLabel(rep.lastComplete) %></h2>
   <div style="overflow-x:auto;"><table>
     <thead><tr>
-      <th>Centre</th><th style="width:130px;">Notifiable</th>
+      <th>Centre</th><th style="width:150px;">Serious (Reg 12)</th>
       <th style="text-align:right;">Incidents</th><th style="text-align:right;">Injuries</th>
-      <th style="text-align:right;">Serious</th><th style="text-align:right;">Illness</th>
+      <th style="text-align:right;">Illness</th><th style="text-align:right;">Emerg. svc</th>
     </tr></thead>
     <tbody>
       <% rep.rows.forEach(function(r){ var c=r.headline; %>
@@ -40,8 +40,8 @@
           <td><%- dot(c.rating) %> <span style="text-transform:capitalize;"><%= c.rating %></span> · <%= c.reportable %></td>
           <td style="text-align:right;"><%= c.total %></td>
           <td style="text-align:right;"><%= c.injuries %></td>
-          <td style="text-align:right;"><%= c.serious %></td>
           <td style="text-align:right;"><%= c.illness %></td>
+          <td style="text-align:right;"><%= c.serious %></td>
         </tr>
       <% }); %>
       <% if (rep.rows.length > 1) { var t=rep.headline; %>
@@ -50,8 +50,8 @@
           <td><%- dot(t.rating) %> · <%= t.reportable %></td>
           <td style="text-align:right;"><%= t.total %></td>
           <td style="text-align:right;"><%= t.injuries %></td>
-          <td style="text-align:right;"><%= t.serious %></td>
           <td style="text-align:right;"><%= t.illness %></td>
+          <td style="text-align:right;"><%= t.serious %></td>
         </tr>
       <% } %>
     </tbody>
@@ -60,7 +60,7 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Incident volume — 12-month trend</h2>
-  <p class="footnote" style="margin-top:0;">Each cell: incident count, with the dot showing the notifiable-to-regulator rating (green 0 · amber 1–2 · red 3+). “N” = notifiable count that month.</p>
+  <p class="footnote" style="margin-top:0;">Each cell: total incident count, with the dot showing the serious-incident rating (green 0 · amber 1 · red 2+). “S” = serious incidents (Reg 12) that month.</p>
   <div style="overflow-x:auto;"><table>
     <thead><tr>
       <th>Centre</th>
@@ -75,7 +75,7 @@
               <% if(!cell.hasData){ %><span class="muted">—</span><% } else { %>
                 <%- dot(cell.rating) %><br>
                 <span style="font-size:13px;"><%= cell.total %></span>
-                <% if(cell.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">N<%= cell.reportable %></span><% } %>
+                <% if(cell.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">S<%= cell.reportable %></span><% } %>
               <% } %>
             </td>
           <% }); %>
@@ -84,10 +84,10 @@
       <% if (rep.rows.length > 1) { %>
         <tr style="border-top:2px solid var(--line,#e5e7eb);font-weight:700;">
           <td>All centres</td>
-          <% rep.totals.forEach(function(t){ var rt = (t.reportable<=0?'green':t.reportable<=2?'amber':'red'); %>
+          <% rep.totals.forEach(function(t){ var rt = (t.reportable<=0?'green':t.reportable<=1?'amber':'red'); %>
             <td style="text-align:center;<%= isPartial(t.month)?'opacity:.6;':'' %>">
               <%- dot(rt) %><br><span style="font-size:13px;"><%= t.total %></span>
-              <% if(t.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">N<%= t.reportable %></span><% } %>
+              <% if(t.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">S<%= t.reportable %></span><% } %>
             </td>
           <% }); %>
         </tr>
@@ -96,8 +96,8 @@
   </table></div>
   <p class="footnote">
     * Current month is partial (fills in as the month runs).
-    <strong>Notifiable</strong> = the centre completed OWNA’s “regulatory authority” field on the report (the notifiable-to-regulator signal that drives the Safety Culture rating in the action plan).
-    <strong>Injuries</strong> = physical-injury reports (cuts, bruises, bites, head bumps…); <strong>Serious</strong> = head/concussion, bite, anaphylaxis, fracture, crush, eye, burn; <strong>Illness</strong> = temperature, rash, vomiting, infectious.
+    <strong>Serious incident (Reg 12)</strong> = the OWNA report recorded that emergency services attended <em>or</em> medical attention was sought from a registered practitioner/hospital — the two criteria on OWNA’s Serious Incident section. This is what drives the Safety Culture rating in the action plan. (OWNA’s explicit “Is this a Serious Incident?” Yes/No is not returned by the API, so it is derived from those two fields.)
+    <strong>Injuries</strong> = physical-injury reports (cuts, bruises, bites, head bumps…); <strong>Illness</strong> = temperature, rash, vomiting, infectious; <strong>Emerg. svc</strong> = emergency services attended.
     <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
   </p>
 </div>

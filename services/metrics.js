@@ -534,10 +534,10 @@ function actionPlanAuto(ownaId) {
     if (pr && pr.enps != null) out.family = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps}` };
     if (pr && pr.turnover != null) out.team = { rating: rag(pr.turnover, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${pr.turnover}%` };
   }
-  // Safety: notifiable child incidents (regulatory authority completed) in the latest complete month.
+  // Safety: serious child incidents (reg 12: emergency services or medical attention) in the latest complete month.
   const inc = incidentsMonth(ownaId, null, true);
-  if (inc) out.safety = { rating: rag(inc.reportable, 0, 2, true),
-    reason: `${inc.reportable} notifiable to regulator · ${inc.total} incidents (${inc.injuries} injuries, ${inc.serious} serious) · ${inc.month}` };
+  if (inc) out.safety = { rating: rag(inc.reportable, 0, 1, true),
+    reason: `${inc.reportable} serious incident${inc.reportable === 1 ? "" : "s"} (Reg 12) · ${inc.total} incidents, ${inc.injuries} injuries · ${inc.month}` };
   return out;
 }
 function incidentsMonth(ownaId, month, preferComplete) {
@@ -566,7 +566,7 @@ function incidentsReport(scopedOwnaId, monthsBack = 12) {
   let centreRows = db.prepare(`SELECT DISTINCT c.owna_id, c.name FROM incidents_monthly i JOIN centres c ON c.owna_id = i.owna_id ORDER BY c.name`).all();
   if (scopedOwnaId) centreRows = centreRows.filter((c) => c.owna_id === scopedOwnaId);
   const get = db.prepare("SELECT total, injuries, illness, serious, reportable FROM incidents_monthly WHERE owna_id=? AND month=?");
-  const rateOf = (rep) => rag(rep, 0, 2, true); // notifiable: 0 green, 1-2 amber, 3+ red
+  const rateOf = (rep) => rag(rep, 0, 1, true); // serious incidents (reg 12): 0 green, 1 amber, 2+ red
 
   const rows = centreRows.map((c) => {
     const cells = months.map((mo) => {
