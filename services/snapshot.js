@@ -156,6 +156,9 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
       log(`[snapshot] exit report failed: ${e.message}`);
     }
 
+    // Child incidents (safety) — best-effort.
+    try { await runIncidents({ windowDays, log }); } catch (e) { log(`[snapshot] incidents failed: ${e.message}`); }
+
     db.prepare(
       `UPDATE snapshot_runs SET finished_at=datetime('now'), status='ok', rows_written=? WHERE id=?`
     ).run(rowsWritten, runId);
@@ -168,6 +171,36 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
     log(`[snapshot] ERROR: ${e.message}`);
     throw e;
   }
+}
+
+
+// ===== Child incidents -> per-centre per-month safety counts =====
+async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}) {
+  const from = daysAgo(windowDays), to = today();
+  const centres = await owna.listCentres();
+  const upsert = db.prepare(`INSERT INTO incidents_monthly (owna_id, month, total, injuries, reportable, updated_at)
+    VALUES (@owna_id,@month,@total,@injuries,@reportable,datetime('now'))
+    ON CONFLICT(owna_id, month) DO UPDATE SET total=@total, injuries=@injuries, reportable=@reportable, updated_at=datetime('now')`);
+  const injTxt = (v) => { const t = String(v || "").trim().toLowerCase(); return t && t !== "n/a" && t !== "na" && t !== "none"; };
+  let rows = 0;
+  for (const c of centres) {
+    let inc;
+    try { inc = await owna.childIncidents(c.id, from, to); } catch (e) { log(`[incidents] ${c.name}: ${e.message}`); continue; }
+    const byMonth = new Map();
+    for (const r of inc) {
+      const month = (r.incidentDate || "").slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(month)) continue;
+      let m = byMonth.get(month); if (!m) { m = { total: 0, injuries: 0, reportable: 0 }; byMonth.set(month, m); }
+      m.total += 1;
+      if (injTxt(r.injurytrauma)) m.injuries += 1;
+      const reportable = injTxt(r.regulatoryAuthority) || r.regulatoryAuthorityDatetime || r.emergencyServices || r.medicalAttention;
+      if (reportable) m.reportable += 1;
+    }
+    const write = db.transaction((entries) => { for (const [month, m] of entries) { upsert.run({ owna_id: c.id, month, ...m }); rows += 1; } });
+    write([...byMonth.entries()]);
+  }
+  log(`[incidents] ${rows} centre-months written`);
+  return { ok: true, rows };
 }
 
 function lastRun() {
@@ -511,4 +544,4 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length };
 }
 
-module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, lastRun };
+module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, lastRun };

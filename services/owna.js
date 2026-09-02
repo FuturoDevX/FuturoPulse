@@ -68,6 +68,11 @@ const owna = {
     return getAll(`/api/children/${centreId}/list`);
   },
 
+  // Child incident reports for a centre + date range.
+  async childIncidents(centreId, from, to) {
+    return getAll(`/api/children/incident/${centreId}/${fmtDate(from)}/${fmtDate(to)}`);
+  },
+
   // Booked child-days with fee + attendance + casual flags.
   async attendance(centreId, from, to) {
     return getAll(`/api/attendance/${centreId}/${fmtDate(from)}/${fmtDate(to)}`, {

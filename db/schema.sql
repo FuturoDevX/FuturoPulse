@@ -241,3 +241,14 @@ CREATE TABLE IF NOT EXISTS action_plan_items (
   focus_area TEXT, actions TEXT, owner TEXT, status TEXT, sort INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_apitems ON action_plan_items(owna_id, month);
+
+-- ===== Safety: OWNA child incidents aggregated per centre per month =====
+CREATE TABLE IF NOT EXISTS incidents_monthly (
+  owna_id     TEXT NOT NULL,
+  month       TEXT NOT NULL,          -- YYYY-MM
+  total       INTEGER DEFAULT 0,
+  injuries    INTEGER DEFAULT 0,
+  reportable  INTEGER DEFAULT 0,      -- regulatory authority notified / emergency / medical attention
+  updated_at  TEXT,
+  PRIMARY KEY (owna_id, month)
+);

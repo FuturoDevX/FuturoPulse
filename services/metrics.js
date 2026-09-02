@@ -534,7 +534,16 @@ function actionPlanAuto(ownaId) {
     if (pr && pr.enps != null) out.family = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps}` };
     if (pr && pr.turnover != null) out.team = { rating: rag(pr.turnover, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${pr.turnover}%` };
   }
+  // Safety: reportable child incidents (regulator-notified / medical / emergency) in the latest month.
+  const inc = incidentsMonth(ownaId);
+  if (inc) out.safety = { rating: rag(inc.reportable, 0, 1, true), reason: `${inc.reportable} reportable of ${inc.total} incidents (${inc.injuries} injuries) · ${inc.month}` };
   return out;
+}
+function incidentsMonth(ownaId, month) {
+  // month may be YYYY-MM; if no exact row, use the latest available for the centre.
+  let r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? AND month=?").get(ownaId, month);
+  if (!r) r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? ORDER BY month DESC LIMIT 1").get(ownaId);
+  return r || null;
 }
 function actionPlanMonths(limit = 24) {
   return db.prepare("SELECT DISTINCT month FROM action_plans ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);
@@ -700,5 +709,5 @@ module.exports = {
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, PC_TARGET_KEYS,
   qcSummary, qcCentre,
-  AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems,
+  AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth,
 };
