@@ -200,6 +200,9 @@ router.get("/centre/:id", (req, res) => {
     exits: m.centreExits(c.owna_id, "past", 100),
     exitsUpcoming: m.centreExits(c.owna_id, "upcoming", 100),
     exitReasons: m.exitReasons(c.owna_id),
+    labour: m.centreLabourLatest(c.owna_id),
+    labourTrend: m.labourTrend(c.owna_id, 12),
+    insights: m.centreInsights(c.owna_id, c.capacity, m.pct(agg.booked, capacityDays), m.llForCentre(c.owna_id)),
     lastRun: lastRun(),
   });
 });

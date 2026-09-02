@@ -48,6 +48,74 @@
 </div>
 <% } %>
 
+<% if (typeof labour !== 'undefined' && labour) { %>
+<div class="card">
+  <h2 style="margin-top:0;">Wages &amp; margin <span class="muted" style="font-weight:400;font-size:13px;">· week ending <%= labour.week %> · Employment Hero</span></h2>
+  <div class="grid kpis" style="margin-top:14px;">
+    <div class="card stat"><div class="n"><%= money(labour.revenue) %></div><div class="l">Revenue (week)</div></div>
+    <div class="card stat"><div class="n"><%= money(labour.care_wages) %></div><div class="l">Care wages</div></div>
+    <div class="card stat <%= (labour.wage_pct!=null && labour.wage_pct>65)?'hot-card':'' %>"><div class="n"><%= labour.wage_pct!=null?labour.wage_pct+'%':'—' %></div><div class="l">Care wages % of revenue</div></div>
+    <div class="card stat"><div class="n"><%= money(labour.support_amt) %></div><div class="l">Kitchen / cleaning</div></div>
+    <div class="card stat"><div class="n <%= labour.marginAfterWages>=0?'good':'bad' %>-text"><%= money(labour.marginAfterWages) %></div><div class="l">After all wages</div></div>
+    <div class="card stat"><div class="n"><%= labour.margin_pct!=null?labour.margin_pct+'%':'—' %></div><div class="l">Margin after wages</div></div>
+  </div>
+  <% if (labourTrend && labourTrend.length>1) { var wpMax=Math.max(70,...labourTrend.filter(t=>t.wage_pct!=null).map(t=>t.wage_pct)); %>
+  <h3 class="card-sub">Care wages % of revenue <span class="muted" style="font-weight:400;font-size:12px;">· weekly</span></h3>
+  <div class="chart" style="height:140px;">
+    <% labourTrend.forEach(function(t){ var wp=t.wage_pct; %>
+      <div class="chart-col" title="<%= t.week %>: <%= wp!=null?wp+'% wages of revenue':'n/a' %> · revenue <%= money(t.revenue) %>">
+        <div class="chart-bar <%= wp==null?'':(wp>65?'bad':wp>55?'warn':'good') %>" style="height:<%= wp!=null?Math.round(wp/wpMax*100):0 %>%;"></div>
+        <div class="chart-x"><%= t.week.slice(5) %><br><span><%= wp!=null?wp+'%':'—' %></span></div>
+      </div>
+    <% }); %>
+  </div>
+  <% } %>
+  <p class="footnote">Care wages = educators + leave; kitchen/cleaning shown separately. “After all wages” = revenue − all wages (before rent, food &amp; other costs). Care-wage target ≤ 55–65% of revenue.</p>
+</div>
+<% } %>
+
+<% if (typeof insights !== 'undefined' && insights && (insights.tips.length || insights.calc.length || insights.dow.some(function(d){return d.occupancy!=null;}))) {
+     const dmax = Math.max(100, ...insights.dow.filter(function(d){return d.occupancy!=null;}).map(function(d){return d.occupancy;})); %>
+<div class="card">
+  <h2 style="margin-top:0;">Grow occupancy <span class="muted" style="font-weight:400;font-size:13px;">· suggestions from the last 8 weeks</span></h2>
+
+  <% if (insights.tips.length) { %>
+    <ul class="tips">
+      <% insights.tips.forEach(function(t){ %><li><%= t %></li><% }); %>
+    </ul>
+  <% } %>
+
+  <% if (insights.dow.some(function(d){return d.occupancy!=null;})) { %>
+  <h3 class="card-sub">Occupancy by weekday</h3>
+  <div class="chart" style="height:140px;">
+    <% insights.dow.forEach(function(d){ %>
+      <div class="chart-col" title="<%= d.dow %>: <%= d.occupancy!=null?d.occupancy+'% ('+d.avg_booked+' booked/day)':'no data' %>">
+        <div class="chart-bar <%= d.occupancy==null?'':occClass(d.occupancy) %>" style="height:<%= d.occupancy!=null?Math.round(d.occupancy/dmax*100):0 %>%;"></div>
+        <div class="chart-x"><strong><%= d.dow %></strong><br><span><%= d.occupancy!=null?d.occupancy+'%':'—' %></span></div>
+      </div>
+    <% }); %>
+  </div>
+  <% } %>
+
+  <% if (insights.calc.length) { %>
+  <h3 class="card-sub">What it takes to grow</h3>
+  <p class="sub" style="margin:0 0 10px;">Current occupancy <strong><%= insights.occupancyNow %>%</strong> across <%= insights.capacity %> places. New permanent enrolments needed to lift it:</p>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Lift occupancy by</th><th class="num">2-day places</th><th class="num">3-day</th><th class="num">4-day</th><th class="num">5-day</th></tr></thead>
+    <tbody>
+      <% insights.calc.forEach(function(row){ %>
+      <tr>
+        <td><strong>+<%= row.delta %>pp</strong> <span class="muted">→ <%= row.target_occ %>%</span><% if(!row.reachable){ %> <span class="muted" style="font-size:11px;">(caps at 100%)</span><% } %></td>
+        <% row.perPattern.forEach(function(p){ %><td class="num"><%= p.count %></td><% }); %>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="footnote">Read across a row: e.g. to lift occupancy +<%= insights.calc[0].delta %>pp you need about <strong><%= insights.calc[0].perPattern[0].count %></strong> new 2-day children — or <strong><%= insights.calc[0].perPattern[3].count %></strong> new 5-day children. Any mix of days works; each 5-day place moves the needle fastest. Based on <%= insights.capacity %> licensed places over a 5-day week.</p>
+  <% } %>
+</div>
+<% } %>
+
 <div class="card">
   <h2 style="margin-top:0;">Daily occupancy <span class="muted" style="font-weight:400;font-size:13px;">· % of licensed places booked<% if (to > today) { %>; lighter bars are future bookings<% } %></span></h2>
   <% if (!daily.length) { %>
@@ -142,7 +210,7 @@
 
   <% if (pastN) { %>
     <div style="overflow-x:auto;">
-    <table>
+    <table data-paginate="8">
       <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Left</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
       <tbody>
         <% exits.forEach(function(e){ %>
@@ -165,7 +233,7 @@
   <% if (upN) { %>
     <h2>Scheduled to leave</h2>
     <div style="overflow-x:auto;">
-    <table>
+    <table data-paginate="8">
       <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Leaving</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
       <tbody>
         <% exitsUpcoming.forEach(function(e){ %>
@@ -184,4 +252,20 @@
   <% } %>
 </div>
 
+<script>
+// Lightweight client-side pagination for long tables (data-paginate="N").
+document.querySelectorAll('table[data-paginate]').forEach(function(t){
+  var per = parseInt(t.getAttribute('data-paginate')) || 10;
+  var tb = t.tBodies[0]; if(!tb) return;
+  var rows = Array.prototype.slice.call(tb.rows);
+  if(rows.length <= per) return;
+  var expanded = false;
+  var btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'btn-more';
+  function render(){ rows.forEach(function(r,i){ r.hidden = !expanded && i >= per; }); btn.textContent = expanded ? 'Show fewer' : ('Show all ' + rows.length + ' →'); }
+  btn.onclick = function(){ expanded = !expanded; render(); };
+  t.parentNode.insertBefore(btn, t.nextSibling);
+  render();
+});
+</script>
 <%- include('partials/footer') %>

@@ -202,3 +202,11 @@ tr:hover td.hot { background: #ffedcc; }
 /* RAG dots */
 .rag { display:inline-block; width:11px; height:11px; border-radius:50%; vertical-align:middle; }
 .rag-green { background:#4caf7d; } .rag-amber { background:#e0b64b; } .rag-red { background:#d9736b; } .rag-none { background:#cbd2db; }
+
+/* Centre insights: sub-headings, tips, show-more */
+.card-sub { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; margin: 20px 0 10px; }
+.tips { list-style: none; margin: 4px 0 6px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.tips li { position: relative; background: #f0f6ff; border: 1px solid #d6e4fb; border-left: 3px solid var(--navy); border-radius: 8px; padding: 11px 14px 11px 38px; font-size: 14px; line-height: 1.5; color: #1c2b45; }
+.tips li::before { content: "\1F4A1"; position: absolute; left: 12px; top: 10px; font-size: 15px; }
+.btn-more { display: inline-block; margin: 10px 0 2px; background: none; border: 1px solid var(--line, #e5e7eb); color: var(--navy); font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 14px; cursor: pointer; }
+.btn-more:hover { background: #f0f6ff; border-color: #d6e4fb; }

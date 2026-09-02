@@ -70,4 +70,4 @@ if (cron.validate(cronExpr)) {
   console.warn(`[cron] invalid SNAPSHOT_CRON "${cronExpr}" — nightly snapshot disabled`);
 }
 
-app.listen(PORT, () => console.log(`OWNA Dashboard on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Futuro Pulse on http://localhost:${PORT}`));

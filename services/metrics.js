@@ -739,8 +739,80 @@ function labourTrend(ownaId = null, weeks = 16) {
   });
 }
 
+// ===== Centre insights: day-of-week occupancy, tips, occupancy calculator, wages/margin =====
+const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Average occupancy per weekday (Mon–Fri) over a recent window (past days only).
+function centreDowOccupancy(ownaId, days = 56) {
+  const today = todayStr();
+  const from = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const rows = db.prepare(`
+    SELECT CAST(strftime('%w', metric_date) AS INTEGER) AS dow,
+           COALESCE(SUM(booked),0) AS booked, COALESCE(SUM(casual),0) AS casual,
+           MAX(capacity) AS cap, COUNT(DISTINCT metric_date) AS d
+    FROM daily_metrics
+    WHERE owna_id = ? AND metric_date BETWEEN ? AND ?
+    GROUP BY dow`).all(ownaId, from, today);
+  const byDow = {}; rows.forEach((r) => { byDow[r.dow] = r; });
+  const out = [];
+  for (let wd = 1; wd <= 5; wd++) {
+    const r = byDow[wd];
+    if (!r || !r.d) { out.push({ dow: DOW_NAMES[wd], occupancy: null, avg_booked: null, avg_casual: null, days: 0 }); continue; }
+    out.push({ dow: DOW_NAMES[wd], occupancy: pct(r.booked, r.cap * r.d), avg_booked: Math.round(r.booked / r.d), avg_casual: Math.round(r.casual / r.d), days: r.d, capacity: r.cap });
+  }
+  return out;
+}
+
+// Latest full pay-week wages, revenue and margin for one centre.
+function centreLabourLatest(ownaId) {
+  const wk = labourWeeks(1)[0]; if (!wk) return null;
+  const row = labourForWeek(wk).find((r) => r.owna_id === ownaId); if (!row) return null;
+  const marginAfterWages = row.revenue != null ? Math.round(row.revenue - row.all_wages) : null;
+  const margin_pct = row.revenue > 0 ? Math.round((row.revenue - row.all_wages) / row.revenue * 1000) / 10 : null;
+  return { week: wk, revenue: row.revenue, care_wages: row.care_wages, all_wages: row.all_wages,
+    support_amt: row.support_amt, wage_pct: row.wage_pct, occupancy: row.occupancy, marginAfterWages, margin_pct };
+}
+
+// How many new bookings of each day-pattern lift weekly occupancy by each target (pp).
+function occupancyCalculator(capacity, occupancyNow, targets = [5, 10]) {
+  const patterns = [2, 3, 4, 5];
+  const free = occupancyNow != null ? Math.max(0, Math.round(capacity * (1 - occupancyNow / 100))) : null;
+  return targets.map((delta) => ({
+    delta,
+    target_occ: occupancyNow != null ? Math.round((occupancyNow + delta) * 10) / 10 : null,
+    reachable: occupancyNow == null || occupancyNow + delta <= 100,
+    perPattern: patterns.map((d) => {
+      const extraChildDays = delta / 100 * capacity * 5; // extra booked child-days/week for +delta pp
+      return { days: d, count: Math.ceil(extraChildDays / d) };
+    }),
+    free,
+  }));
+}
+
+// Rule-based, data-driven improvement tips for a centre.
+function centreInsights(ownaId, capacity, occupancyNow, pipeline) {
+  const dow = centreDowOccupancy(ownaId);
+  const valid = dow.filter((d) => d.occupancy != null);
+  const tips = [];
+  if (valid.length >= 2) {
+    const peak = valid.reduce((a, b) => (b.occupancy > a.occupancy ? b : a));
+    const low = valid.reduce((a, b) => (b.occupancy < a.occupancy ? b : a));
+    const spread = Math.round((peak.occupancy - low.occupancy) * 10) / 10;
+    if (spread >= 8) tips.push(`${peak.dow} runs fullest at ${peak.occupancy}%, while ${low.dow} sits at ${low.occupancy}% — a ${spread}pp gap. Encouraging some ${peak.dow} families to add a ${low.dow} day (or steering casual demand there) would lift your quietest day and overall occupancy.`);
+  }
+  if (pipeline && pipeline.waitlist > 0) {
+    const free = capacity && occupancyNow != null ? Math.round(capacity * (1 - occupancyNow / 100)) : null;
+    if (free && free > 0) tips.push(`You have ${pipeline.waitlist} on the waitlist and roughly ${free} place${free === 1 ? "" : "s"} free on an average day — converting waitlist families into permanent bookings is the fastest occupancy win.`);
+  }
+  const avgCasual = valid.length ? Math.round(valid.reduce((s, d) => s + (d.avg_casual || 0), 0) / valid.length) : 0;
+  if (avgCasual >= 3) tips.push(`Around ${avgCasual} casual bookings a day — casuals are good revenue but volatile. Offering these families a permanent day locks in the place and steadies your roster.`);
+  const calc = capacity ? occupancyCalculator(capacity, occupancyNow) : [];
+  return { dow, tips, calc, occupancyNow, capacity };
+}
+
 module.exports = {
   defaultRange, forwardRange, centres, overview, totals,
+  centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
   llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr,
   exitsSummary, exitReasons, centreExits, exitsLatestDate,

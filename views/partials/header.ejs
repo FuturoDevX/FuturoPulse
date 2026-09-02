@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Futuro OWNA Dashboard</title>
+  <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Futuro Pulse</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
 <% if (user) { %>
 <div class="app-shell">
   <aside class="sidebar">
-    <div class="brand">Futuro Ops<span>OWNA Dashboard</span></div>
+    <div class="brand">Futuro Pulse<span>Operations</span></div>
     <nav class="side-nav">
       <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>">Overview</a>
       <a href="/pc" class="<%= currentPath === '/pc' ? 'active' : '' %>">People &amp; Culture</a>
