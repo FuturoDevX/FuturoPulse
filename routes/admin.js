@@ -96,12 +96,13 @@ router.post("/pc", requireAdmin, (req, res) => {
   const centres = db.prepare("SELECT owna_id FROM centres WHERE ll_id IS NOT NULL").all();
   for (const c of centres) {
     m.savePcMetric(c.owna_id, month, {
-      enps: num(req.body["enps_" + c.owna_id]), turnover: num(req.body["turnover_" + c.owna_id]),
+      enps: num(req.body["enps_" + c.owna_id]), family_nps: num(req.body["familynps_" + c.owna_id]),
+      turnover: num(req.body["turnover_" + c.owna_id]),
       checkin_due: num(req.body["due_" + c.owna_id]), checkin_completed: num(req.body["done_" + c.owna_id]),
       psych_safety: num(req.body["psych_" + c.owna_id]),
     });
   }
-  ["enps", "turnover", "checkin_pct", "psych_safety"].forEach((k) => { const v = num(req.body["target_" + k]); if (v != null) m.savePcTarget(k, v); });
+  ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"].forEach((k) => { const v = num(req.body["target_" + k]); if (v != null) m.savePcTarget(k, v); });
   res.redirect("/admin/pc?month=" + month + "&msg=" + encodeURIComponent("Saved."));
 });
 

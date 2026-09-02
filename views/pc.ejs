@@ -19,6 +19,7 @@
   <table>
     <thead><tr><th>Centre</th>
       <th class="num">eNPS<br><span class="muted" style="font-weight:400;">≥ <%= num(targets.enps) %></span></th>
+      <th class="num">Family NPS<br><span class="muted" style="font-weight:400;">≥ <%= num(targets.family_nps) %></span></th>
       <th class="num">Turnover<br><span class="muted" style="font-weight:400;">≤ <%= num(targets.turnover,'%') %></span></th>
       <th class="num">Check-ins<br><span class="muted" style="font-weight:400;">done / due</span></th>
       <th class="num">Check-in %<br><span class="muted" style="font-weight:400;">≥ <%= num(targets.checkin_pct,'%') %></span></th>
@@ -29,6 +30,7 @@
         <tr>
           <td><%= shortName(r.name) %></td>
           <td class="num <%= flag(r.enps, targets.enps, 'high') %>" style="font-weight:600;"><%= num(r.enps) %></td>
+          <td class="num <%= flag(r.family_nps, targets.family_nps, 'high') %>" style="font-weight:600;"><%= num(r.family_nps) %></td>
           <td class="num <%= flag(r.turnover, targets.turnover, 'low') %>" style="font-weight:600;"><%= num(r.turnover,'%') %></td>
           <td class="num"><%= r.checkin_due==null?'—':(num(r.checkin_completed)+' / '+r.checkin_due) %></td>
           <td class="num <%= flag(r.checkin_pct, targets.checkin_pct, 'high') %>" style="font-weight:600;"><%= num(r.checkin_pct,'%') %></td>

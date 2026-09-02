@@ -4,6 +4,10 @@
   const shortName = (n) => n.replace('Futuro Childcare & Education - ','');
   const money = (n) => '$' + Number(n||0).toLocaleString('en-AU', { maximumFractionDigits: 0 });
   const dow = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { weekday: 'short' });
+  const mLabel = (mm) => { if(!mm) return ''; const [y,mo]=mm.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); };
+  const pf = (v,target,better)=>{ if(v==null||target==null) return ''; const ok = better==='low' ? v<=target : v>=target; return ok?'good-text':'bad-text'; };
+  const pv = (v,suf='')=> (v==null||v==='') ? '—' : v+suf;
+  const qcClass = (p) => p==null ? '' : (p>=90 ? 'good' : p>=75 ? 'warn' : 'bad');
 %>
 
 <div class="page-head">
@@ -18,6 +22,16 @@
   </div>
 </div>
 
+<nav class="centre-subnav">
+  <a href="#occupancy">Occupancy</a>
+  <% if (typeof actionPlan !== 'undefined' && actionPlan) { %><a href="#actionplan">Action plan</a><% } %>
+  <% if (typeof pcRow !== 'undefined' && pcRow) { %><a href="#pc">P&amp;C</a><% } %>
+  <% if (typeof qc !== 'undefined' && qc) { %><a href="#qc">Q&amp;C</a><% } %>
+  <% if (typeof labour !== 'undefined' && labour) { %><a href="#wages">Wages</a><% } %>
+  <a href="#exits">Exits</a>
+</nav>
+
+<span id="occupancy"></span>
 <%- include('partials/rangebar', { action: '/centre/' + centre.owna_id, from, to, presets, fwdPresets }) %>
 
 <% if (to > today) { %><div class="fwd-links"><span class="fwd-note">Showing scheduled bookings past today (<%= today %>)</span></div><% } %>
@@ -47,8 +61,59 @@
 </div>
 <% } %>
 
+<% // ===== Centre hub: Action plan · P&C · Q&C ===== %>
+<% if (typeof actionPlan !== 'undefined' && actionPlan) {
+     const areas = (actionPlan.plan && actionPlan.plan.areas) || {}; const auto = actionPlan.auto || {}; %>
+<div class="card" id="actionplan">
+  <div class="pc-head">
+    <h2 style="margin:0;">Action plan <span class="muted" style="font-weight:400;font-size:13px;">· <%= mLabel(apMonth) %><% if(actionPlan.plan&&actionPlan.plan.overall){ %> · overall <%= actionPlan.plan.overall %><% } %></span></h2>
+    <a class="row-link" href="/action-plans?owna=<%= centre.owna_id %>&month=<%= apMonth %>">Open action plan →</a>
+  </div>
+  <div class="ap-rag-grid">
+    <% (actionPlan.areasDef||[]).forEach(function(a){ var av=areas[a.key]||{}; var rating=av.rating||(auto[a.key]&&auto[a.key].rating)||null; var reason=av.reason||(auto[a.key]&&auto[a.key].reason)||''; %>
+      <div class="ap-rag-item" title="<%= reason %>"><span class="rag rag-<%= rating||'none' %>"></span> <%= a.label.split('—')[0].split('/')[0].trim() %></div>
+    <% }); %>
+  </div>
+</div>
+<% } %>
+
+<% if (typeof pcRow !== 'undefined' && pcRow) { %>
+<div class="card" id="pc">
+  <div class="pc-head">
+    <h2 style="margin:0;">People &amp; culture <span class="muted" style="font-weight:400;font-size:13px;">· <%= mLabel(pcMonth) %></span></h2>
+    <a class="row-link" href="/pc?month=<%= pcMonth %>">P&amp;C detail →</a>
+  </div>
+  <div class="grid kpis" style="margin-top:14px;">
+    <div class="card stat"><div class="n <%= pf(pcRow.enps,pcTargets.enps,'high') %>"><%= pv(pcRow.enps) %></div><div class="l">eNPS<% if(pcTargets.enps!=null){ %> · ≥<%= pcTargets.enps %><% } %></div></div>
+    <div class="card stat"><div class="n <%= pf(pcRow.family_nps,pcTargets.family_nps,'high') %>"><%= pv(pcRow.family_nps) %></div><div class="l">Family NPS<% if(pcTargets.family_nps!=null){ %> · ≥<%= pcTargets.family_nps %><% } %></div></div>
+    <div class="card stat"><div class="n <%= pf(pcRow.turnover,pcTargets.turnover,'low') %>"><%= pv(pcRow.turnover,'%') %></div><div class="l">Turnover<% if(pcTargets.turnover!=null){ %> · ≤<%= pcTargets.turnover %>%<% } %></div></div>
+    <div class="card stat"><div class="n <%= pf(pcRow.checkin_pct,pcTargets.checkin_pct,'high') %>"><%= pv(pcRow.checkin_pct,'%') %></div><div class="l">Career check-ins</div></div>
+    <div class="card stat"><div class="n <%= pf(pcRow.psych_safety,pcTargets.psych_safety,'high') %>"><%= pv(pcRow.psych_safety) %></div><div class="l">Psych safety</div></div>
+  </div>
+</div>
+<% } %>
+
+<% if (typeof qc !== 'undefined' && qc) { var openA=(qc.actions||[]).filter(function(a){return !/^y/i.test((a.completed||'').trim());}).length; %>
+<div class="card" id="qc">
+  <div class="pc-head">
+    <h2 style="margin:0;">Quality &amp; compliance <span class="muted" style="font-weight:400;font-size:13px;">· <%= qc.term %></span> <span class="badge <%= qcClass(qc.overall_pct) %>"><%= qc.overall_pct %>% overall</span></h2>
+    <a class="row-link" href="/qc?owna=<%= centre.owna_id %>">Q&amp;C detail →</a>
+  </div>
+  <div class="qa-grid" style="margin-top:12px;">
+    <% (qc.qa||[]).forEach(function(q){ %>
+      <div class="qa-cell">
+        <div class="qa-code"><%= q.code %></div>
+        <div class="qa-bar-wrap"><div class="qa-bar <%= qcClass(q.pct) %>" style="width:<%= Math.min(q.pct||0,100) %>%;"></div></div>
+        <div class="qa-pct <%= qcClass(q.pct) %>-text"><%= q.pct %>%</div>
+      </div>
+    <% }); %>
+  </div>
+  <p class="sub" style="margin:12px 0 0;"><strong class="bad-text"><%= openA %></strong> open action item<%= openA===1?'':'s' %> of <%= (qc.actions||[]).length %></p>
+</div>
+<% } %>
+
 <% if (typeof labour !== 'undefined' && labour) { %>
-<div class="card">
+<div class="card" id="wages">
   <h2 style="margin-top:0;">Wages &amp; margin <span class="muted" style="font-weight:400;font-size:13px;">· week ending <%= labour.week %> · Employment Hero</span></h2>
   <div class="grid kpis" style="margin-top:14px;">
     <div class="card stat"><div class="n"><%= money(labour.revenue) %></div><div class="l">Revenue (week)</div></div>

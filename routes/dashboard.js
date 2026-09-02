@@ -53,6 +53,7 @@ router.get("/", (req, res) => {
     fwdPresets: fwdPresetsFor(),
     llMap: m.llByOwnaCentre(),
     fcast: m.forwardOccupancyByCentre(30),
+    pcGroup: m.pcGroupLatest(),
     lastRun: lastRun(),
   });
 });
@@ -189,6 +190,11 @@ router.get("/centre/:id", (req, res) => {
   const capacityDays = c.capacity * agg.days;
   const pipeline = m.llForCentre(c.owna_id);
   const labour = m.centreLabourLatest(c.owna_id);
+  // Centre hub: latest action plan, P&C and Q&C for this centre.
+  const apMonth = m.actionPlanMonths(1)[0] || m.todayStr().slice(0, 7);
+  const actionPlan = m.actionPlanGet(c.owna_id, apMonth);
+  const pcMonth = m.pcMonths(1)[0];
+  const pcRow = pcMonth ? m.pcForMonth(pcMonth, c.owna_id)[0] : null;
 
   res.render("centre", {
     title: c.name,
@@ -214,6 +220,9 @@ router.get("/centre/:id", (req, res) => {
     labour,
     labourTrend: m.labourTrend(c.owna_id, 12),
     insights: m.centreInsights(c.owna_id, c.capacity, m.pct(agg.booked, capacityDays), pipeline, labour),
+    actionPlan, apMonth,
+    pcRow, pcMonth, pcTargets: m.pcTargets(),
+    qc: m.qcCentre(c.owna_id),
     lastRun: lastRun(),
   });
 });

@@ -531,7 +531,8 @@ function actionPlanAuto(ownaId) {
   // Family (eNPS) + Team (turnover): latest P&C month
   const pm = pcMonths(1)[0];
   if (pm) { const pr = pcForMonth(pm, ownaId)[0]; const t = pcTargets();
-    if (pr && pr.enps != null) out.family = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps}` };
+    if (pr && pr.family_nps != null) out.family = { rating: rag(pr.family_nps, t.family_nps || 30, (t.family_nps || 30) - 15, false), reason: `Family NPS ${pr.family_nps}` };
+    else if (pr && pr.enps != null) out.family = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps} (family NPS not entered)` };
     if (pr && pr.turnover != null) out.team = { rating: rag(pr.turnover, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${pr.turnover}%` };
   }
   // Safety: serious child incidents (reg 12: emergency services or medical attention) in the latest complete month.
@@ -646,7 +647,7 @@ function qcTrend(ownaId) {
 }
 
 // ===== People & Culture (manual entry) =====
-const PC_TARGET_KEYS = ["enps", "turnover", "checkin_pct", "psych_safety"];
+const PC_TARGET_KEYS = ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"];
 function pcTargets() {
   const m = {};
   db.prepare("SELECT metric, target FROM pc_targets").all().forEach((r) => { m[r.metric] = r.target; });
@@ -656,11 +657,11 @@ function savePcTarget(metric, target) {
   db.prepare("INSERT INTO pc_targets (metric, target) VALUES (?,?) ON CONFLICT(metric) DO UPDATE SET target=excluded.target").run(metric, target);
 }
 function savePcMetric(ownaId, month, v) {
-  db.prepare(`INSERT INTO pc_metrics (owna_id, month, enps, turnover, checkin_due, checkin_completed, psych_safety, updated_at)
-    VALUES (@owna_id,@month,@enps,@turnover,@checkin_due,@checkin_completed,@psych_safety,datetime('now'))
-    ON CONFLICT(owna_id, month) DO UPDATE SET enps=@enps, turnover=@turnover, checkin_due=@checkin_due,
+  db.prepare(`INSERT INTO pc_metrics (owna_id, month, enps, family_nps, turnover, checkin_due, checkin_completed, psych_safety, updated_at)
+    VALUES (@owna_id,@month,@enps,@family_nps,@turnover,@checkin_due,@checkin_completed,@psych_safety,datetime('now'))
+    ON CONFLICT(owna_id, month) DO UPDATE SET enps=@enps, family_nps=@family_nps, turnover=@turnover, checkin_due=@checkin_due,
       checkin_completed=@checkin_completed, psych_safety=@psych_safety, updated_at=datetime('now')`)
-    .run({ owna_id: ownaId, month, ...v });
+    .run({ owna_id: ownaId, month, family_nps: null, ...v });
 }
 function pcMonths(limit = 24) {
   return db.prepare("SELECT DISTINCT month FROM pc_metrics ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);
@@ -673,9 +674,21 @@ function pcForMonth(month, ownaId) {
   return centres.map((c) => {
     const r = db.prepare("SELECT * FROM pc_metrics WHERE owna_id=? AND month=?").get(c.owna_id, month) || {};
     const checkin_pct = (r.checkin_due) ? Math.round((r.checkin_completed || 0) / r.checkin_due * 1000) / 10 : null;
-    return { owna_id: c.owna_id, name: c.name, enps: r.enps, turnover: r.turnover,
+    return { owna_id: c.owna_id, name: c.name, enps: r.enps, family_nps: r.family_nps, turnover: r.turnover,
       checkin_due: r.checkin_due, checkin_completed: r.checkin_completed, checkin_pct, psych_safety: r.psych_safety };
   });
+}
+// Group-level P&C for the latest month with data: simple average across centres that have a value.
+function pcGroupLatest() {
+  const month = pcMonths(1)[0];
+  if (!month) return null;
+  const rows = pcForMonth(month, null);
+  const avg = (key) => {
+    const vals = rows.map((r) => r[key]).filter((v) => v != null && v !== "");
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10 : null;
+  };
+  return { month, enps: avg("enps"), family_nps: avg("family_nps"), turnover: avg("turnover"),
+    checkin_pct: avg("checkin_pct"), psych_safety: avg("psych_safety"), targets: pcTargets() };
 }
 
 // ===== Employment Hero labour + margin =====
@@ -907,7 +920,7 @@ module.exports = {
   forwardOccupancyByCentre, projection, centrePipelineDetail,
   occupancyTrend, occupancyTrendGroup,
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
-  pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, PC_TARGET_KEYS,
+  pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, PC_TARGET_KEYS,
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
 };

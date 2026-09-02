@@ -210,3 +210,10 @@ tr:hover td.hot { background: #ffedcc; }
 .tips li::before { content: "\1F4A1"; position: absolute; left: 12px; top: 10px; font-size: 15px; }
 .btn-more { display: inline-block; margin: 10px 0 2px; background: none; border: 1px solid var(--line, #e5e7eb); color: var(--navy); font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 14px; cursor: pointer; }
 .btn-more:hover { background: #f0f6ff; border-color: #d6e4fb; }
+
+/* Centre hub: sub-nav + action-plan RAG summary */
+.centre-subnav { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; }
+.centre-subnav a { font-size: 12px; font-weight: 600; color: var(--navy); text-decoration: none; padding: 5px 12px; border: 1px solid var(--line, #e5e7eb); border-radius: 14px; background: #fff; }
+.centre-subnav a:hover { background: #f0f6ff; border-color: #d6e4fb; }
+.ap-rag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 18px; margin-top: 14px; }
+.ap-rag-item { font-size: 13px; color: #1c2b45; display: flex; align-items: center; gap: 8px; padding: 3px 0; }

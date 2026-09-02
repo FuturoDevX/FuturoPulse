@@ -14,11 +14,12 @@
   <div class="card">
     <h2 style="margin-top:0;">Metrics by centre</h2>
     <div style="overflow-x:auto;"><table>
-      <thead><tr><th>Centre</th><th class="num">eNPS</th><th class="num">Turnover %</th><th class="num">Check-ins due</th><th class="num">Check-ins done</th><th class="num">Psych safety</th></tr></thead>
+      <thead><tr><th>Centre</th><th class="num">eNPS</th><th class="num">Family NPS</th><th class="num">Turnover %</th><th class="num">Check-ins due</th><th class="num">Check-ins done</th><th class="num">Psych safety</th></tr></thead>
       <tbody>
         <% centres.forEach(function(c){ %>
           <tr><td><%= shortName(c.name) %></td>
             <td class="num"><input type="text" name="enps_<%= c.owna_id %>" value="<%= g(c.owna_id,'enps') %>" style="width:70px;text-align:right;"></td>
+            <td class="num"><input type="text" name="familynps_<%= c.owna_id %>" value="<%= g(c.owna_id,'family_nps') %>" style="width:70px;text-align:right;"></td>
             <td class="num"><input type="text" name="turnover_<%= c.owna_id %>" value="<%= g(c.owna_id,'turnover') %>" style="width:70px;text-align:right;"></td>
             <td class="num"><input type="text" name="due_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_due') %>" style="width:70px;text-align:right;"></td>
             <td class="num"><input type="text" name="done_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_completed') %>" style="width:70px;text-align:right;"></td>
@@ -32,6 +33,7 @@
     <h2 style="margin-top:0;">Targets / benchmarks</h2>
     <div class="user-form">
       <div><label>eNPS (≥)</label><input type="text" name="target_enps" value="<%= targets.enps!=null?targets.enps:'' %>"></div>
+      <div><label>Family NPS (≥)</label><input type="text" name="target_family_nps" value="<%= targets.family_nps!=null?targets.family_nps:'' %>"></div>
       <div><label>Turnover % (≤)</label><input type="text" name="target_turnover" value="<%= targets.turnover!=null?targets.turnover:'' %>"></div>
       <div><label>Check-in % (≥)</label><input type="text" name="target_checkin_pct" value="<%= targets.checkin_pct!=null?targets.checkin_pct:'' %>"></div>
       <div><label>Psych safety (≥)</label><input type="text" name="target_psych_safety" value="<%= targets.psych_safety!=null?targets.psych_safety:'' %>"></div>

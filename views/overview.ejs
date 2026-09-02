@@ -31,6 +31,27 @@
   <div class="card stat"><div class="n"><%= totals.capacity %></div><div class="l">Total places</div></div>
 </div>
 
+<% if (typeof pcGroup !== 'undefined' && pcGroup) {
+     const t = pcGroup.targets || {};
+     const mlab = (mm)=>{ if(!mm) return ''; const [y,mo]=mm.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
+     const pf = (v,target,better)=>{ if(v==null||target==null) return ''; const ok = better==='low' ? v<=target : v>=target; return ok?'good-text':'bad-text'; };
+     const pv = (v,suf='')=> v==null?'—':v+suf;
+%>
+<div class="card">
+  <div class="pc-head">
+    <h2 style="margin:0;">People &amp; experience <span class="muted" style="font-weight:400;font-size:13px;">· group average · <%= mlab(pcGroup.month) %></span></h2>
+    <a class="row-link" href="/pc">People &amp; Culture detail →</a>
+  </div>
+  <div class="grid kpis" style="margin-top:14px;">
+    <div class="card stat"><div class="n <%= pf(pcGroup.enps,t.enps,'high') %>"><%= pv(pcGroup.enps) %></div><div class="l">eNPS<% if(t.enps!=null){ %> · ≥<%= t.enps %><% } %></div></div>
+    <div class="card stat"><div class="n <%= pf(pcGroup.family_nps,t.family_nps,'high') %>"><%= pv(pcGroup.family_nps) %></div><div class="l">Family NPS<% if(t.family_nps!=null){ %> · ≥<%= t.family_nps %><% } %></div></div>
+    <div class="card stat"><div class="n <%= pf(pcGroup.turnover,t.turnover,'low') %>"><%= pv(pcGroup.turnover,'%') %></div><div class="l">Turnover<% if(t.turnover!=null){ %> · ≤<%= t.turnover %>%<% } %></div></div>
+    <div class="card stat"><div class="n <%= pf(pcGroup.checkin_pct,t.checkin_pct,'high') %>"><%= pv(pcGroup.checkin_pct,'%') %></div><div class="l">Career check-ins</div></div>
+    <div class="card stat"><div class="n <%= pf(pcGroup.psych_safety,t.psych_safety,'high') %>"><%= pv(pcGroup.psych_safety) %></div><div class="l">Psych safety</div></div>
+  </div>
+</div>
+<% } %>
+
 <div class="card">
   <h2 style="margin-top:0;">By centre</h2>
   <div style="overflow-x:auto;">

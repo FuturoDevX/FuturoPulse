@@ -197,7 +197,8 @@ CREATE TABLE IF NOT EXISTS labour_budget (
 CREATE TABLE IF NOT EXISTS pc_metrics (
   owna_id           TEXT NOT NULL,
   month             TEXT NOT NULL,        -- YYYY-MM
-  enps              REAL,                 -- -100..100
+  enps              REAL,                 -- employee NPS, -100..100
+  family_nps        REAL,                 -- family/parent NPS, -100..100
   turnover          REAL,                 -- %
   checkin_due       INTEGER,
   checkin_completed INTEGER,
