@@ -501,7 +501,7 @@ function exitsLatestDate() {
 
 // Weeks available (most recent first).
 function labourWeeks(limit = 16) {
-  return db.prepare(`SELECT DISTINCT week_ending FROM labour_weekly ORDER BY week_ending DESC LIMIT ?`).all(limit).map((r) => r.week_ending);
+  return db.prepare(`SELECT week_ending FROM labour_weekly GROUP BY week_ending HAVING COUNT(*) >= 4 ORDER BY week_ending DESC LIMIT ?`).all(limit).map((r) => r.week_ending);
 }
 
 // OWNA revenue + occupancy for the Mon..weekEnding week of a centre.

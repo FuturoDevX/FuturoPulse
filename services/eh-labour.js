@@ -28,9 +28,12 @@ async function runLabourSnapshot({ weeks = WEEKS, log = console.log } = {}) {
   const emps = await eh.allEmployees();
   const empMap = new Map();
   for (const e of emps) {
+    // Detect support roles by JOB TITLE (reliable) — many kitchen/cleaning staff are
+    // assigned to the centre, not a "… / Kitchen" sub-location, so location misses them.
+    const jt = (e.jobTitle || ""); const loc = (e.primaryLocation || "");
     empMap.set(e.id, {
-      isKitchen: /kitchen/i.test(e.primaryLocation || ""),
-      isCleaning: /clean/i.test(e.primaryLocation || ""),
+      isKitchen: /chef|kitchen|cook/i.test(jt) || /kitchen/i.test(loc),
+      isCleaning: /clean/i.test(jt) || /clean/i.test(loc),
       isCasual: (e.employmentType || "") === "Casual",
     });
   }
