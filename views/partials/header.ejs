@@ -28,10 +28,18 @@
         <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>">Projection</a>
         <a href="/wages" class="<%= currentPath === '/wages' ? 'active' : '' %>">Wages &amp; Margin</a>
       <% } %>
+      <% var navShort = function(n){ return (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim(); }; %>
       <div class="side-nav-divider">Centres</div>
-      <% (locals.navCentres || []).forEach(function(c){ %>
-        <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= c.name.replace('Futuro Childcare & Education - ','') %></a>
+      <% (locals.navCentres || []).filter(function(c){ return !c.opening; }).forEach(function(c){ %>
+        <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= navShort(c.name) %></a>
       <% }); %>
+      <% var openingCentres = (locals.navCentres || []).filter(function(c){ return c.opening; }); %>
+      <% if (openingCentres.length) { %>
+        <div class="side-nav-divider">Opening soon</div>
+        <% openingCentres.forEach(function(c){ %>
+          <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= navShort(c.name) %> <span class="nav-soon">soon</span></a>
+        <% }); %>
+      <% } %>
       <% if (user.role === 'admin') { %>
         <div class="side-nav-divider">Admin</div>
         <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>

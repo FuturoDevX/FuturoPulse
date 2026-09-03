@@ -81,7 +81,7 @@ router.get("/centre/:id/pipeline", (req, res) => {
 const AP_CATS = [["urgent","Short-term urgent actions"],["bau","Recurring / BAU actions"],["support","Support-office jobs"],["keep","Keep in mind"]];
 function apCentresFor(req) {
   const scoped = scopedOwnaId(req);
-  const all = m.centres().filter((c) => c.ll_id != null || true);
+  const all = m.centres().filter((c) => !c.opening);
   return scoped ? all.filter((c) => c.owna_id === scoped) : all;
 }
 function apResolve(req) {
@@ -99,7 +99,7 @@ router.get("/action-plans", (req, res) => {
     data: owna ? m.actionPlanGet(owna, month) : null, cats: AP_CATS, canEdit: ["admin","exec","ops_manager"].includes(req.session.user.role) });
 });
 router.get("/action-plans/edit", requireAdminOrOps, (req, res) => {
-  const centres = m.centres(); const owna = centres.find((c)=>c.owna_id===req.query.owna) ? req.query.owna : centres[0].owna_id;
+  const centres = m.centres().filter((c) => !c.opening); const owna = centres.find((c)=>c.owna_id===req.query.owna) ? req.query.owna : centres[0].owna_id;
   const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : new Date().toISOString().slice(0,7);
   res.render("action-plan-edit", { title: "Edit Action Plan", centres, owna, month, centre: m.centre(owna), data: m.actionPlanGet(owna, month), cats: AP_CATS });
 });
@@ -193,6 +193,11 @@ router.get("/centre/:id", (req, res) => {
   if (!c) return res.status(404).render("error", { message: "Centre not found." });
   const scoped = scopedOwnaId(req);
   if (scoped && c.owna_id !== scoped) return res.status(403).render("error", { message: "You can only view your own centre." });
+
+  // Pre-opening centres (LineLeader pipeline only, no OWNA data yet) get a pipeline-focused page.
+  if (c.opening) {
+    return res.render("centre-pipeline", { title: c.name + " — Pipeline", centre: c, detail: m.centrePipelineDetail(c.owna_id), today: m.todayStr(), lastRun: lastRun() });
+  }
 
   const daily = m.centreDaily(c.owna_id, from, to);
   const today = m.todayStr();

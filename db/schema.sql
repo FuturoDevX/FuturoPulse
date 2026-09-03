@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS centres (
   closed        INTEGER DEFAULT 0,
   approval_no   TEXT,
   last_updated  TEXT,
-  ll_id         INTEGER               -- linked LineLeader centre id (enrolment pipeline)
+  ll_id         INTEGER,              -- linked LineLeader centre id (enrolment pipeline)
+  opening       INTEGER DEFAULT 0     -- 1 = pre-opening (LineLeader pipeline only, not yet in OWNA)
 );
 
 -- One aggregated row per centre per calendar day.

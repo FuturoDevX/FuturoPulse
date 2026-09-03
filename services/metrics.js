@@ -44,6 +44,7 @@ function overview(from, to) {
     FROM centres c
     LEFT JOIN daily_metrics d
       ON d.owna_id = c.owna_id AND d.metric_date BETWEEN ? AND ?
+    WHERE c.opening IS NULL OR c.opening = 0
     GROUP BY c.owna_id
     ORDER BY c.name
   `).all(from, to);
@@ -695,7 +696,7 @@ function pcMonths(limit = 24) {
 }
 // Per-centre P&C for a month, with derived check-in % and target flags.
 function pcForMonth(month, ownaId) {
-  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE owna_id IN (SELECT owna_id FROM daily_metrics) OR ll_id IS NOT NULL ORDER BY name").all()
+  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE (owna_id IN (SELECT owna_id FROM daily_metrics) OR ll_id IS NOT NULL) AND (opening IS NULL OR opening = 0) ORDER BY name").all()
     .filter((c) => !ownaId || c.owna_id === ownaId);
   const t = pcTargets();
   return centres.map((c) => {

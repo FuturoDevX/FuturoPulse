@@ -17,6 +17,7 @@ function initSchema(db) {
     if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
   };
   addColumnIfMissing("centres", "ll_id", "INTEGER");
+  addColumnIfMissing("centres", "opening", "INTEGER DEFAULT 0");
   addColumnIfMissing("users", "location_id", "TEXT");
   addColumnIfMissing("labour_weekly", "cleaning_h", "REAL DEFAULT 0");
   addColumnIfMissing("labour_weekly", "cleaning_amt", "REAL DEFAULT 0");

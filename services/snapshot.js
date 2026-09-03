@@ -598,7 +598,33 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   } catch (e) { log(`[LineLeader] tours pull failed: ${e.message}`); }
 
   log(`[LineLeader] pipeline cells=${cells}, started=${started.length}, withdrawn=${withdrawn.length}, projection starts=${psN}`);
+  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: ${e.message}`); }
   return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length };
 }
 
-module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, lastRun };
+// Create/refresh "pre-opening" centre records for LineLeader centres that have a real pipeline
+// but aren't yet linked to an operating OWNA centre (e.g. Oran Park, Cobbitty). Data-driven so it
+// works on a fresh deploy: they appear in the sidebar and get a pipeline-focused centre page.
+function ensureOpeningCentres({ minPipeline = 10, log = console.log } = {}) {
+  const date = (db.prepare("SELECT MAX(snapshot_date) d FROM ll_pipeline").get() || {}).d;
+  if (!date) return { ok: true, n: 0 };
+  const linked = new Set(db.prepare("SELECT ll_id FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0)").all().map((r) => r.ll_id));
+  const cands = db.prepare(`
+    SELECT c.ll_id, c.name, COALESCE(SUM(p.count),0) total
+    FROM ll_centres c LEFT JOIN ll_pipeline p ON p.ll_id = c.ll_id AND p.snapshot_date = ?
+    WHERE c.active = 1 GROUP BY c.ll_id, c.name`).all(date);
+  const upsert = db.prepare(`
+    INSERT INTO centres (owna_id, name, capacity, enrolled, ll_id, opening, last_updated)
+    VALUES (@owna_id, @name, 0, 0, @ll_id, 1, datetime('now'))
+    ON CONFLICT(owna_id) DO UPDATE SET name=@name, ll_id=@ll_id, opening=1, last_updated=datetime('now')`);
+  let n = 0;
+  for (const c of cands) {
+    if (linked.has(c.ll_id) || c.total < minPipeline) continue;
+    upsert.run({ owna_id: "ll-" + c.ll_id, name: c.name, ll_id: c.ll_id });
+    n += 1;
+  }
+  if (n) log(`[opening] ${n} pre-opening centres ensured`);
+  return { ok: true, n };
+}
+
+module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, ensureOpeningCentres, lastRun };

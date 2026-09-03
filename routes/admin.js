@@ -86,14 +86,14 @@ router.post("/users/:id/reset", requireAdmin, (req, res) => {
 // ===== People & Culture entry (admin) =====
 router.get("/pc", requireAdmin, (req, res) => {
   const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : new Date().toISOString().slice(0,7);
-  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE ll_id IS NOT NULL ORDER BY name").all();
+  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0) ORDER BY name").all();
   const data = {}; db.prepare("SELECT * FROM pc_metrics WHERE month = ?").all(month).forEach((r) => { data[r.owna_id] = r; });
   res.render("admin-pc", { title: "P&C Entry", month, centres, data, targets: m.pcTargets(), msg: req.query.msg });
 });
 router.post("/pc", requireAdmin, (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(req.body.month) ? req.body.month : new Date().toISOString().slice(0,7);
   const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.-]/g, "")); return isNaN(n) ? null : n; };
-  const centres = db.prepare("SELECT owna_id FROM centres WHERE ll_id IS NOT NULL").all();
+  const centres = db.prepare("SELECT owna_id FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0)").all();
   for (const c of centres) {
     m.savePcMetric(c.owna_id, month, {
       enps: num(req.body["enps_" + c.owna_id]), family_nps: num(req.body["familynps_" + c.owna_id]),
