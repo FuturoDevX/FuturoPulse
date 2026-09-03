@@ -31,11 +31,11 @@ const db = require("../db/db");
 const m = require("../services/metrics");
 
 // Weekly labour budget entry (per centre standing targets).
-router.get("/labour-budget", requireAdminOrOps, (req, res) => {
+router.get("/wage-budget", requireAdminOrOps, (req, res) => {
   const centres = db.prepare(`SELECT DISTINCT eh_centre FROM labour_weekly ORDER BY eh_centre`).all().map((r) => r.eh_centre);
   res.render("admin-labour-budget", { title: "Wage Budgets", centres, budgets: m.labourBudgets(), saved: req.query.saved });
 });
-router.post("/labour-budget", requireAdminOrOps, (req, res) => {
+router.post("/wage-budget", requireAdminOrOps, (req, res) => {
   const centres = db.prepare(`SELECT DISTINCT eh_centre FROM labour_weekly`).all().map((r) => r.eh_centre);
   for (const c of centres) {
     const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.]/g, "")); return isNaN(n) ? null : n; };
@@ -45,7 +45,7 @@ router.post("/labour-budget", requireAdminOrOps, (req, res) => {
     const support = num(req.body["support_" + c]);
     if (wages != null || hours != null || occ != null || support != null) m.saveLabourBudget(c, "default", { wages, hours, occ, support });
   }
-  res.redirect("/admin/labour-budget?saved=1");
+  res.redirect("/admin/wage-budget?saved=1");
 });
 
 

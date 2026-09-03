@@ -153,7 +153,7 @@ router.get("/pc", (req, res) => {
 });
 
 // Labour & margin (Employment Hero payroll + OWNA revenue).
-router.get("/labour", blockScoped, (req, res) => {
+router.get("/wages", blockScoped, (req, res) => {
   const weeks = m.labourWeeks(16);
   const week = weeks.includes(req.query.week) ? req.query.week : weeks[0];
   res.render("labour", {

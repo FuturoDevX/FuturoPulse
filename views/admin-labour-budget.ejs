@@ -1,13 +1,13 @@
 <%- include('partials/header', { title: 'Wage Budgets' }) %>
 <% const shortName = (n) => (n||'').replace('Futuro ',''); %>
 <div class="page-head"><div>
-  <p class="crumb"><a href="/labour">← Wages &amp; Margin</a></p>
+  <p class="crumb"><a href="/wages">← Wages &amp; Margin</a></p>
   <h1>Weekly wage budgets</h1>
   <p class="sub">Standing weekly target per centre. Educator wages/hours = worked+leave (excl. support); support wages = kitchen+cleaning. Occupancy in %.</p>
 </div></div>
 <% if (saved) { %><div class="flash">Budgets saved.</div><% } %>
 <div class="card">
-  <form method="POST" action="/admin/labour-budget">
+  <form method="POST" action="/admin/wage-budget">
     <table>
       <thead><tr><th>Centre</th><th class="num">Budget wages ($/wk)</th><th class="num">Budget hours (/wk)</th><th class="num">Budget occupancy (%)</th><th class="num">Support wages ($/wk)</th></tr></thead>
       <tbody>

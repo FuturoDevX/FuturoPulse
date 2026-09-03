@@ -22,7 +22,7 @@
     <p class="sub">Educator &amp; support-team wage cost by centre (Employment Hero) vs revenue (OWNA). Support team (kitchen + cleaning) is separate · week ending <%= wkLabel(week) %></p>
   </div>
   <div class="head-actions" style="display:flex;gap:10px;align-items:center;">
-    <% if (['admin','ops_manager'].includes(user.role)) { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/labour-budget">Set budgets</a><% } %>
+    <% if (['admin','ops_manager'].includes(user.role)) { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/wage-budget">Set budgets</a><% } %>
   <form method="GET">
     <select name="week" onchange="this.form.submit()">
       <% weeks.forEach(function(w){ %><option value="<%= w %>" <%= w===week?'selected':'' %>>Week ending <%= wkLabel(w) %></option><% }); %>
