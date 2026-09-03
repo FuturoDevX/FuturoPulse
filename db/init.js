@@ -21,6 +21,10 @@ addColumnIfMissing("users", "location_id", "TEXT"); // owna_id for centre-scoped
 addColumnIfMissing("labour_weekly", "cleaning_h", "REAL DEFAULT 0");
 addColumnIfMissing("labour_weekly", "cleaning_amt", "REAL DEFAULT 0");
 addColumnIfMissing("labour_budget", "budget_support", "REAL");
+addColumnIfMissing("pc_metrics", "family_nps", "REAL");     // parent/family NPS
+addColumnIfMissing("qc_actions", "term", "TEXT");           // audit history per term
+addColumnIfMissing("incidents_monthly", "illness", "INTEGER DEFAULT 0");
+addColumnIfMissing("incidents_monthly", "serious", "INTEGER DEFAULT 0");
 
 const email = process.env.ADMIN_EMAIL || "admin@example.com";
 const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
