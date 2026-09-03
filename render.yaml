@@ -4,7 +4,7 @@
 # survives deploys and so it's on a real filesystem (SQLite + OneDrive don't mix).
 services:
   - type: web
-    name: futuro-owna-dashboard
+    name: futuro-pulse
     runtime: node
     plan: starter
     buildCommand: npm install
