@@ -880,6 +880,8 @@ function centreLabourLatest(ownaId) {
   const marginAfterWages = row.revenue != null ? Math.round(row.revenue - row.all_wages) : null;
   const margin_pct = row.revenue > 0 ? Math.round((row.revenue - row.all_wages) / row.revenue * 1000) / 10 : null;
   return { week: wk, revenue: row.revenue, care_wages: row.care_wages, all_wages: row.all_wages,
+    worked_amt: Math.round(row.worked_amt || 0), leave_amt: Math.round(row.leave_amt || 0), matwc_amt: Math.round(row.matwc_amt || 0),
+    worked_h: Math.round((row.worked_h || 0) * 10) / 10, leave_h: Math.round((row.leave_h || 0) * 10) / 10,
     support_amt: row.support_amt, wage_pct: row.wage_pct, occupancy: row.occupancy, marginAfterWages, margin_pct };
 }
 

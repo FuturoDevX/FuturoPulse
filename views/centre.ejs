@@ -170,7 +170,9 @@
     <h2 style="margin-top:0;">Wages &amp; margin <span class="muted" style="font-weight:400;font-size:13px;">· week ending <%= labour.week %> · Employment Hero</span></h2>
     <div class="grid kpis" style="margin-top:14px;">
       <div class="card stat"><div class="n"><%= money(labour.revenue) %></div><div class="l">Revenue (week)</div></div>
-      <div class="card stat"><div class="n"><%= money(labour.care_wages) %></div><div class="l">Educator wages</div></div>
+      <div class="card stat"><div class="n"><%= money(labour.worked_amt) %></div><div class="l">Worked wages<br><span class="muted"><%= labour.worked_h.toLocaleString('en-AU') %> h worked</span></div></div>
+      <div class="card stat"><div class="n"><%= money(labour.leave_amt) %></div><div class="l">Leave wages<br><span class="muted"><%= labour.leave_h.toLocaleString('en-AU') %> h leave</span></div></div>
+      <div class="card stat"><div class="n"><%= money(labour.care_wages) %></div><div class="l">Educator wages<br><span class="muted">worked + leave</span></div></div>
       <div class="card stat <%= (labour.wage_pct!=null && labour.wage_pct>65)?'hot-card':'' %>"><div class="n"><%= labour.wage_pct!=null?labour.wage_pct+'%':'—' %></div><div class="l">Educator wages % of revenue</div></div>
       <div class="card stat"><div class="n"><%= money(labour.support_amt) %></div><div class="l">Kitchen / cleaning</div></div>
       <div class="card stat"><div class="n <%= labour.marginAfterWages>=0?'good':'bad' %>-text"><%= money(labour.marginAfterWages) %></div><div class="l">Revenue after wages</div></div>
@@ -187,7 +189,7 @@
       <% }); %>
     </div>
     <% } %>
-    <p class="footnote">Educator wages = educators + leave; kitchen/cleaning shown separately. “Revenue after wages” = revenue − all wages (before rent, food &amp; other costs). Educator-wage target ≤ 55–65% of revenue.</p>
+    <p class="footnote">Educator wages = <strong>worked wages</strong> (hours actually worked) + <strong>leave wages</strong> (paid annual/personal leave); kitchen/cleaning shown separately. “Revenue after wages” = revenue − all wages (before rent, food &amp; other costs). Educator-wage target ≤ 55–65% of revenue.</p>
   </div>
   <% } else { %>
   <div class="card"><p class="muted" style="margin:0;">No payroll data for this centre in the latest pay week.</p></div>
