@@ -203,6 +203,30 @@ function llPipeline() {
   return { date, funnel: LL_FUNNEL, rows, totals };
 }
 
+// Pipeline stage counts over time (one point per snapshot date) — for a centre (owna_id) or all centres.
+// Returns per-stage series aligned to the same date axis, for small-multiple trend charts.
+function pipelineTrend(ownaId, limit = 120) {
+  const dates = db.prepare("SELECT DISTINCT snapshot_date FROM ll_pipeline ORDER BY snapshot_date DESC LIMIT ?")
+    .all(limit).map((r) => r.snapshot_date).reverse();
+  if (!dates.length) return { dates: [], series: [] };
+  let llId = null;
+  if (ownaId) { const c = db.prepare("SELECT ll_id FROM centres WHERE owna_id=?").get(ownaId); llId = c && c.ll_id; }
+  const rows = ownaId
+    ? db.prepare("SELECT snapshot_date, status_id, SUM(count) c FROM ll_pipeline WHERE ll_id=? GROUP BY snapshot_date, status_id").all(llId)
+    : db.prepare("SELECT snapshot_date, status_id, SUM(count) c FROM ll_pipeline GROUP BY snapshot_date, status_id").all();
+  const map = {}; rows.forEach((r) => { (map[r.status_id] = map[r.status_id] || {})[r.snapshot_date] = r.c; });
+  const series = LL_FUNNEL.map(([sid, name]) => {
+    const points = dates.map((d) => (map[sid] && map[sid][d]) || 0);
+    const first = points[0], last = points[points.length - 1];
+    return { id: sid, name: name.replace(" (Started)", ""), points, current: last, change: last - first };
+  });
+  return { dates, series };
+}
+// Centres that appear in the LineLeader pipeline (for the trend centre selector).
+function pipelineCentres() {
+  return db.prepare(`SELECT DISTINCT c.owna_id, c.name FROM ll_pipeline p JOIN centres c ON c.ll_id = p.ll_id WHERE c.owna_id IS NOT NULL ORDER BY c.name`).all();
+}
+
 // LineLeader pipeline for ONE OWNA centre (via centres.ll_id). Returns null if unlinked.
 function llForCentre(ownaId) {
   const c = db.prepare(`SELECT ll_id FROM centres WHERE owna_id = ?`).get(ownaId);
@@ -507,6 +531,7 @@ const AP_AREAS = [
   { key: "costs", group: "Business Performance", label: "Other costs vs budget" },
   { key: "quality", group: "High Quality Practice", label: "Compliance snapshot" },
   { key: "family", group: "Family Experience", label: "Family NPS / feedback" },
+  { key: "enps", group: "Team Experience", label: "Team engagement (eNPS)" },
   { key: "team", group: "Team Experience", label: "Turnover & absence" },
   { key: "safety", group: "Safety Culture", label: "Child / adult injury rate" },
   { key: "leadership", group: "Centre Leadership", label: "Roles in place / CM feedback" },
@@ -524,7 +549,7 @@ function actionPlanAuto(ownaId) {
   if (occ != null) out.occupancy = { rating: rag(occ, 95, 85, false), reason: `Occupancy ${occ}% (target ~100%)` };
   // Labour: latest complete week wage % of revenue
   const lw = labourWeeks(1)[0];
-  if (lw) { const row = labourForWeek(lw).find((r) => r.owna_id === ownaId); if (row && row.wage_pct != null) out.labour = { rating: rag(row.wage_pct, 55, 65, true), reason: `Care wages ${row.wage_pct}% of revenue (week ${lw})` }; }
+  if (lw) { const row = labourForWeek(lw).find((r) => r.owna_id === ownaId); if (row && row.wage_pct != null) out.labour = { rating: rag(row.wage_pct, 55, 65, true), reason: `Educator wages ${row.wage_pct}% of revenue (week ${lw})` }; }
   // Quality: compliance overall
   const qc = qcCentre(ownaId);
   if (qc && qc.overall_pct != null) out.quality = { rating: rag(qc.overall_pct, 90, 75, false), reason: `Compliance ${qc.overall_pct}% (${qc.actions.filter((a)=>!/^y/i.test((a.completed||"").trim())).length} open actions)` };
@@ -532,7 +557,7 @@ function actionPlanAuto(ownaId) {
   const pm = pcMonths(1)[0];
   if (pm) { const pr = pcForMonth(pm, ownaId)[0]; const t = pcTargets();
     if (pr && pr.family_nps != null) out.family = { rating: rag(pr.family_nps, t.family_nps || 30, (t.family_nps || 30) - 15, false), reason: `Family NPS ${pr.family_nps}` };
-    else if (pr && pr.enps != null) out.family = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps} (family NPS not entered)` };
+    if (pr && pr.enps != null) out.enps = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps}` };
     if (pr && pr.turnover != null) out.team = { rating: rag(pr.turnover, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${pr.turnover}%` };
   }
   // Safety: serious child incidents (reg 12: emergency services or medical attention) in the latest complete month.
@@ -906,7 +931,7 @@ function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
 
   // 7) Wage % / margin pressure.
   if (labour && labour.wage_pct != null && labour.wage_pct > 65) {
-    tips.push(`Care wages are ${labour.wage_pct}% of revenue (target ≤65%). Lifting occupancy on quiet days, or trimming roster hours there, would restore margin.`);
+    tips.push(`Educator wages are ${labour.wage_pct}% of revenue (target ≤65%). Lifting occupancy on quiet days, or trimming roster hours there, would restore margin.`);
   }
 
   const calc = capacity ? occupancyCalculator(capacity, occupancyNow) : [];
@@ -979,7 +1004,7 @@ module.exports = {
   centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
   rosterWeeks, rosterForWeek, rosterCentre, latestReconciledRosterWeek,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
-  llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr,
+  llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr, pipelineTrend, pipelineCentres,
   exitsSummary, exitReasons, centreExits, exitsLatestDate,
   forwardOccupancyByCentre, projection, centrePipelineDetail,
   occupancyTrend, occupancyTrendGroup,

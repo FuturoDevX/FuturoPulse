@@ -254,3 +254,13 @@ tr:hover td.hot { background: #ffedcc; }
 .reason-tag { line-height: 1.7; }
 .flash { border-radius: var(--radius-sm); }
 .card h2:first-child, .card h2[style*="margin-top:0"] { margin-top: 0; }
+
+/* Pipeline stages-over-time small multiples */
+.stage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 14px; }
+.stage-card { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px 13px; background: #fbfcfe; }
+.stage-card .sc-name { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.stage-card .sc-row { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; margin: 3px 0 6px; }
+.stage-card .sc-val { font-size: 22px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.stage-card .sc-chg { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stage-card .sc-chg.up { color: var(--good); } .stage-card .sc-chg.down { color: var(--bad); } .stage-card .sc-chg.flat { color: var(--muted); }
+.stage-card .sc-spark { display: block; width: 100%; height: 30px; }

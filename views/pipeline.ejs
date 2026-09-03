@@ -3,6 +3,14 @@
   const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
   const p = pipeline;
   const t = p.totals || {};
+  // Sparkline: return an SVG polyline points string, scaled to each stage's own range.
+  const spark = (pts, w, h) => {
+    if (!pts || !pts.length) return '';
+    const max = Math.max(...pts), min = Math.min(...pts), rng = (max - min) || 1, n = pts.length;
+    const x = (i) => n === 1 ? w / 2 : (i / (n - 1)) * w;
+    const y = (v) => h - ((v - min) / rng) * (h - 2) - 1;
+    return pts.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  };
 %>
 
 <div class="page-head">
@@ -26,7 +34,46 @@
 </div>
 
 <div class="card">
-  <h2 style="margin-top:0;">Funnel by centre</h2>
+  <div class="pc-head">
+    <h2 style="margin:0;">Stages over time <span class="muted" style="font-weight:400;font-size:13px;">· <%= trendOwna ? shortName((trendCentres.find(function(c){return c.owna_id===trendOwna;})||{}).name) : 'all centres' %><% if (trend.dates.length) { %> · <%= trend.dates[0] %> → <%= trend.dates[trend.dates.length-1] %><% } %></span></h2>
+    <% if (trendCentres.length) { %>
+    <form method="GET"><select name="owna" onchange="this.form.submit()">
+      <option value="" <%= !trendOwna?'selected':'' %>>All centres</option>
+      <% trendCentres.forEach(function(c){ %><option value="<%= c.owna_id %>" <%= c.owna_id===trendOwna?'selected':'' %>><%= shortName(c.name) %></option><% }); %>
+    </select></form>
+    <% } %>
+  </div>
+  <% if (!trend.dates.length) { %>
+    <p class="muted" style="margin:10px 0 0;">No snapshots captured yet.</p>
+  <% } else { %>
+    <div class="stage-grid">
+      <% trend.series.forEach(function(s){ %>
+        <div class="stage-card">
+          <div class="sc-name"><%= s.name %></div>
+          <div class="sc-row">
+            <div class="sc-val"><%= (s.current||0).toLocaleString('en-AU') %></div>
+            <% if (trend.dates.length > 1) { %><div class="sc-chg <%= s.change>0?'up':(s.change<0?'down':'flat') %>"><%= s.change>0?'▲':(s.change<0?'▼':'') %> <%= s.change>0?'+':'' %><%= s.change %></div><% } %>
+          </div>
+          <svg class="sc-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
+            <% if (trend.dates.length > 1) { %>
+              <polyline points="<%= spark(s.points,100,30) %>" fill="none" stroke="var(--navy)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+            <% } %>
+            <% var lastX = trend.dates.length===1?50:100; var pts=s.points; var mx=Math.max.apply(null,pts), mn=Math.min.apply(null,pts), rg=(mx-mn)||1; var ly=30-((pts[pts.length-1]-mn)/rg)*(30-2)-1; %>
+            <circle cx="<%= lastX %>" cy="<%= ly.toFixed(1) %>" r="2.2" fill="var(--navy)"/>
+          </svg>
+        </div>
+      <% }); %>
+    </div>
+    <% if (trend.dates.length < 2) { %>
+      <p class="footnote">Only <strong><%= trend.dates.length %></strong> snapshot so far — the trend lines fill in as the nightly sync runs (one point per day). Numbers above are current stage counts.</p>
+    <% } else { %>
+      <p class="footnote">Each panel shows that stage’s count across the last <%= trend.dates.length %> daily snapshots; the ▲/▼ is the change since <%= trend.dates[0] %>. Use the selector to switch between all centres and a single centre. “Enrolled” leaves the CRM pipeline once a child starts (see the Overview for live enrolled headcount).</p>
+    <% } %>
+  <% } %>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Funnel by centre <span class="muted" style="font-weight:400;font-size:13px;">· current snapshot</span></h2>
   <div style="overflow-x:auto;">
   <table>
     <thead>

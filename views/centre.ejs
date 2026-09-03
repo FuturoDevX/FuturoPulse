@@ -170,14 +170,14 @@
     <h2 style="margin-top:0;">Wages &amp; margin <span class="muted" style="font-weight:400;font-size:13px;">· week ending <%= labour.week %> · Employment Hero</span></h2>
     <div class="grid kpis" style="margin-top:14px;">
       <div class="card stat"><div class="n"><%= money(labour.revenue) %></div><div class="l">Revenue (week)</div></div>
-      <div class="card stat"><div class="n"><%= money(labour.care_wages) %></div><div class="l">Care wages</div></div>
-      <div class="card stat <%= (labour.wage_pct!=null && labour.wage_pct>65)?'hot-card':'' %>"><div class="n"><%= labour.wage_pct!=null?labour.wage_pct+'%':'—' %></div><div class="l">Care wages % of revenue</div></div>
+      <div class="card stat"><div class="n"><%= money(labour.care_wages) %></div><div class="l">Educator wages</div></div>
+      <div class="card stat <%= (labour.wage_pct!=null && labour.wage_pct>65)?'hot-card':'' %>"><div class="n"><%= labour.wage_pct!=null?labour.wage_pct+'%':'—' %></div><div class="l">Educator wages % of revenue</div></div>
       <div class="card stat"><div class="n"><%= money(labour.support_amt) %></div><div class="l">Kitchen / cleaning</div></div>
-      <div class="card stat"><div class="n <%= labour.marginAfterWages>=0?'good':'bad' %>-text"><%= money(labour.marginAfterWages) %></div><div class="l">After all wages</div></div>
+      <div class="card stat"><div class="n <%= labour.marginAfterWages>=0?'good':'bad' %>-text"><%= money(labour.marginAfterWages) %></div><div class="l">Revenue after wages</div></div>
       <div class="card stat"><div class="n"><%= labour.margin_pct!=null?labour.margin_pct+'%':'—' %></div><div class="l">Margin after wages</div></div>
     </div>
     <% if (labourTrend && labourTrend.length>1) { var wpMax=Math.max(70,...labourTrend.filter(t=>t.wage_pct!=null).map(t=>t.wage_pct)); %>
-    <h3 class="card-sub">Care wages % of revenue <span class="muted" style="font-weight:400;font-size:12px;">· weekly</span></h3>
+    <h3 class="card-sub">Educator wages % of revenue <span class="muted" style="font-weight:400;font-size:12px;">· weekly</span></h3>
     <div class="chart" style="height:140px;">
       <% labourTrend.forEach(function(t){ var wp=t.wage_pct; %>
         <div class="chart-col" title="<%= t.week %>: <%= wp!=null?wp+'% wages of revenue':'n/a' %> · revenue <%= money(t.revenue) %>">
@@ -187,7 +187,7 @@
       <% }); %>
     </div>
     <% } %>
-    <p class="footnote">Care wages = educators + leave; kitchen/cleaning shown separately. “After all wages” = revenue − all wages (before rent, food &amp; other costs). Care-wage target ≤ 55–65% of revenue.</p>
+    <p class="footnote">Educator wages = educators + leave; kitchen/cleaning shown separately. “Revenue after wages” = revenue − all wages (before rent, food &amp; other costs). Educator-wage target ≤ 55–65% of revenue.</p>
   </div>
   <% } else { %>
   <div class="card"><p class="muted" style="margin:0;">No payroll data for this centre in the latest pay week.</p></div>

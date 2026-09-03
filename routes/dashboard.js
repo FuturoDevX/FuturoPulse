@@ -61,7 +61,10 @@ router.get("/", (req, res) => {
 // Enrolment pipeline / waitlist (LineLeader).
 router.get("/pipeline", blockScoped, (req, res) => {
   const p = m.llPipeline();
-  res.render("pipeline", { title: "Enrolment Pipeline", pipeline: p, lastRun: lastRun() });
+  const trendCentres = m.pipelineCentres();
+  const owna = trendCentres.find((c) => c.owna_id === req.query.owna) ? req.query.owna : null; // null = all centres
+  res.render("pipeline", { title: "Enrolment Pipeline", pipeline: p,
+    trendCentres, trendOwna: owna, trend: m.pipelineTrend(owna), lastRun: lastRun() });
 });
 
 // Per-centre enrolment pipeline drill-down (stages, members, tours, waitlist trend).
