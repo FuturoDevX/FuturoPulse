@@ -267,3 +267,12 @@ tr:hover td.hot { background: #ffedcc; }
 
 /* Sidebar "opening soon" centre tag */
 .nav-soon { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; background: rgba(255,255,255,.18); color: #fff; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; opacity: .85; }
+
+/* People & Culture trend cards */
+.pc-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.pc-metric { margin-bottom: 0; }
+.pcm-name { font-size: 15px; font-weight: 700; color: var(--navy); letter-spacing: -.01em; }
+.pcm-cad { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 2px; }
+.pcm-val { font-size: 28px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1; }
+.pcm-chart { display: block; width: 100%; height: 90px; margin-top: 14px; overflow: visible; }
+.pcm-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 4px; }

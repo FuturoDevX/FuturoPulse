@@ -223,6 +223,28 @@ function pipelineTrend(ownaId, limit = 120) {
   });
   return { dates, series };
 }
+// New families joining the waitlist over time (by their wait-list date) — for a centre or all.
+// A continuous monthly axis (last `months`, up to the current month), zero-filled, so marketing
+// spikes are easy to read. Reveals when families joined regardless of daily snapshots.
+function waitlistJoins(ownaId, months = 18) {
+  const now = todayStr().slice(0, 7);
+  let llId = null;
+  if (ownaId) { const c = db.prepare("SELECT ll_id FROM centres WHERE owna_id=?").get(ownaId); llId = c && c.ll_id; }
+  const where = ownaId ? "AND ll_id=?" : "";
+  const args = ownaId ? [llId] : [];
+  const rows = db.prepare(`SELECT substr(wait_list_date,1,7) m, COUNT(*) n FROM ll_pipeline_members
+    WHERE wait_list_date IS NOT NULL AND length(wait_list_date) >= 7 AND substr(wait_list_date,1,7) <= ? ${where}
+    GROUP BY m`).all(now, ...args);
+  const map = {}; rows.forEach((r) => { map[r.m] = r.n; });
+  const [y, mo] = now.split("-").map(Number);
+  const out = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(y, mo - 1 - i, 1));
+    const k = d.toISOString().slice(0, 7);
+    out.push({ month: k, count: map[k] || 0 });
+  }
+  return out;
+}
 // Centres that appear in the LineLeader pipeline (for the trend centre selector).
 function pipelineCentres() {
   return db.prepare(`SELECT DISTINCT c.owna_id, c.name FROM ll_pipeline p JOIN centres c ON c.ll_id = p.ll_id WHERE c.owna_id IS NOT NULL ORDER BY c.name`).all();
@@ -706,6 +728,33 @@ function pcForMonth(month, ownaId) {
       checkin_due: r.checkin_due, checkin_completed: r.checkin_completed, checkin_pct, psych_safety: r.psych_safety };
   });
 }
+// P&C metrics over time (monthly axis, last `months`) for one centre or the group average.
+// Only real entries count (nulls skipped), so the different cadences (NPS ~6-monthly, eNPS/psych
+// ~quarterly, check-ins monthly) each render as their own sparse-but-honest series.
+const PC_METRIC_KEYS = ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"];
+function pcTrend(ownaId, months = 18) {
+  const now = todayStr().slice(0, 7);
+  const [y, mo] = now.split("-").map(Number);
+  const axis = [];
+  for (let i = months - 1; i >= 0; i--) axis.push(new Date(Date.UTC(y, mo - 1 - i, 1)).toISOString().slice(0, 7));
+  const rows = ownaId
+    ? db.prepare("SELECT * FROM pc_metrics WHERE owna_id=? AND month>=?").all(ownaId, axis[0])
+    : db.prepare("SELECT * FROM pc_metrics WHERE month>=?").all(axis[0]);
+  const byMonth = {};
+  rows.forEach((r) => {
+    const cp = r.checkin_due ? Math.round((r.checkin_completed || 0) / r.checkin_due * 1000) / 10 : null;
+    (byMonth[r.month] = byMonth[r.month] || []).push({ ...r, checkin_pct: cp });
+  });
+  const series = {};
+  PC_METRIC_KEYS.forEach((k) => {
+    series[k] = axis.map((m) => {
+      const vals = (byMonth[m] || []).map((r) => r[k]).filter((v) => v != null && v !== "");
+      return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10 : null;
+    });
+  });
+  return { axis, series };
+}
+
 // Group-level P&C for the latest month with data: simple average across centres that have a value.
 function pcGroupLatest() {
   const month = pcMonths(1)[0];
@@ -1005,12 +1054,12 @@ module.exports = {
   centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
   rosterWeeks, rosterForWeek, rosterCentre, latestReconciledRosterWeek,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
-  llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr, pipelineTrend, pipelineCentres,
+  llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr, pipelineTrend, pipelineCentres, waitlistJoins,
   exitsSummary, exitReasons, centreExits, exitsLatestDate,
   forwardOccupancyByCentre, projection, centrePipelineDetail,
   occupancyTrend, occupancyTrendGroup,
   labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
-  pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, PC_TARGET_KEYS,
+  pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, PC_TARGET_KEYS,
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
 };

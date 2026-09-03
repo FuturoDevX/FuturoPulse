@@ -64,7 +64,7 @@ router.get("/pipeline", blockScoped, (req, res) => {
   const trendCentres = m.pipelineCentres();
   const owna = trendCentres.find((c) => c.owna_id === req.query.owna) ? req.query.owna : null; // null = all centres
   res.render("pipeline", { title: "Enrolment Pipeline", pipeline: p,
-    trendCentres, trendOwna: owna, trend: m.pipelineTrend(owna), lastRun: lastRun() });
+    trendCentres, trendOwna: owna, trend: m.pipelineTrend(owna), joins: m.waitlistJoins(owna, 12), lastRun: lastRun() });
 });
 
 // Per-centre enrolment pipeline drill-down (stages, members, tours, waitlist trend).
@@ -148,11 +148,21 @@ router.get("/qc", (req, res) => {
   });
 });
 
-// People & Culture (manual metrics vs targets).
+// People & Culture (manual metrics vs targets) — trends over time, overall or by centre.
 router.get("/pc", (req, res) => {
-  const months = m.pcMonths();
-  const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : (months[0] || new Date().toISOString().slice(0,7));
-  res.render("pc", { title: "People & Culture", months, month, rows: m.pcForMonth(month, scopedOwnaId(req)), targets: m.pcTargets(), lastRun: lastRun() });
+  const scoped = scopedOwnaId(req);
+  const centresList = m.centres().filter((c) => !c.opening && c.capacity > 0).map((c) => ({ owna_id: c.owna_id, name: c.name }));
+  const owna = scoped || (centresList.find((c) => c.owna_id === req.query.owna) ? req.query.owna : null); // null = all centres (group avg)
+  const latestMonth = m.pcMonths(1)[0] || new Date().toISOString().slice(0, 7);
+  res.render("pc", {
+    title: "People & Culture",
+    centres: centresList, owna,
+    trend: m.pcTrend(owna, 18),
+    latest: m.pcForMonth(latestMonth, owna || undefined),
+    latestMonth,
+    targets: m.pcTargets(),
+    lastRun: lastRun(),
+  });
 });
 
 // Labour & margin (Employment Hero payroll + OWNA revenue).

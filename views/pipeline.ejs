@@ -33,9 +33,10 @@
   <div class="card stat"><div class="n <%= (t.net||0) >= 0 ? 'good-text' : 'bad-text' %>"><%= (t.net||0) >= 0 ? '+' : '' %><%= (t.net||0).toLocaleString('en-AU') %></div><div class="l">Indicative net</div></div>
 </div>
 
+<% var jMax = Math.max(1, ...joins.map(function(j){return j.count;})); var jTotal = joins.reduce(function(s,j){return s+j.count;},0); var jPeak = joins.reduce(function(a,b){return b.count>a.count?b:a;}, joins[0]||{count:0}); %>
 <div class="card">
   <div class="pc-head">
-    <h2 style="margin:0;">Stages over time <span class="muted" style="font-weight:400;font-size:13px;">· <%= trendOwna ? shortName((trendCentres.find(function(c){return c.owna_id===trendOwna;})||{}).name) : 'all centres' %><% if (trend.dates.length) { %> · <%= trend.dates[0] %> → <%= trend.dates[trend.dates.length-1] %><% } %></span></h2>
+    <h2 style="margin:0;">New families joining over time <span class="muted" style="font-weight:400;font-size:13px;">· <%= trendOwna ? shortName((trendCentres.find(function(c){return c.owna_id===trendOwna;})||{}).name) : 'all centres' %> · by waitlist join date</span></h2>
     <% if (trendCentres.length) { %>
     <form method="GET"><select name="owna" onchange="this.form.submit()">
       <option value="" <%= !trendOwna?'selected':'' %>>All centres</option>
@@ -43,32 +44,22 @@
     </select></form>
     <% } %>
   </div>
-  <% if (!trend.dates.length) { %>
-    <p class="muted" style="margin:10px 0 0;">No snapshots captured yet.</p>
-  <% } else { %>
-    <div class="stage-grid">
-      <% trend.series.forEach(function(s){ %>
-        <div class="stage-card">
-          <div class="sc-name"><%= s.name %></div>
-          <div class="sc-row">
-            <div class="sc-val"><%= (s.current||0).toLocaleString('en-AU') %></div>
-            <% if (trend.dates.length > 1) { %><div class="sc-chg <%= s.change>0?'up':(s.change<0?'down':'flat') %>"><%= s.change>0?'▲':(s.change<0?'▼':'') %> <%= s.change>0?'+':'' %><%= s.change %></div><% } %>
-          </div>
-          <svg class="sc-spark" viewBox="0 0 100 30" preserveAspectRatio="none">
-            <% if (trend.dates.length > 1) { %>
-              <polyline points="<%= spark(s.points,100,30) %>" fill="none" stroke="var(--navy)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
-            <% } %>
-            <% var lastX = trend.dates.length===1?50:100; var pts=s.points; var mx=Math.max.apply(null,pts), mn=Math.min.apply(null,pts), rg=(mx-mn)||1; var ly=30-((pts[pts.length-1]-mn)/rg)*(30-2)-1; %>
-            <circle cx="<%= lastX %>" cy="<%= ly.toFixed(1) %>" r="2.2" fill="var(--navy)"/>
-          </svg>
+  <% if (!jTotal) { %>
+    <p class="muted" style="margin:10px 0 0;">No waitlist join dates recorded for this selection.</p>
+  <% } else {
+       var mLbl = function(m){ var p=m.split('-'); return new Date(p[0],p[1]-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
+  %>
+    <div class="chart" style="height:200px;">
+      <% joins.forEach(function(j){ var isPeak = j.month===jPeak.month && j.count>0; %>
+        <div class="chart-col" title="<%= mLbl(j.month) %>: <%= j.count %> new famil<%= j.count===1?'y':'ies' %> joined the waitlist">
+          <div class="chart-bar" style="height:<%= Math.round(j.count/jMax*100) %>%; background:<%= isPeak ? 'var(--berry)' : 'var(--navy)' %>;"></div>
+          <div class="chart-x"><strong style="color:var(--navy);"><%= j.count %></strong><br><%= mLbl(j.month) %></div>
         </div>
       <% }); %>
     </div>
-    <% if (trend.dates.length < 2) { %>
-      <p class="footnote">Only <strong><%= trend.dates.length %></strong> snapshot so far — the trend lines fill in as the nightly sync runs (one point per day). Numbers above are current stage counts.</p>
-    <% } else { %>
-      <p class="footnote">Each panel shows that stage’s count across the last <%= trend.dates.length %> daily snapshots; the ▲/▼ is the change since <%= trend.dates[0] %>. Use the selector to switch between all centres and a single centre. “Enrolled” leaves the CRM pipeline once a child starts (see the Overview for live enrolled headcount).</p>
-    <% } %>
+    <p class="footnote">
+      Each bar = new families that joined the waitlist that month (by their LineLeader wait-list date). Peak: <strong><%= jPeak.count %></strong> in <%= mLbl(jPeak.month) %> (highlighted). Use this to spot the effect of marketing pushes — a campaign should show as a bar spike in the following weeks. Switch centres with the selector. Based on the <%= jTotal.toLocaleString('en-AU') %> current pipeline families with a recorded join date.
+    </p>
   <% } %>
 </div>
 
