@@ -29,6 +29,7 @@
   <button class="tab is-active" data-tab="overview" type="button">Overview</button>
   <button class="tab" data-tab="growth" type="button">Growth</button>
   <button class="tab" data-tab="wages" type="button">Wages &amp; margin</button>
+  <button class="tab" data-tab="rostering" type="button">Rostering</button>
   <button class="tab" data-tab="actionplan" type="button">Action plan</button>
   <button class="tab" data-tab="pc" type="button">People &amp; culture</button>
   <button class="tab" data-tab="qc" type="button">Quality &amp; compliance</button>
@@ -190,6 +191,74 @@
   </div>
   <% } else { %>
   <div class="card"><p class="muted" style="margin:0;">No payroll data for this centre in the latest pay week.</p></div>
+  <% } %>
+</section>
+
+<!-- ===================== ROSTERING ===================== -->
+<section class="tab-panel" data-panel="rostering">
+  <% if (typeof roster !== 'undefined' && roster) {
+       const rl = roster.latest;
+       const hnum = (n)=> n==null?'—':(Math.round(n*10)/10).toLocaleString('en-AU');
+       const cap3 = (s)=> s.charAt(0).toUpperCase()+s.slice(1,3);
+       const wd = rl.days.filter(function(d){return ['monday','tuesday','wednesday','thursday','friday'].includes(d.day);});
+       const dmax = Math.max(1, ...wd.map(function(d){return d.hours||0;}));
+       const vpct = (roster.paid_hours && rl.total_hours) ? Math.round((roster.paid_hours-rl.total_hours)/rl.total_hours*1000)/10 : null;
+       const vcls = vpct==null?'':(Math.abs(vpct)<=3?'good-text':(vpct>0?'bad-text':'warn-text'));
+  %>
+  <div class="card">
+    <div class="pc-head">
+      <h2 style="margin:0;">Rostering <span class="muted" style="font-weight:400;font-size:13px;">· week of <%= rl.week_starting %> · OWNA</span></h2>
+      <a class="row-link" href="/rostering?week=<%= rl.week_starting %>">All centres →</a>
+    </div>
+    <div class="grid kpis" style="margin-top:14px;">
+      <div class="card stat"><div class="n"><%= hnum(rl.total_hours) %></div><div class="l">Rostered hours</div></div>
+      <div class="card stat"><div class="n"><%= rl.avg_hpb==null?'—':rl.avg_hpb %></div><div class="l">Avg hours / booking</div></div>
+      <div class="card stat"><div class="n"><%= hnum(roster.paid_hours) %></div><div class="l">Worked hours (EH)</div></div>
+      <div class="card stat"><div class="n <%= vcls %>"><%= roster.variance==null?'—':(roster.variance>0?'+':'')+hnum(roster.variance) %></div><div class="l">Worked − rostered<% if(vpct!=null){ %> · <%= (vpct>0?'+':'')+vpct %>%<% } %></div></div>
+    </div>
+
+    <h3 class="card-sub">Rostered hours by day</h3>
+    <div class="chart" style="height:150px;">
+      <% wd.forEach(function(d){ %>
+        <div class="chart-col" title="<%= cap3(d.day) %>: <%= hnum(d.hours) %>h rostered · <%= d.hpb==null?'—':d.hpb %> hrs/booking · <%= d.staff %> staff over <%= d.shifts %> shifts">
+          <div class="chart-bar good" style="height:<%= Math.round((d.hours||0)/dmax*100) %>%;"></div>
+          <div class="chart-x"><strong><%= cap3(d.day) %></strong><br><span><%= hnum(d.hours) %>h</span></div>
+        </div>
+      <% }); %>
+    </div>
+
+    <h3 class="card-sub">By day</h3>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Day</th><th class="num">Rostered h</th><th class="num">Hrs / booking</th><th class="num">Staff</th><th class="num">Shifts</th></tr></thead>
+      <tbody>
+        <% wd.forEach(function(d){ %>
+          <tr><td><%= cap3(d.day) %></td><td class="num"><%= hnum(d.hours) %></td><td class="num" style="font-weight:600;"><%= d.hpb==null?'—':d.hpb %></td><td class="num"><%= d.staff %></td><td class="num"><%= d.shifts %></td></tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+
+    <% var hpbTrend = (roster.trend||[]).filter(function(x){return x.avg_hpb!=null;}); if (hpbTrend.length>1) { var hmax=Math.max(2,...hpbTrend.map(function(x){return x.avg_hpb;})); %>
+    <h3 class="card-sub">Hours per booking <span class="muted" style="font-weight:400;font-size:12px;">· weekly trend</span></h3>
+    <div class="chart" style="height:150px;">
+      <% hpbTrend.forEach(function(x){ %>
+        <div class="chart-col" title="wk <%= x.week_starting %>: <%= x.avg_hpb %> hrs/booking · rostered <%= hnum(x.total_hours) %>h · paid <%= hnum(x.paid_hours) %>h">
+          <div class="chart-bar" style="height:<%= Math.round(x.avg_hpb/hmax*100) %>%; background:var(--navy);"></div>
+          <div class="chart-x"><%= x.week_starting.slice(5) %><br><span><%= x.avg_hpb %></span></div>
+        </div>
+      <% }); %>
+    </div>
+    <% } %>
+
+    <% if (roster.leave && roster.leave.length) { %>
+    <h3 class="card-sub">On leave this week</h3>
+    <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--text);line-height:1.7;">
+      <% roster.leave.slice(0,15).forEach(function(l){ %><li><%= l.staff %> — <%= l.leavetype %><%= l.hours?(' · '+l.hours+'h'):'' %></li><% }); %>
+    </ul>
+    <% } %>
+    <p class="footnote">Rostered hours &amp; hours-per-booking from OWNA’s weekly roster. Worked hours = Employment Hero actual hours for the matching week (educators + kitchen + cleaning, excluding paid leave). Worked − rostered flags overtime (positive) or under-worked rosters (negative); ±3% is on plan.</p>
+  </div>
+  <% } else { %>
+  <div class="card"><p class="muted" style="margin:0;">No roster data for this centre yet. It populates on the nightly sync from OWNA.</p></div>
   <% } %>
 </section>
 

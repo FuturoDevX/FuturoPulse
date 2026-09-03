@@ -159,6 +159,9 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
     // Child incidents (safety) — best-effort.
     try { await runIncidents({ windowDays, log }); } catch (e) { log(`[snapshot] incidents failed: ${e.message}`); }
 
+    // Weekly staff roster — best-effort.
+    try { await runRoster({ log }); } catch (e) { log(`[snapshot] roster failed: ${e.message}`); }
+
     db.prepare(
       `UPDATE snapshot_runs SET finished_at=datetime('now'), status='ok', rows_written=? WHERE id=?`
     ).run(rowsWritten, runId);
@@ -213,6 +216,47 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
     write([...byMonth.entries()]);
   }
   log(`[incidents] ${rows} centre-months written`);
+  return { ok: true, rows };
+}
+
+// ===== Weekly staff roster -> per-centre per-week rostered hours + hours/booking =====
+const ROSTER_DOW = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+function recentMondays(n) {
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const out = []; const d = new Date();
+  d.setHours(12, 0, 0, 0); // noon local avoids any DST/tz edge
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to this week's Monday
+  for (let i = 0; i < n; i++) { out.push(ymd(d)); d.setDate(d.getDate() - 7); }
+  return out;
+}
+async function runRoster({ weeks = 14, log = console.log } = {}) {
+  const centres = await owna.listCentres();
+  const mondays = recentMondays(weeks);
+  const upsert = db.prepare(`INSERT INTO roster_weekly (owna_id, week_starting, total_hours, days_json, leave_json, updated_at)
+    VALUES (@owna_id,@week_starting,@total_hours,@days_json,@leave_json,datetime('now'))
+    ON CONFLICT(owna_id, week_starting) DO UPDATE SET total_hours=@total_hours, days_json=@days_json, leave_json=@leave_json, updated_at=datetime('now')`);
+  let rows = 0;
+  for (const c of centres) {
+    for (const wk of mondays) {
+      let r;
+      try { r = await owna.weeklyRoster(c.id, wk); } catch (e) { continue; }
+      if (!r) continue;
+      // rosteredhours is an array of single-day objects each carrying that day's hours + hoursperbooking.
+      const rh = {};
+      (r.rosteredhours || []).forEach((o) => { for (const d of ROSTER_DOW) if (o[d] != null) rh[d] = { hours: Number(o[d]) || 0, hpb: o.hoursperbooking != null ? Number(o.hoursperbooking) : null }; });
+      let total = 0;
+      const days = ROSTER_DOW.map((d) => {
+        const shifts = Array.isArray(r[d]) ? r[d] : [];
+        const staff = new Set(shifts.map((s) => s.staffid));
+        const h = rh[d] ? rh[d].hours : 0; total += h;
+        return { day: d, hours: Math.round(h * 10) / 10, hpb: rh[d] ? rh[d].hpb : null, shifts: shifts.length, staff: staff.size };
+      });
+      const leave = (Array.isArray(r.leave) ? r.leave : []).map((l) => ({ staff: l.staff, leavetype: l.leavetype, day: l.day, hours: l.hours }));
+      upsert.run({ owna_id: c.id, week_starting: wk, total_hours: Math.round(total * 10) / 10, days_json: JSON.stringify(days), leave_json: JSON.stringify(leave) });
+      rows += 1;
+    }
+  }
+  log(`[roster] ${rows} centre-weeks written`);
   return { ok: true, rows };
 }
 
@@ -557,4 +601,4 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length };
 }
 
-module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, lastRun };
+module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, lastRun };

@@ -110,6 +110,16 @@ router.post("/action-plans/edit", requireAdminOrOps, (req, res) => {
   res.redirect(`/action-plans?owna=${owna}&month=${month}`);
 });
 
+// Rostering (OWNA weekly roster) — rostered hours, hours/booking, rostered-vs-paid.
+router.get("/rostering", (req, res) => {
+  const weeks = m.rosterWeeks(16);
+  const week = weeks.includes(req.query.week) ? req.query.week : m.latestReconciledRosterWeek();
+  let rows = week ? m.rosterForWeek(week) : [];
+  const scoped = scopedOwnaId(req);
+  if (scoped) rows = rows.filter((r) => r.owna_id === scoped);
+  res.render("rostering", { title: "Rostering", weeks, week, rows, lastRun: lastRun() });
+});
+
 // Safety & Incidents (OWNA child incident reports, rolling 12 months).
 router.get("/safety", (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : null;
@@ -226,6 +236,7 @@ router.get("/centre/:id", (req, res) => {
     actionPlan, apMonth,
     pcRow, pcMonth, pcTargets: m.pcTargets(),
     qc: m.qcCentre(c.owna_id),
+    roster: m.rosterCentre(c.owna_id, 12),
     lastRun: lastRun(),
   });
 });

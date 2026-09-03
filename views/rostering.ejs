@@ -1,0 +1,74 @@
+<%- include('partials/header', { title: 'Rostering' }) %>
+<%
+  const wkLabel = (d) => d ? new Date(d+'T00:00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'2-digit'}) : '';
+  const h1 = (n) => n==null ? '—' : (Math.round(Number(n)*10)/10).toLocaleString('en-AU');
+  const varClass = (pct) => pct==null ? '' : (Math.abs(pct) <= 3 ? 'good-text' : (pct > 0 ? 'bad-text' : 'warn-text'));
+  const t = rows.reduce((a,r)=>{ a.rost+=r.total_hours||0; a.paid+=r.paid_hours||0; a.hpb+=(r.avg_hpb||0); a.n+=(r.avg_hpb!=null?1:0); return a; }, {rost:0,paid:0,hpb:0,n:0});
+  const groupHpb = t.n ? Math.round(t.hpb/t.n*100)/100 : null;
+  const groupVar = (t.paid && t.rost) ? Math.round((t.paid - t.rost)*10)/10 : null;
+  const groupVarPct = (t.paid && t.rost) ? Math.round((t.paid - t.rost)/t.rost*1000)/10 : null;
+%>
+<div class="page-head">
+  <div>
+    <h1>Rostering</h1>
+    <p class="sub">OWNA weekly staff roster · rostered hours &amp; hours-per-booking, reconciled to Employment Hero worked hours<% if(week){ %> · week of <%= wkLabel(week) %><% } %></p>
+  </div>
+  <% if (weeks.length) { %>
+  <div class="head-actions">
+    <form method="GET"><select name="week" onchange="this.form.submit()">
+      <% weeks.forEach(function(w){ %><option value="<%= w %>" <%= w===week?'selected':'' %>>Week of <%= wkLabel(w) %></option><% }); %>
+    </select></form>
+  </div>
+  <% } %>
+</div>
+
+<% if (!rows.length) { %>
+  <div class="card"><p class="muted" style="margin:0;">No roster data yet. It populates on the nightly sync from OWNA (endpoint <code>/api/roster</code>).</p></div>
+<% } else { %>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= h1(t.rost) %></div><div class="l">Rostered hours</div></div>
+  <div class="card stat"><div class="n"><%= groupHpb==null?'—':groupHpb %></div><div class="l">Avg hours / booking</div></div>
+  <div class="card stat"><div class="n"><%= h1(t.paid) %></div><div class="l">Worked hours (Employment Hero)</div></div>
+  <div class="card stat"><div class="n <%= varClass(groupVarPct) %>"><%= groupVar==null?'—':(groupVar>0?'+':'')+h1(groupVar) %></div><div class="l">Worked − rostered<% if(groupVarPct!=null){ %> · <%= (groupVarPct>0?'+':'')+groupVarPct %>%<% } %></div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">By centre — week of <%= wkLabel(week) %></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Centre</th>
+      <th class="num">Rostered h</th><th class="num">Hrs / booking</th>
+      <th class="num">Worked h (EH)</th><th class="num">Worked − rostered</th><th class="num">Var %</th>
+    </tr></thead>
+    <tbody>
+      <% rows.forEach(function(r){ %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= r.owna_id %>#rostering"><%= r.name %></a></td>
+          <td class="num"><%= h1(r.total_hours) %></td>
+          <td class="num" style="font-weight:600;"><%= r.avg_hpb==null?'—':r.avg_hpb %></td>
+          <td class="num"><%= h1(r.paid_hours) %></td>
+          <td class="num <%= varClass(r.variance_pct) %>"><%= r.variance==null?'—':(r.variance>0?'+':'')+h1(r.variance) %></td>
+          <td class="num <%= varClass(r.variance_pct) %>"><%= r.variance_pct==null?'—':(r.variance_pct>0?'+':'')+r.variance_pct+'%' %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <% if (rows.length > 1) { %>
+    <tfoot><tr class="total-row">
+      <td>All centres</td>
+      <td class="num"><%= h1(t.rost) %></td>
+      <td class="num"><%= groupHpb==null?'—':groupHpb %></td>
+      <td class="num"><%= h1(t.paid) %></td>
+      <td class="num <%= varClass(groupVarPct) %>"><%= groupVar==null?'—':(groupVar>0?'+':'')+h1(groupVar) %></td>
+      <td class="num <%= varClass(groupVarPct) %>"><%= groupVarPct==null?'—':(groupVarPct>0?'+':'')+groupVarPct+'%' %></td>
+    </tr></tfoot>
+    <% } %>
+  </table></div>
+  <p class="footnote">
+    <strong>Rostered hours</strong> = OWNA weekly roster (educators + cooks/floaters). <strong>Hours per booking</strong> = rostered educator-hours ÷ booked child-days that day, averaged across the week — lower is leaner, higher is more staff per child. <strong>Worked hours</strong> = Employment Hero actual worked hours for the matching week (educators + kitchen + cleaning, excluding paid leave). <strong>Worked − rostered</strong> flags unplanned overtime (positive) or under-worked rosters (negative); within ±3% is on plan.
+    <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
+  </p>
+</div>
+
+<% } %>
+<%- include('partials/footer') %>

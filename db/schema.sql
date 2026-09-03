@@ -245,6 +245,17 @@ CREATE TABLE IF NOT EXISTS action_plan_items (
 );
 CREATE INDEX IF NOT EXISTS idx_apitems ON action_plan_items(owna_id, month);
 
+-- ===== Rostering: OWNA weekly staff roster aggregated per centre per week =====
+CREATE TABLE IF NOT EXISTS roster_weekly (
+  owna_id       TEXT NOT NULL,
+  week_starting TEXT NOT NULL,          -- Monday YYYY-MM-DD
+  total_hours   REAL,                   -- rostered hours across the week (OWNA rosteredhours)
+  days_json     TEXT,                   -- JSON: [{day, hours, hpb, shifts, staff}] Mon–Sun
+  leave_json    TEXT,                   -- JSON: [{staff, leavetype, day, hours}]
+  updated_at    TEXT,
+  PRIMARY KEY (owna_id, week_starting)
+);
+
 -- ===== Safety: OWNA child incidents aggregated per centre per month =====
 CREATE TABLE IF NOT EXISTS incidents_monthly (
   owna_id     TEXT NOT NULL,

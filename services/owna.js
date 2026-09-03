@@ -84,6 +84,14 @@ const owna = {
   async ccsPayments(centreId, from, to) {
     return getAll(`/api/ccs/payments/${centreId}/${fmtDate(from)}/${fmtDate(to)}/list`);
   },
+
+  // Weekly staff roster (weekStarting = Monday, YYYY-MM-DD). Returns the week's roster doc, or null.
+  // Shape: { weekstarting, monday..sunday: [shift...], rosteredhours: [{<day>: hours, hoursperbooking}], leave, comments }
+  async weeklyRoster(centreId, weekStarting) {
+    const body = await apiGet(`/api/roster/${centreId}/${fmtDate(weekStarting)}`);
+    const rows = Array.isArray(body) ? body : (body && body.data) || [];
+    return rows[0] || null;
+  },
 };
 
 module.exports = { owna, apiGet, getAll, fmtDate };

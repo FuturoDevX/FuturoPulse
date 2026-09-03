@@ -913,9 +913,71 @@ function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
   return { dow, tips, calc, occupancyNow, capacity };
 }
 
+// ===== Rostering (OWNA weekly roster) + rostered-vs-paid reconciliation =====
+const ROSTER_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"];
+function rosterWeeks(limit = 16) {
+  return db.prepare("SELECT DISTINCT week_starting FROM roster_weekly ORDER BY week_starting DESC LIMIT ?").all(limit).map((r) => r.week_starting);
+}
+// Best default week for the group view: latest roster week that also has EH paid data (pay lags the roster).
+function latestReconciledRosterWeek() {
+  const weeks = rosterWeeks(16);
+  for (const w of weeks) {
+    if (db.prepare("SELECT 1 FROM labour_weekly WHERE week_ending=? LIMIT 1").get(ehWeekEndingFor(w))) return w;
+  }
+  return weeks[0] || null;
+}
+// EH pay weeks end on the Sunday of the roster's Mon-start week. Compute in UTC to avoid tz drift.
+function ehWeekEndingFor(weekStarting) {
+  const d = new Date(weekStarting + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 6);
+  return d.toISOString().slice(0, 10);
+}
+// Actual WORKED hours (educators + kitchen + cleaning, excluding paid leave) for a centre's pay week.
+// Rostered hours are shift hours, so this is the like-for-like comparison for over/under-working the roster.
+function ehPaidHours(ownaId, weekEnding) {
+  const r = db.prepare("SELECT * FROM labour_weekly WHERE owna_id=? AND week_ending=?").get(ownaId, weekEnding);
+  if (!r) return null;
+  return Math.round(((r.worked_h || 0) + (r.kitchen_h || 0) + (r.cleaning_h || 0)) * 10) / 10;
+}
+function rosterParse(r) {
+  const days = JSON.parse(r.days_json || "[]");
+  const wd = days.filter((d) => ROSTER_WEEKDAYS.includes(d.day) && d.hours > 0);
+  const hpb = wd.map((d) => d.hpb).filter((v) => v != null);
+  const avgHpb = hpb.length ? Math.round(hpb.reduce((a, b) => a + b, 0) / hpb.length * 100) / 100 : null;
+  return { week_starting: r.week_starting, total_hours: r.total_hours, avg_hpb: avgHpb, days };
+}
+// One row per centre for a given roster week, with EH paid-hours reconciliation.
+function rosterForWeek(weekStarting) {
+  const rows = db.prepare("SELECT r.*, c.name FROM roster_weekly r JOIN centres c ON c.owna_id=r.owna_id WHERE r.week_starting=? ORDER BY c.name").all(weekStarting);
+  const wkEnd = ehWeekEndingFor(weekStarting);
+  return rows.map((r) => {
+    const base = rosterParse(r);
+    const paid = ehPaidHours(r.owna_id, wkEnd);
+    const variance = paid != null ? Math.round((paid - r.total_hours) * 10) / 10 : null;
+    return { owna_id: r.owna_id, name: r.name.replace("Futuro Childcare & Education - ", ""), ...base,
+      paid_hours: paid, ehWeek: wkEnd, variance, variance_pct: (paid && r.total_hours) ? Math.round((paid - r.total_hours) / r.total_hours * 1000) / 10 : null };
+  });
+}
+// One centre: latest week day-breakdown + weekly trend (rostered hrs, hrs/booking, paid hrs) + leave.
+function rosterCentre(ownaId, weeksBack = 12) {
+  const rows = db.prepare("SELECT * FROM roster_weekly WHERE owna_id=? ORDER BY week_starting DESC LIMIT ?").all(ownaId, weeksBack);
+  if (!rows.length) return null;
+  const trend = rows.slice().reverse().map((r) => {
+    const b = rosterParse(r);
+    return { week_starting: r.week_starting, total_hours: r.total_hours, avg_hpb: b.avg_hpb, paid_hours: ehPaidHours(ownaId, ehWeekEndingFor(r.week_starting)) };
+  });
+  // Headline on the latest week that has EH worked data for this centre (pay lags the roster), else the latest roster.
+  const headRow = rows.find((r) => ehPaidHours(ownaId, ehWeekEndingFor(r.week_starting)) != null) || rows[0];
+  const latest = rosterParse(headRow);
+  const ehWeek = ehWeekEndingFor(headRow.week_starting);
+  const paid = ehPaidHours(ownaId, ehWeek);
+  return { latest, paid_hours: paid, ehWeek, variance: paid != null ? Math.round((paid - latest.total_hours) * 10) / 10 : null,
+    leave: JSON.parse(headRow.leave_json || "[]"), trend };
+}
+
 module.exports = {
   defaultRange, forwardRange, centres, overview, totals,
   centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
+  rosterWeeks, rosterForWeek, rosterCentre, latestReconciledRosterWeek,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
   llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr,
   exitsSummary, exitReasons, centreExits, exitsLatestDate,
