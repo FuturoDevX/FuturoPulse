@@ -503,7 +503,7 @@ function exitsLatestDate() {
 // ===== Monthly action plan (RAG auto-suggest + manual) =====
 const AP_AREAS = [
   { key: "occupancy", group: "Business Performance", label: "Occupancy — actual vs target" },
-  { key: "labour", group: "Business Performance", label: "Labour — actual vs budget" },
+  { key: "labour", group: "Business Performance", label: "Wages — actual vs budget" },
   { key: "costs", group: "Business Performance", label: "Other costs vs budget" },
   { key: "quality", group: "High Quality Practice", label: "Compliance snapshot" },
   { key: "family", group: "Family Experience", label: "Family NPS / feedback" },
