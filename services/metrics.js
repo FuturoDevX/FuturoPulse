@@ -931,12 +931,12 @@ function ehWeekEndingFor(weekStarting) {
   const d = new Date(weekStarting + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 6);
   return d.toISOString().slice(0, 10);
 }
-// Actual WORKED hours (educators + kitchen + cleaning, excluding paid leave) for a centre's pay week.
-// Rostered hours are shift hours, so this is the like-for-like comparison for over/under-working the roster.
+// Actual WORKED hours matching OWNA's roster scope: educators (worked_h) + cooks (kitchen_h),
+// EXCLUDING paid leave and cleaning (cleaners are not on the OWNA roster). Like-for-like vs rostered hours.
 function ehPaidHours(ownaId, weekEnding) {
   const r = db.prepare("SELECT * FROM labour_weekly WHERE owna_id=? AND week_ending=?").get(ownaId, weekEnding);
   if (!r) return null;
-  return Math.round(((r.worked_h || 0) + (r.kitchen_h || 0) + (r.cleaning_h || 0)) * 10) / 10;
+  return Math.round(((r.worked_h || 0) + (r.kitchen_h || 0)) * 10) / 10;
 }
 function rosterParse(r) {
   const days = JSON.parse(r.days_json || "[]");

@@ -65,7 +65,7 @@
     <% } %>
   </table></div>
   <p class="footnote">
-    <strong>Rostered hours</strong> = OWNA weekly roster (educators + cooks/floaters). <strong>Hours per booking</strong> = rostered educator-hours ÷ booked child-days that day, averaged across the week — lower is leaner, higher is more staff per child. <strong>Worked hours</strong> = Employment Hero actual worked hours for the matching week (educators + kitchen + cleaning, excluding paid leave). <strong>Worked − rostered</strong> flags unplanned overtime (positive) or under-worked rosters (negative); within ±3% is on plan.
+    <strong>Rostered hours</strong> = OWNA weekly roster (educators + cooks/floaters). <strong>Hours per booking</strong> = rostered educator-hours ÷ booked child-days that day, averaged across the week — lower is leaner, higher is more staff per child. <strong>Worked hours</strong> = Employment Hero actual worked hours for the matching week, scoped to what OWNA rosters — educators + kitchen (cooks) — and excluding paid leave and cleaning (cleaners aren’t on the OWNA roster). <strong>Worked − rostered</strong> flags unplanned overtime (positive) or under-worked rosters (negative); within ±3% is on plan.
     <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
   </p>
 </div>

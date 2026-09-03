@@ -255,7 +255,7 @@
       <% roster.leave.slice(0,15).forEach(function(l){ %><li><%= l.staff %> — <%= l.leavetype %><%= l.hours?(' · '+l.hours+'h'):'' %></li><% }); %>
     </ul>
     <% } %>
-    <p class="footnote">Rostered hours &amp; hours-per-booking from OWNA’s weekly roster. Worked hours = Employment Hero actual hours for the matching week (educators + kitchen + cleaning, excluding paid leave). Worked − rostered flags overtime (positive) or under-worked rosters (negative); ±3% is on plan.</p>
+    <p class="footnote">Rostered hours &amp; hours-per-booking from OWNA’s weekly roster. Worked hours = Employment Hero actual hours scoped to what OWNA rosters — educators + kitchen (cooks) — excluding paid leave and cleaning. Worked − rostered flags overtime (positive) or under-worked rosters (negative); ±3% is on plan.</p>
   </div>
   <% } else { %>
   <div class="card"><p class="muted" style="margin:0;">No roster data for this centre yet. It populates on the nightly sync from OWNA.</p></div>
