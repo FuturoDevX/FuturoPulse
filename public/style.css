@@ -276,3 +276,11 @@ tr:hover td.hot { background: #ffedcc; }
 .pcm-val { font-size: 28px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1; }
 .pcm-chart { display: block; width: 100%; height: 90px; margin-top: 14px; overflow: visible; }
 .pcm-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 4px; }
+
+/* Multi-line trend chart (linechart partial) */
+.lc-xaxis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 6px; }
+.lc-xaxis span { flex: 1; text-align: center; overflow: hidden; white-space: nowrap; }
+.lc-xaxis span:first-child { text-align: left; } .lc-xaxis span:last-child { text-align: right; }
+.lc-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.lc-key { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+.lc-key i { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }

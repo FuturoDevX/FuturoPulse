@@ -849,6 +849,29 @@ function labourTrend(ownaId = null, weeks = 16) {
   });
 }
 
+// Richer weekly financial trend: revenue, worked/leave/support wages, total wages, margin ($ & %).
+// Group (ownaId null) or one centre. The money view over time.
+function wagesTrend(ownaId = null, weeks = 16) {
+  const weeksList = labourWeeks(weeks).slice().reverse();
+  return weeksList.map((wk) => {
+    const rows = ownaId
+      ? db.prepare(`SELECT * FROM labour_weekly WHERE week_ending = ? AND owna_id = ?`).all(wk, ownaId)
+      : db.prepare(`SELECT * FROM labour_weekly WHERE week_ending = ?`).all(wk);
+    let worked = 0, leave = 0, matwc = 0, kitchen = 0, cleaning = 0, rev = 0;
+    const seen = new Set();
+    rows.forEach((r) => {
+      worked += r.worked_amt || 0; leave += r.leave_amt || 0; matwc += r.matwc_amt || 0;
+      kitchen += r.kitchen_amt || 0; cleaning += r.cleaning_amt || 0;
+      if (r.owna_id && !seen.has(r.owna_id)) { rev += ownaWeek(r.owna_id, wk).revenue; seen.add(r.owna_id); }
+    });
+    const care = worked + leave + matwc, support = kitchen + cleaning, allw = care + support;
+    return { week: wk, revenue: round(rev), worked: round(worked), leave: round(leave), support: round(support),
+      care_wages: round(care), all_wages: round(allw), margin: round(rev - allw),
+      wage_pct: rev > 0 ? Math.round(care / rev * 1000) / 10 : null,
+      margin_pct: rev > 0 ? Math.round((rev - allw) / rev * 1000) / 10 : null };
+  });
+}
+
 // ===== Centre insights: day-of-week occupancy, tips, occupancy calculator, wages/margin =====
 const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -883,6 +906,41 @@ function centreLabourLatest(ownaId) {
     worked_amt: Math.round(row.worked_amt || 0), leave_amt: Math.round(row.leave_amt || 0), matwc_amt: Math.round(row.matwc_amt || 0),
     worked_h: Math.round((row.worked_h || 0) * 10) / 10, leave_h: Math.round((row.leave_h || 0) * 10) / 10,
     support_amt: row.support_amt, wage_pct: row.wage_pct, occupancy: row.occupancy, marginAfterWages, margin_pct };
+}
+
+// Compare every operating centre on one metric over time (each centre = one line).
+const COMPARE_METRICS = {
+  occupancy:  { cadence: "month", label: "Occupancy", suf: "%", better: "high" },
+  wage_pct:   { cadence: "week",  label: "Educator wages % of revenue", suf: "%", better: "low" },
+  margin_pct: { cadence: "week",  label: "Margin after wages", suf: "%", better: "high" },
+  revenue:    { cadence: "week",  label: "Revenue", money: true, better: "high" },
+  turnover:   { cadence: "month", label: "Turnover", suf: "%", better: "low" },
+  enps:       { cadence: "month", label: "eNPS", better: "high" },
+};
+function lastMonths(n) {
+  const now = todayStr().slice(0, 7); const [y, mo] = now.split("-").map(Number);
+  const out = []; for (let i = n - 1; i >= 0; i--) out.push(new Date(Date.UTC(y, mo - 1 - i, 1)).toISOString().slice(0, 7));
+  return out;
+}
+function compareTrend(metric = "occupancy", n) {
+  const cfg = COMPARE_METRICS[metric] || COMPARE_METRICS.occupancy;
+  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+  if (cfg.cadence === "week") {
+    const weeks = labourWeeks(n || 16).slice().reverse();
+    const series = centres.map((ct) => {
+      const map = {}; wagesTrend(ct.owna_id, n || 16).forEach((r) => { map[r.week] = r[metric]; });
+      return { owna_id: ct.owna_id, name: ct.name.replace("Futuro Childcare & Education - ", ""), points: weeks.map((w) => (map[w] == null ? null : map[w])) };
+    });
+    return { axis: weeks, cadence: "week", series, cfg, metric };
+  }
+  const axis = lastMonths(n || 12);
+  const series = centres.map((ct) => {
+    const map = {};
+    if (metric === "occupancy") occupancyTrend(ct.owna_id, 24).forEach((r) => { map[r.month] = r.occupancy; });
+    else { const pt = pcTrend(ct.owna_id, 24); pt.axis.forEach((m, i) => { map[m] = pt.series[metric] ? pt.series[metric][i] : null; }); }
+    return { owna_id: ct.owna_id, name: ct.name.replace("Futuro Childcare & Education - ", ""), points: axis.map((m) => (map[m] == null ? null : map[m])) };
+  });
+  return { axis, cadence: "month", series, cfg, metric };
 }
 
 // How many new bookings of each day-pattern lift weekly occupancy by each target (pp).
@@ -1060,7 +1118,7 @@ module.exports = {
   exitsSummary, exitReasons, centreExits, exitsLatestDate,
   forwardOccupancyByCentre, projection, centrePipelineDetail,
   occupancyTrend, occupancyTrendGroup,
-  labourWeeks, labourForWeek, labourTrend, labourBudgets, saveLabourBudget,
+  labourWeeks, labourForWeek, labourTrend, wagesTrend, compareTrend, COMPARE_METRICS, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, PC_TARGET_KEYS,
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,

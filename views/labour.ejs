@@ -39,8 +39,29 @@
   <div class="card stat"><div class="n <%= marginClass(allPct) %>-text"><%= allPct==null?'—':allPct+'%' %></div><div class="l">All-in (incl support) % rev</div></div>
 </div>
 
+<% if (typeof wagesTrend !== 'undefined' && wagesTrend && wagesTrend.length) {
+     const wl = wagesTrend.map(function(t){ return wkLabel(t.week).replace(/ \d{2}$/,''); });
+     const fin = { labels: wl, height: 220, money: true, series: [
+       { name:'Revenue', points: wagesTrend.map(function(t){return t.revenue;}) },
+       { name:'Total wages', points: wagesTrend.map(function(t){return t.all_wages;}) },
+       { name:'Margin (after wages)', points: wagesTrend.map(function(t){return t.margin;}) },
+     ] };
+     const pct = { labels: wl, height: 150, suf:'%', series: [
+       { name:'Educator wages % rev', points: wagesTrend.map(function(t){return t.wage_pct;}) },
+       { name:'Margin %', points: wagesTrend.map(function(t){return t.margin_pct;}) },
+     ] };
+%>
 <div class="card">
-  <h2 style="margin-top:0;">Educator wages by centre</h2>
+  <h2 style="margin-top:0;">Revenue vs wages over time <span class="muted" style="font-weight:400;font-size:13px;">· all centres · weekly</span></h2>
+  <%- include('partials/linechart', { lc: fin }) %>
+  <h3 class="card-sub">Wages % &amp; margin % of revenue</h3>
+  <%- include('partials/linechart', { lc: pct }) %>
+  <p class="footnote">Weekly finalised Employment Hero pay vs OWNA revenue. <strong>Total wages</strong> = educators + kitchen + cleaning; <strong>margin</strong> = revenue − all wages (before rent, food &amp; other costs). Educator-wage target ≤ 55–65% of revenue.</p>
+</div>
+<% } %>
+
+<div class="card">
+  <h2 style="margin-top:0;">Educator wages by centre <span class="muted" style="font-weight:400;font-size:13px;">· current week</span></h2>
   <div style="overflow-x:auto;">
   <table class="labour-tbl">
     <thead>

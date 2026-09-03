@@ -178,16 +178,23 @@
       <div class="card stat"><div class="n <%= labour.marginAfterWages>=0?'good':'bad' %>-text"><%= money(labour.marginAfterWages) %></div><div class="l">Revenue after wages</div></div>
       <div class="card stat"><div class="n"><%= labour.margin_pct!=null?labour.margin_pct+'%':'—' %></div><div class="l">Margin after wages</div></div>
     </div>
-    <% if (labourTrend && labourTrend.length>1) { var wpMax=Math.max(70,...labourTrend.filter(t=>t.wage_pct!=null).map(t=>t.wage_pct)); %>
-    <h3 class="card-sub">Educator wages % of revenue <span class="muted" style="font-weight:400;font-size:12px;">· weekly</span></h3>
-    <div class="chart" style="height:140px;">
-      <% labourTrend.forEach(function(t){ var wp=t.wage_pct; %>
-        <div class="chart-col" title="<%= t.week %>: <%= wp!=null?wp+'% wages of revenue':'n/a' %> · revenue <%= money(t.revenue) %>">
-          <div class="chart-bar <%= wp==null?'':(wp>65?'bad':wp>55?'warn':'good') %>" style="height:<%= wp!=null?Math.round(wp/wpMax*100):0 %>%;"></div>
-          <div class="chart-x"><%= t.week.slice(5) %><br><span><%= wp!=null?wp+'%':'—' %></span></div>
-        </div>
-      <% }); %>
-    </div>
+    <% if (typeof wagesTrend !== 'undefined' && wagesTrend && wagesTrend.length>1) {
+         var cwl = wagesTrend.map(function(t){ return t.week.slice(5); });
+         var cfin = { labels:cwl, height:190, money:true, series:[
+           { name:'Revenue', points: wagesTrend.map(function(t){return t.revenue;}) },
+           { name:'Worked wages', points: wagesTrend.map(function(t){return t.worked;}) },
+           { name:'Leave wages', points: wagesTrend.map(function(t){return t.leave;}) },
+           { name:'Margin', points: wagesTrend.map(function(t){return t.margin;}) },
+         ]};
+         var cpct = { labels:cwl, height:130, suf:'%', series:[
+           { name:'Educator wages % rev', points: wagesTrend.map(function(t){return t.wage_pct;}) },
+           { name:'Margin %', points: wagesTrend.map(function(t){return t.margin_pct;}) },
+         ]};
+    %>
+    <h3 class="card-sub">Revenue, wages &amp; margin <span class="muted" style="font-weight:400;font-size:12px;">· weekly</span></h3>
+    <%- include('partials/linechart', { lc: cfin }) %>
+    <h3 class="card-sub">Wages % &amp; margin % of revenue</h3>
+    <%- include('partials/linechart', { lc: cpct }) %>
     <% } %>
     <p class="footnote">Educator wages = <strong>worked wages</strong> (hours actually worked) + <strong>leave wages</strong> (paid annual/personal leave); kitchen/cleaning shown separately. “Revenue after wages” = revenue − all wages (before rent, food &amp; other costs). Educator-wage target ≤ 55–65% of revenue.</p>
   </div>

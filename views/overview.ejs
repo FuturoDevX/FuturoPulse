@@ -52,6 +52,23 @@
 </div>
 <% } %>
 
+<% if (typeof occTrend !== 'undefined' && occTrend && occTrend.length > 1) {
+     const oLbls = occTrend.map(function(t){ var p=t.month.split('-'); return new Date(p[0],p[1]-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); });
+     const occLc = { labels:oLbls, height:180, suf:'%', series:[
+       { name:'Occupancy', points: occTrend.map(function(t){return t.occupancy;}) },
+       { name:'Attendance', points: occTrend.map(function(t){return t.attendance_rate;}) },
+     ]};
+     const revLc = { labels:oLbls, height:170, money:true, series:[ { name:'Fees billed', points: occTrend.map(function(t){return t.fee_total;}) } ]};
+%>
+<div class="card">
+  <div class="pc-head"><h2 style="margin:0;">Group trends <span class="muted" style="font-weight:400;font-size:13px;">· monthly, last <%= occTrend.length %> months</span></h2><a class="row-link" href="/compare">Compare centres →</a></div>
+  <h3 class="card-sub">Occupancy &amp; attendance %</h3>
+  <%- include('partials/linechart', { lc: occLc }) %>
+  <h3 class="card-sub">Fees billed (revenue)</h3>
+  <%- include('partials/linechart', { lc: revLc }) %>
+</div>
+<% } %>
+
 <div class="card">
   <h2 style="margin-top:0;">By centre</h2>
   <div style="overflow-x:auto;">

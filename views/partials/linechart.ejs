@@ -1,0 +1,32 @@
+<%
+  // Expects `lc = { labels:[...], series:[{name, points:[num|null], color?}], height?, suf?, money? }`
+  const _h = lc.height || 170;
+  const _W = 1000;
+  const _fmt = (v) => v==null ? '' : (lc.money ? '$'+Math.round(v).toLocaleString('en-AU') : (Math.round(v*10)/10).toLocaleString('en-AU')+(lc.suf||''));
+  let _all = []; lc.series.forEach(s => s.points.forEach(v => { if(v!=null) _all.push(v); }));
+  const _mn0 = _all.length ? Math.min(..._all) : 0, _mx0 = _all.length ? Math.max(..._all) : 1;
+  const _pad = ((_mx0-_mn0)*0.12) || (Math.abs(_mx0)*0.1) || 1;
+  const _mn = _mn0-_pad, _mx = _mx0+_pad, _rng = (_mx-_mn)||1;
+  const _n = lc.labels.length;
+  const _x = (i) => _n<=1 ? _W/2 : (i/(_n-1))*_W;
+  const _y = (v) => _h-((v-_mn)/_rng)*(_h-10)-5;
+  const _COLORS = ['#1f3864','#6d2e46','#2e7d32','#b8860b','#2b7a9b','#9a5b00'];
+  const _step = Math.max(1, Math.ceil(_n/9));
+%>
+<% if (!_all.length) { %>
+  <p class="muted" style="margin:12px 0 2px;font-size:13px;">No data for this selection yet.</p>
+<% } else { %>
+<div style="overflow-x:auto;">
+  <svg viewBox="0 0 <%= _W %> <%= _h %>" preserveAspectRatio="none" style="width:100%;height:<%= _h %>px;display:block;">
+    <% lc.series.forEach(function(s, si){ var col = s.color || _COLORS[si % _COLORS.length];
+         var segs=[], cur=[]; s.points.forEach(function(v,i){ if(v==null){ if(cur.length){segs.push(cur);cur=[];} } else cur.push(_x(i).toFixed(1)+','+_y(v).toFixed(1)); }); if(cur.length) segs.push(cur); %>
+      <% segs.forEach(function(sg){ %><polyline points="<%= sg.join(' ') %>" fill="none" stroke="<%= col %>" stroke-width="2.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><% }); %>
+      <% s.points.forEach(function(v,i){ if(v!=null){ %><circle cx="<%= _x(i).toFixed(1) %>" cy="<%= _y(v).toFixed(1) %>" r="3" fill="<%= col %>"><title><%= s.name %> · <%= lc.labels[i] %>: <%= _fmt(v) %></title></circle><% } }); %>
+    <% }); %>
+  </svg>
+</div>
+<div class="lc-xaxis"><% lc.labels.forEach(function(l,i){ %><span><%= (i % _step === 0 || i === _n-1) ? l : '' %></span><% }); %></div>
+<% if (lc.series.length > 1) { %>
+<div class="lc-legend"><% lc.series.forEach(function(s,si){ var col = s.color || _COLORS[si % _COLORS.length]; %><span class="lc-key"><i style="background:<%= col %>"></i><%= s.name %></span><% }); %></div>
+<% } %>
+<% } %>

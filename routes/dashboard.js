@@ -54,6 +54,7 @@ router.get("/", (req, res) => {
     llMap: m.llByOwnaCentre(),
     fcast: m.forwardOccupancyByCentre(30),
     pcGroup: m.pcGroupLatest(),
+    occTrend: m.occupancyTrendGroup(13).filter((t) => t.month < new Date().toISOString().slice(0, 7)).slice(-12),
     lastRun: lastRun(),
   });
 });
@@ -174,8 +175,16 @@ router.get("/wages", blockScoped, (req, res) => {
     weeks, week,
     rows: week ? m.labourForWeek(week) : [],
     trend: m.labourTrend(null, 16),
+    wagesTrend: m.wagesTrend(null, 16),
     lastRun: lastRun(),
   });
+});
+
+// Compare all centres on one metric over time.
+router.get("/compare", blockScoped, (req, res) => {
+  const metric = m.COMPARE_METRICS[req.query.metric] ? req.query.metric : "occupancy";
+  const weekly = m.COMPARE_METRICS[metric].cadence === "week";
+  res.render("compare", { title: "Compare", metric, metrics: m.COMPARE_METRICS, data: m.compareTrend(metric, weekly ? 16 : 12), lastRun: lastRun() });
 });
 
 // Enrolment projection / scenario (OWNA occupancy + CRM pipeline).
@@ -250,6 +259,7 @@ router.get("/centre/:id", (req, res) => {
     exitReasons: m.exitReasons(c.owna_id),
     labour,
     labourTrend: m.labourTrend(c.owna_id, 12),
+    wagesTrend: m.wagesTrend(c.owna_id, 16),
     insights: m.centreInsights(c.owna_id, c.capacity, m.pct(agg.booked, capacityDays), pipeline, labour),
     actionPlan, apMonth,
     pcRow, pcMonth, pcTargets: m.pcTargets(),
