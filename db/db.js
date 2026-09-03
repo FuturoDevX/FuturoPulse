@@ -11,4 +11,7 @@ const db = new Database(dbPath);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
+// Ensure schema + admin exist in the DB we actually opened (runtime init — see init-schema.js).
+require("./init-schema").initSchema(db);
+
 module.exports = db;

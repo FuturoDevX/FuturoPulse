@@ -8,8 +8,9 @@ services:
     runtime: node
     plan: starter
     buildCommand: npm install
-    # Create schema + admin + run migrations on every deploy (idempotent).
-    preDeployCommand: node db/init.js
+    # Schema + admin are initialized at RUNTIME (db/db.js -> init-schema.js), because the
+    # persistent disk is not mounted during pre-deploy — initializing there would create the
+    # schema on an ephemeral filesystem the running app never sees.
     startCommand: npm start
     autoDeploy: true
     disk:
