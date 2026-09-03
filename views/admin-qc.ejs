@@ -1,26 +1,27 @@
-<%- include('partials/header', { title: 'Q&C Upload' }) %>
+<%- include('partials/header', { title: 'Q&C Data' }) %>
 <% const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim(); %>
 <div class="page-head"><div>
   <p class="crumb"><a href="/qc">← Quality &amp; Compliance</a></p>
-  <h1>Upload compliance audit</h1>
-  <p class="sub">Upload the audit .xlsx — the centre is matched from the Summary sheet automatically.</p>
+  <h1>Q&amp;C Data</h1>
+  <p class="sub">Upload a compliance audit .xlsx — the centre is matched from the Summary sheet automatically. Each term is kept, so history builds up.</p>
 </div></div>
 <% if (msg) { %><div class="flash"><%= msg %></div><% } %>
 <% if (err) { %><div class="flash bad"><%= err %></div><% } %>
 <div class="card">
   <form method="POST" action="/admin/qc/upload" enctype="multipart/form-data" class="user-form">
     <div><label>Audit file (.xlsx)</label><input type="file" name="audit" accept=".xlsx" required></div>
-    <div><label>Term / period (optional)</label><input type="text" name="term" placeholder="e.g. Term 2 2026"></div>
+    <div><label>Term / period</label><input type="text" name="term" placeholder="e.g. Term 2 2026"></div>
     <div style="align-self:end;"><button type="submit">Upload &amp; import</button></div>
   </form>
+  <p class="footnote" style="margin-top:10px;">Give each upload a distinct term (e.g. “Term 1 2026”, “Term 2 2026”). Re-uploading the same term replaces it; a new term adds to the centre’s history for trend tracking.</p>
 </div>
 <div class="card">
-  <h2 style="margin-top:0;">Uploaded audits</h2>
+  <h2 style="margin-top:0;">Latest audit per centre</h2>
   <% if (!summary.length) { %><p class="muted">None yet.</p><% } else { %>
-    <table><thead><tr><th>Centre</th><th class="num">Overall</th><th>Audit date</th><th class="num">Open actions</th><th>Uploaded</th></tr></thead>
+    <table><thead><tr><th>Centre</th><th>Term</th><th class="num">Overall</th><th>Audit date</th><th class="num">Open actions</th><th>Uploaded</th></tr></thead>
     <tbody>
       <% summary.forEach(function(c){ %>
-        <tr><td><%= shortName(c.centre_name) %></td><td class="num"><%= c.overall_pct %>%</td><td><%= c.audit_date || '—' %></td><td class="num"><%= c.open_actions %></td><td class="muted"><%= (c.uploaded_at||'').slice(0,16) %></td></tr>
+        <tr><td><%= shortName(c.centre_name) %></td><td><%= c.term %></td><td class="num"><%= c.overall_pct %>%</td><td><%= c.audit_date || '—' %></td><td class="num"><%= c.open_actions %></td><td class="muted"><%= (c.uploaded_at||'').slice(0,16) %></td></tr>
       <% }); %>
     </tbody></table>
   <% } %>

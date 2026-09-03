@@ -31,8 +31,8 @@
       <% if (user.role === 'admin') { %>
         <div class="side-nav-divider">Admin</div>
         <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>
-        <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">Enter P&amp;C</a>
-        <a href="/admin/qc" class="<%= currentPath === '/admin/qc' ? 'active' : '' %>">Upload Q&amp;C audit</a>
+        <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">P&amp;C Data</a>
+        <a href="/admin/qc" class="<%= currentPath === '/admin/qc' ? 'active' : '' %>">Q&amp;C Data</a>
       <% } %>
     </nav>
     <div class="side-nav-footer">

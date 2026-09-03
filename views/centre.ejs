@@ -8,6 +8,9 @@
   const pf = (v,target,better)=>{ if(v==null||target==null) return ''; const ok = better==='low' ? v<=target : v>=target; return ok?'good-text':'bad-text'; };
   const pv = (v,suf='')=> (v==null||v==='') ? '—' : v+suf;
   const qcClass = (p) => p==null ? '' : (p>=90 ? 'good' : p>=75 ? 'warn' : 'bad');
+  const hasLabour = (typeof labour !== 'undefined' && labour);
+  const hasPc = (typeof pcRow !== 'undefined' && pcRow && (pcRow.enps!=null||pcRow.family_nps!=null||pcRow.turnover!=null||pcRow.checkin_pct!=null||pcRow.psych_safety!=null));
+  const hasQc = (typeof qc !== 'undefined' && qc);
 %>
 
 <div class="page-head">
@@ -22,285 +25,330 @@
   </div>
 </div>
 
-<nav class="centre-subnav">
-  <a href="#occupancy">Occupancy</a>
-  <% if (typeof actionPlan !== 'undefined' && actionPlan) { %><a href="#actionplan">Action plan</a><% } %>
-  <% if (typeof pcRow !== 'undefined' && pcRow) { %><a href="#pc">P&amp;C</a><% } %>
-  <% if (typeof qc !== 'undefined' && qc) { %><a href="#qc">Q&amp;C</a><% } %>
-  <% if (typeof labour !== 'undefined' && labour) { %><a href="#wages">Wages</a><% } %>
-  <a href="#exits">Exits</a>
+<nav class="tabs" role="tablist">
+  <button class="tab is-active" data-tab="overview" type="button">Overview</button>
+  <button class="tab" data-tab="growth" type="button">Growth</button>
+  <button class="tab" data-tab="wages" type="button">Wages &amp; margin</button>
+  <button class="tab" data-tab="actionplan" type="button">Action plan</button>
+  <button class="tab" data-tab="pc" type="button">People &amp; culture</button>
+  <button class="tab" data-tab="qc" type="button">Quality &amp; compliance</button>
+  <button class="tab" data-tab="exits" type="button">Exits</button>
 </nav>
 
-<span id="occupancy"></span>
-<%- include('partials/rangebar', { action: '/centre/' + centre.owna_id, from, to, presets, fwdPresets }) %>
+<!-- ===================== OVERVIEW ===================== -->
+<section class="tab-panel is-active" data-panel="overview">
+  <%- include('partials/rangebar', { action: '/centre/' + centre.owna_id, from, to, presets, fwdPresets }) %>
+  <% if (to > today) { %><div class="fwd-links"><span class="fwd-note">Showing scheduled bookings past today (<%= today %>)</span></div><% } %>
 
-<% if (to > today) { %><div class="fwd-links"><span class="fwd-note">Showing scheduled bookings past today (<%= today %>)</span></div><% } %>
+  <div class="grid kpis">
+    <div class="card stat"><div class="n <%= occClass(summary.occupancy) %>-text"><%= summary.occupancy %>%</div><div class="l">Occupancy</div></div>
+    <div class="card stat"><div class="n"><%= summary.attendance_rate %>%</div><div class="l">Attendance rate</div></div>
+    <div class="card stat"><div class="n"><%= summary.avg_daily_booked %></div><div class="l">Avg booked / day</div></div>
+    <div class="card stat"><div class="n"><%= summary.casual %></div><div class="l">Casual days</div></div>
+    <div class="card stat"><div class="n"><%= money(summary.fee_total) %></div><div class="l">Fees billed</div></div>
+    <div class="card stat"><div class="n"><%= money(summary.ccs_total) %></div><div class="l">CCS paid</div></div>
+  </div>
 
-<div class="grid kpis">
-  <div class="card stat"><div class="n <%= occClass(summary.occupancy) %>-text"><%= summary.occupancy %>%</div><div class="l">Occupancy</div></div>
-  <div class="card stat"><div class="n"><%= summary.attendance_rate %>%</div><div class="l">Attendance rate</div></div>
-  <div class="card stat"><div class="n"><%= summary.avg_daily_booked %></div><div class="l">Avg booked / day</div></div>
-  <div class="card stat"><div class="n"><%= summary.casual %></div><div class="l">Casual days</div></div>
-  <div class="card stat"><div class="n"><%= money(summary.fee_total) %></div><div class="l">Fees billed</div></div>
-  <div class="card stat"><div class="n"><%= money(summary.ccs_total) %></div><div class="l">CCS paid</div></div>
-</div>
-
-<% if (pipeline) { %>
-<div class="card pipeline-card">
-  <div class="pc-head">
-    <h2 style="margin:0;">Enrolment pipeline <span class="muted" style="font-weight:400;font-size:13px;">· LineLeader</span></h2>
-    <a class="row-link" href="/centre/<%= centre.owna_id %>/pipeline">Centre pipeline detail →</a>
-  </div>
-  <div class="grid kpis" style="margin:14px 0 0;">
-    <div class="card stat <%= pipeline.waitlist>0?'hot-card':'' %>"><div class="n"><%= pipeline.waitlist %></div><div class="l">On waitlist</div></div>
-    <div class="card stat"><div class="n"><%= pipeline.tour_scheduled %></div><div class="l">Tours scheduled</div></div>
-    <div class="card stat"><div class="n"><%= pipeline.offers_accepted %></div><div class="l">Offers accepted</div></div>
-    <div class="card stat"><div class="n good-text"><%= pipeline.starts_future %></div><div class="l">Expected starts (upcoming)</div></div>
-    <div class="card stat"><div class="n bad-text"><%= pipeline.withdrawn %></div><div class="l">Withdrawn (120d)</div></div>
-  </div>
-</div>
-<% } %>
-
-<% // ===== Centre hub: Action plan · P&C · Q&C ===== %>
-<% if (typeof actionPlan !== 'undefined' && actionPlan) {
-     const areas = (actionPlan.plan && actionPlan.plan.areas) || {}; const auto = actionPlan.auto || {}; %>
-<div class="card" id="actionplan">
-  <div class="pc-head">
-    <h2 style="margin:0;">Action plan <span class="muted" style="font-weight:400;font-size:13px;">· <%= mLabel(apMonth) %><% if(actionPlan.plan&&actionPlan.plan.overall){ %> · overall <%= actionPlan.plan.overall %><% } %></span></h2>
-    <a class="row-link" href="/action-plans?owna=<%= centre.owna_id %>&month=<%= apMonth %>">Open action plan →</a>
-  </div>
-  <div class="ap-rag-grid">
-    <% (actionPlan.areasDef||[]).forEach(function(a){ var av=areas[a.key]||{}; var rating=av.rating||(auto[a.key]&&auto[a.key].rating)||null; var reason=av.reason||(auto[a.key]&&auto[a.key].reason)||''; %>
-      <div class="ap-rag-item" title="<%= reason %>"><span class="rag rag-<%= rating||'none' %>"></span> <%= a.label.split('—')[0].split('/')[0].trim() %></div>
-    <% }); %>
-  </div>
-</div>
-<% } %>
-
-<% if (typeof pcRow !== 'undefined' && pcRow) { %>
-<div class="card" id="pc">
-  <div class="pc-head">
-    <h2 style="margin:0;">People &amp; culture <span class="muted" style="font-weight:400;font-size:13px;">· <%= mLabel(pcMonth) %></span></h2>
-    <a class="row-link" href="/pc?month=<%= pcMonth %>">P&amp;C detail →</a>
-  </div>
-  <div class="grid kpis" style="margin-top:14px;">
-    <div class="card stat"><div class="n <%= pf(pcRow.enps,pcTargets.enps,'high') %>"><%= pv(pcRow.enps) %></div><div class="l">eNPS<% if(pcTargets.enps!=null){ %> · ≥<%= pcTargets.enps %><% } %></div></div>
-    <div class="card stat"><div class="n <%= pf(pcRow.family_nps,pcTargets.family_nps,'high') %>"><%= pv(pcRow.family_nps) %></div><div class="l">Family NPS<% if(pcTargets.family_nps!=null){ %> · ≥<%= pcTargets.family_nps %><% } %></div></div>
-    <div class="card stat"><div class="n <%= pf(pcRow.turnover,pcTargets.turnover,'low') %>"><%= pv(pcRow.turnover,'%') %></div><div class="l">Turnover<% if(pcTargets.turnover!=null){ %> · ≤<%= pcTargets.turnover %>%<% } %></div></div>
-    <div class="card stat"><div class="n <%= pf(pcRow.checkin_pct,pcTargets.checkin_pct,'high') %>"><%= pv(pcRow.checkin_pct,'%') %></div><div class="l">Career check-ins</div></div>
-    <div class="card stat"><div class="n <%= pf(pcRow.psych_safety,pcTargets.psych_safety,'high') %>"><%= pv(pcRow.psych_safety) %></div><div class="l">Psych safety</div></div>
-  </div>
-</div>
-<% } %>
-
-<% if (typeof qc !== 'undefined' && qc) { var openA=(qc.actions||[]).filter(function(a){return !/^y/i.test((a.completed||'').trim());}).length; %>
-<div class="card" id="qc">
-  <div class="pc-head">
-    <h2 style="margin:0;">Quality &amp; compliance <span class="muted" style="font-weight:400;font-size:13px;">· <%= qc.term %></span> <span class="badge <%= qcClass(qc.overall_pct) %>"><%= qc.overall_pct %>% overall</span></h2>
-    <a class="row-link" href="/qc?owna=<%= centre.owna_id %>">Q&amp;C detail →</a>
-  </div>
-  <div class="qa-grid" style="margin-top:12px;">
-    <% (qc.qa||[]).forEach(function(q){ %>
-      <div class="qa-cell">
-        <div class="qa-code"><%= q.code %></div>
-        <div class="qa-bar-wrap"><div class="qa-bar <%= qcClass(q.pct) %>" style="width:<%= Math.min(q.pct||0,100) %>%;"></div></div>
-        <div class="qa-pct <%= qcClass(q.pct) %>-text"><%= q.pct %>%</div>
-      </div>
-    <% }); %>
-  </div>
-  <p class="sub" style="margin:12px 0 0;"><strong class="bad-text"><%= openA %></strong> open action item<%= openA===1?'':'s' %> of <%= (qc.actions||[]).length %></p>
-</div>
-<% } %>
-
-<% if (typeof labour !== 'undefined' && labour) { %>
-<div class="card" id="wages">
-  <h2 style="margin-top:0;">Wages &amp; margin <span class="muted" style="font-weight:400;font-size:13px;">· week ending <%= labour.week %> · Employment Hero</span></h2>
-  <div class="grid kpis" style="margin-top:14px;">
-    <div class="card stat"><div class="n"><%= money(labour.revenue) %></div><div class="l">Revenue (week)</div></div>
-    <div class="card stat"><div class="n"><%= money(labour.care_wages) %></div><div class="l">Care wages</div></div>
-    <div class="card stat <%= (labour.wage_pct!=null && labour.wage_pct>65)?'hot-card':'' %>"><div class="n"><%= labour.wage_pct!=null?labour.wage_pct+'%':'—' %></div><div class="l">Care wages % of revenue</div></div>
-    <div class="card stat"><div class="n"><%= money(labour.support_amt) %></div><div class="l">Kitchen / cleaning</div></div>
-    <div class="card stat"><div class="n <%= labour.marginAfterWages>=0?'good':'bad' %>-text"><%= money(labour.marginAfterWages) %></div><div class="l">After all wages</div></div>
-    <div class="card stat"><div class="n"><%= labour.margin_pct!=null?labour.margin_pct+'%':'—' %></div><div class="l">Margin after wages</div></div>
-  </div>
-  <% if (labourTrend && labourTrend.length>1) { var wpMax=Math.max(70,...labourTrend.filter(t=>t.wage_pct!=null).map(t=>t.wage_pct)); %>
-  <h3 class="card-sub">Care wages % of revenue <span class="muted" style="font-weight:400;font-size:12px;">· weekly</span></h3>
-  <div class="chart" style="height:140px;">
-    <% labourTrend.forEach(function(t){ var wp=t.wage_pct; %>
-      <div class="chart-col" title="<%= t.week %>: <%= wp!=null?wp+'% wages of revenue':'n/a' %> · revenue <%= money(t.revenue) %>">
-        <div class="chart-bar <%= wp==null?'':(wp>65?'bad':wp>55?'warn':'good') %>" style="height:<%= wp!=null?Math.round(wp/wpMax*100):0 %>%;"></div>
-        <div class="chart-x"><%= t.week.slice(5) %><br><span><%= wp!=null?wp+'%':'—' %></span></div>
-      </div>
-    <% }); %>
-  </div>
-  <% } %>
-  <p class="footnote">Care wages = educators + leave; kitchen/cleaning shown separately. “After all wages” = revenue − all wages (before rent, food &amp; other costs). Care-wage target ≤ 55–65% of revenue.</p>
-</div>
-<% } %>
-
-<% if (typeof insights !== 'undefined' && insights && (insights.tips.length || insights.calc.length || insights.dow.some(function(d){return d.occupancy!=null;}))) {
-     const dmax = Math.max(100, ...insights.dow.filter(function(d){return d.occupancy!=null;}).map(function(d){return d.occupancy;})); %>
-<div class="card">
-  <h2 style="margin-top:0;">Grow occupancy <span class="muted" style="font-weight:400;font-size:13px;">· suggestions from the last 8 weeks</span></h2>
-
-  <% if (insights.tips.length) { %>
-    <ul class="tips">
-      <% insights.tips.forEach(function(t){ %><li><%= t %></li><% }); %>
-    </ul>
-  <% } %>
-
-  <% if (insights.dow.some(function(d){return d.occupancy!=null;})) { %>
-  <h3 class="card-sub">Occupancy by weekday</h3>
-  <div class="chart" style="height:140px;">
-    <% insights.dow.forEach(function(d){ %>
-      <div class="chart-col" title="<%= d.dow %>: <%= d.occupancy!=null?d.occupancy+'% ('+d.avg_booked+' booked/day)':'no data' %>">
-        <div class="chart-bar <%= d.occupancy==null?'':occClass(d.occupancy) %>" style="height:<%= d.occupancy!=null?Math.round(d.occupancy/dmax*100):0 %>%;"></div>
-        <div class="chart-x"><strong><%= d.dow %></strong><br><span><%= d.occupancy!=null?d.occupancy+'%':'—' %></span></div>
-      </div>
-    <% }); %>
+  <% if (pipeline) { %>
+  <div class="card pipeline-card">
+    <div class="pc-head">
+      <h2 style="margin:0;">Enrolment pipeline <span class="muted" style="font-weight:400;font-size:13px;">· LineLeader</span></h2>
+      <a class="row-link" href="/centre/<%= centre.owna_id %>/pipeline">Centre pipeline detail →</a>
+    </div>
+    <div class="grid kpis" style="margin:14px 0 0;">
+      <div class="card stat <%= pipeline.waitlist>0?'hot-card':'' %>"><div class="n"><%= pipeline.waitlist %></div><div class="l">On waitlist</div></div>
+      <div class="card stat"><div class="n"><%= pipeline.tour_scheduled %></div><div class="l">Tours scheduled</div></div>
+      <div class="card stat"><div class="n"><%= pipeline.offers_accepted %></div><div class="l">Offers accepted</div></div>
+      <div class="card stat"><div class="n good-text"><%= pipeline.starts_future %></div><div class="l">Expected starts (upcoming)</div></div>
+      <div class="card stat"><div class="n bad-text"><%= pipeline.withdrawn %></div><div class="l">Withdrawn (120d)</div></div>
+    </div>
   </div>
   <% } %>
 
-  <% if (insights.calc.length) { %>
-  <h3 class="card-sub">What it takes to grow</h3>
-  <p class="sub" style="margin:0 0 10px;">Current occupancy <strong><%= insights.occupancyNow %>%</strong> across <%= insights.capacity %> places. New permanent enrolments needed to lift it:</p>
-  <div style="overflow-x:auto;"><table>
-    <thead><tr><th>Lift occupancy by</th><th class="num">2-day places</th><th class="num">3-day</th><th class="num">4-day</th><th class="num">5-day</th></tr></thead>
-    <tbody>
-      <% insights.calc.forEach(function(row){ %>
-      <tr>
-        <td><strong>+<%= row.delta %>pp</strong> <span class="muted">→ <%= row.target_occ %>%</span><% if(!row.reachable){ %> <span class="muted" style="font-size:11px;">(caps at 100%)</span><% } %></td>
-        <% row.perPattern.forEach(function(p){ %><td class="num"><%= p.count %></td><% }); %>
-      </tr>
-      <% }); %>
-    </tbody>
-  </table></div>
-  <p class="footnote">Read across a row: e.g. to lift occupancy +<%= insights.calc[0].delta %>pp you need about <strong><%= insights.calc[0].perPattern[0].count %></strong> new 2-day children — or <strong><%= insights.calc[0].perPattern[3].count %></strong> new 5-day children. Any mix of days works; each 5-day place moves the needle fastest. Based on <%= insights.capacity %> licensed places over a 5-day week.</p>
-  <% } %>
-</div>
-<% } %>
-
-<% if (occTrend && occTrend.length > 1) {
-     const mMax = Math.max(100, ...occTrend.map(t => t.occupancy));
-     const mth = (m) => { const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
-%>
-<div class="card">
-  <h2 style="margin-top:0;">Occupancy over time <span class="muted" style="font-weight:400;font-size:13px;">· monthly, last <%= occTrend.length %> months</span></h2>
-  <div class="chart" style="height:170px;">
-    <% occTrend.forEach(function(t){ %>
-      <div class="chart-col" title="<%= mth(t.month) %>: <%= t.occupancy %>% occupancy, <%= t.attendance_rate %>% attendance">
-        <div class="chart-bar <%= occClass(t.occupancy) %>" style="height:<%= Math.round(t.occupancy / mMax * 100) %>%;"></div>
-        <div class="chart-x"><%= mth(t.month) %><br><span><%= t.occupancy %>%</span></div>
-      </div>
-    <% }); %>
-  </div>
-  <p class="footnote">Occupancy = booked child-days ÷ (places × operating days) each month. History is backfilled from OWNA.</p>
-</div>
-<% } %>
-
-<div class="card">
-  <h2 style="margin-top:0;">Daily detail</h2>
-  <table>
-    <thead>
-      <tr><th>Date</th><th class="num">Booked</th><th style="width:150px;">Occupancy</th><th class="num">Attended</th><th class="num">Absent</th><th class="num">Attend.%</th><th class="num">Casual</th><th class="num">Fees</th></tr>
-    </thead>
-    <tbody>
-      <% daily.forEach(function(d){ var fut = d.metric_date > today; %>
-        <tr class="<%= fut ? 'future-row' : '' %>">
-          <td><%= dow(d.metric_date) %> <%= d.metric_date %><%= fut ? ' ·' : '' %><% if(fut){ %><span class="tag-fut">scheduled</span><% } %></td>
-          <td class="num"><%= d.booked %></td>
-          <td><div class="bar-wrap"><div class="bar <%= occClass(d.occupancy) %>" style="width:<%= Math.min(d.occupancy,100) %>%;"></div><span class="bar-val"><%= d.occupancy %>%</span></div></td>
-          <td class="num"><%= fut ? '—' : d.attended %></td>
-          <td class="num"><%= fut ? '—' : d.absent %></td>
-          <td class="num"><%= fut ? '—' : d.attendance_rate + '%' %></td>
-          <td class="num"><%= d.casual %></td>
-          <td class="num"><%= money(d.fee_total) %></td>
-        </tr>
-      <% }); %>
-    </tbody>
-    <tfoot>
-      <tr class="total-row">
-        <td>Total (<%= summary.days %> days)</td>
-        <td class="num"><%= summary.booked %></td>
-        <td><div class="bar-wrap"><div class="bar <%= occClass(summary.occupancy) %>" style="width:<%= Math.min(summary.occupancy,100) %>%;"></div><span class="bar-val"><%= summary.occupancy %>%</span></div></td>
-        <td class="num"><%= summary.attended %></td>
-        <td class="num"><%= summary.absent %></td>
-        <td class="num"><%= summary.attendance_rate %>%</td>
-        <td class="num"><%= summary.casual %></td>
-        <td class="num"><%= money(summary.fee_total) %></td>
-      </tr>
-    </tfoot>
-  </table>
-</div>
-
-<p class="footnote">Fees billed = gross session fees before CCS. CCS paid = subsidy payments clearing in the range (posted weekly).</p>
-
-<div class="card" id="exits">
-  <div class="pc-head">
-    <h2 style="margin:0;">Exit report <span class="muted" style="font-weight:400;font-size:13px;">· last 12 months</span></h2>
-    <a class="row-link" href="/exits">All centres →</a>
-  </div>
-  <% var upN = (exitsUpcoming||[]).length; var pastN = (exits||[]).length; %>
-  <p class="sub" style="margin:8px 0 14px;"><strong><%= pastN %></strong> departures · <strong><%= upN %></strong> scheduled to leave · reasons where recorded from LineLeader</p>
-
-  <% if (exitReasons.total) { %>
-    <div style="margin-bottom:18px;">
-      <% exitReasons.rows.forEach(function(r){ var wpct = exitReasons.total ? Math.round(r.n/exitReasons.total*100) : 0; var cls = r.reason==='Another Centre'||r.reason==='Staff/Teacher Issue'?'bad':(r.reason==='Aged Out-Too Old'?'muted-reason':'navy'); %>
-        <div class="reason-row">
-          <div class="reason-label <%= cls %>"><%= r.reason %></div>
-          <div class="reason-bar-wrap"><div class="reason-bar <%= cls %>" style="width:<%= wpct %>%;"></div></div>
-          <div class="reason-n"><%= r.n %></div>
+  <% if (occTrend && occTrend.length > 1) {
+       const mMax = Math.max(100, ...occTrend.map(t => t.occupancy));
+       const mth = (m) => { const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
+  %>
+  <div class="card">
+    <h2 style="margin-top:0;">Occupancy over time <span class="muted" style="font-weight:400;font-size:13px;">· monthly, last <%= occTrend.length %> months</span></h2>
+    <div class="chart" style="height:170px;">
+      <% occTrend.forEach(function(t){ %>
+        <div class="chart-col" title="<%= mth(t.month) %>: <%= t.occupancy %>% occupancy, <%= t.attendance_rate %>% attendance">
+          <div class="chart-bar <%= occClass(t.occupancy) %>" style="height:<%= Math.round(t.occupancy / mMax * 100) %>%;"></div>
+          <div class="chart-x"><%= mth(t.month) %><br><span><%= t.occupancy %>%</span></div>
         </div>
       <% }); %>
     </div>
+    <p class="footnote">Occupancy = booked child-days ÷ (places × operating days) each month. History is backfilled from OWNA.</p>
+  </div>
   <% } %>
 
-  <% if (pastN) { %>
-    <div style="overflow-x:auto;">
-    <table data-paginate="8">
-      <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Left</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+  <div class="card">
+    <h2 style="margin-top:0;">Daily detail <span class="muted" style="font-weight:400;font-size:13px;">· <%= from %> → <%= to %></span></h2>
+    <table>
+      <thead>
+        <tr><th>Date</th><th class="num">Booked</th><th style="width:150px;">Occupancy</th><th class="num">Attended</th><th class="num">Absent</th><th class="num">Attend.%</th><th class="num">Casual</th><th class="num">Fees</th></tr>
+      </thead>
       <tbody>
-        <% exits.forEach(function(e){ %>
-          <tr>
-            <td><%= e.child_name %></td>
-            <td><%= e.room || '—' %></td>
-            <td><%= e.start_date || '—' %></td>
-            <td><%= e.finish_date %></td>
-            <td class="num"><%= (e.tenure_days && e.tenure_days > 0) ? (Math.round(e.tenure_days/30.4)) + ' mo' : '—' %></td>
-            <td><% if (!e.reason) { %><span class="muted">Not recorded</span><% } else if (e.reason==='Unknown') { %><span class="muted">Unknown</span><% } else { %><span class="reason-tag <%= e.reason==='Another Centre'||e.reason==='Staff/Teacher Issue'?'bad':'' %>"><%= e.reason %></span><% } %></td>
+        <% daily.forEach(function(d){ var fut = d.metric_date > today; %>
+          <tr class="<%= fut ? 'future-row' : '' %>">
+            <td><%= dow(d.metric_date) %> <%= d.metric_date %><%= fut ? ' ·' : '' %><% if(fut){ %><span class="tag-fut">scheduled</span><% } %></td>
+            <td class="num"><%= d.booked %></td>
+            <td><div class="bar-wrap"><div class="bar <%= occClass(d.occupancy) %>" style="width:<%= Math.min(d.occupancy,100) %>%;"></div><span class="bar-val"><%= d.occupancy %>%</span></div></td>
+            <td class="num"><%= fut ? '—' : d.attended %></td>
+            <td class="num"><%= fut ? '—' : d.absent %></td>
+            <td class="num"><%= fut ? '—' : d.attendance_rate + '%' %></td>
+            <td class="num"><%= d.casual %></td>
+            <td class="num"><%= money(d.fee_total) %></td>
           </tr>
         <% }); %>
       </tbody>
+      <tfoot>
+        <tr class="total-row">
+          <td>Total (<%= summary.days %> days)</td>
+          <td class="num"><%= summary.booked %></td>
+          <td><div class="bar-wrap"><div class="bar <%= occClass(summary.occupancy) %>" style="width:<%= Math.min(summary.occupancy,100) %>%;"></div><span class="bar-val"><%= summary.occupancy %>%</span></div></td>
+          <td class="num"><%= summary.attended %></td>
+          <td class="num"><%= summary.absent %></td>
+          <td class="num"><%= summary.attendance_rate %>%</td>
+          <td class="num"><%= summary.casual %></td>
+          <td class="num"><%= money(summary.fee_total) %></td>
+        </tr>
+      </tfoot>
     </table>
+    <p class="footnote">Fees billed = gross session fees before CCS. CCS paid = subsidy payments clearing in the range (posted weekly).</p>
+  </div>
+</section>
+
+<!-- ===================== GROWTH ===================== -->
+<section class="tab-panel" data-panel="growth">
+  <% if (typeof insights !== 'undefined' && insights && (insights.tips.length || insights.calc.length || insights.dow.some(function(d){return d.occupancy!=null;}))) {
+       const dmax = Math.max(100, ...insights.dow.filter(function(d){return d.occupancy!=null;}).map(function(d){return d.occupancy;})); %>
+  <div class="card">
+    <h2 style="margin-top:0;">Grow occupancy <span class="muted" style="font-weight:400;font-size:13px;">· suggestions from the last 8 weeks</span></h2>
+    <% if (insights.tips.length) { %>
+      <ul class="tips"><% insights.tips.forEach(function(t){ %><li><%= t %></li><% }); %></ul>
+    <% } %>
+    <% if (insights.dow.some(function(d){return d.occupancy!=null;})) { %>
+    <h3 class="card-sub">Occupancy by weekday</h3>
+    <div class="chart" style="height:140px;">
+      <% insights.dow.forEach(function(d){ %>
+        <div class="chart-col" title="<%= d.dow %>: <%= d.occupancy!=null?d.occupancy+'% ('+d.avg_booked+' booked/day)':'no data' %>">
+          <div class="chart-bar <%= d.occupancy==null?'':occClass(d.occupancy) %>" style="height:<%= d.occupancy!=null?Math.round(d.occupancy/dmax*100):0 %>%;"></div>
+          <div class="chart-x"><strong><%= d.dow %></strong><br><span><%= d.occupancy!=null?d.occupancy+'%':'—' %></span></div>
+        </div>
+      <% }); %>
     </div>
+    <% } %>
+    <% if (insights.calc.length) { %>
+    <h3 class="card-sub">What it takes to grow</h3>
+    <p class="sub" style="margin:0 0 10px;">Current occupancy <strong><%= insights.occupancyNow %>%</strong> across <%= insights.capacity %> places. New permanent enrolments needed to lift it:</p>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Lift occupancy by</th><th class="num">2-day places</th><th class="num">3-day</th><th class="num">4-day</th><th class="num">5-day</th></tr></thead>
+      <tbody>
+        <% insights.calc.forEach(function(row){ %>
+        <tr>
+          <td><strong>+<%= row.delta %>pp</strong> <span class="muted">→ <%= row.target_occ %>%</span><% if(!row.reachable){ %> <span class="muted" style="font-size:11px;">(caps at 100%)</span><% } %></td>
+          <% row.perPattern.forEach(function(p){ %><td class="num"><%= p.count %></td><% }); %>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <p class="footnote">Read across a row: e.g. to lift occupancy +<%= insights.calc[0].delta %>pp you need about <strong><%= insights.calc[0].perPattern[0].count %></strong> new 2-day children — or <strong><%= insights.calc[0].perPattern[3].count %></strong> new 5-day children. Any mix of days works; each 5-day place moves the needle fastest.</p>
+    <% } %>
+  </div>
   <% } else { %>
-    <p class="muted">No departures recorded in the last 12 months.</p>
+  <div class="card"><p class="muted" style="margin:0;">Not enough recent booking data to generate growth suggestions yet.</p></div>
   <% } %>
+</section>
 
-  <% if (upN) { %>
-    <h2>Scheduled to leave</h2>
-    <div style="overflow-x:auto;">
-    <table data-paginate="8">
-      <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Leaving</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+<!-- ===================== WAGES ===================== -->
+<section class="tab-panel" data-panel="wages">
+  <% if (hasLabour) { %>
+  <div class="card">
+    <h2 style="margin-top:0;">Wages &amp; margin <span class="muted" style="font-weight:400;font-size:13px;">· week ending <%= labour.week %> · Employment Hero</span></h2>
+    <div class="grid kpis" style="margin-top:14px;">
+      <div class="card stat"><div class="n"><%= money(labour.revenue) %></div><div class="l">Revenue (week)</div></div>
+      <div class="card stat"><div class="n"><%= money(labour.care_wages) %></div><div class="l">Care wages</div></div>
+      <div class="card stat <%= (labour.wage_pct!=null && labour.wage_pct>65)?'hot-card':'' %>"><div class="n"><%= labour.wage_pct!=null?labour.wage_pct+'%':'—' %></div><div class="l">Care wages % of revenue</div></div>
+      <div class="card stat"><div class="n"><%= money(labour.support_amt) %></div><div class="l">Kitchen / cleaning</div></div>
+      <div class="card stat"><div class="n <%= labour.marginAfterWages>=0?'good':'bad' %>-text"><%= money(labour.marginAfterWages) %></div><div class="l">After all wages</div></div>
+      <div class="card stat"><div class="n"><%= labour.margin_pct!=null?labour.margin_pct+'%':'—' %></div><div class="l">Margin after wages</div></div>
+    </div>
+    <% if (labourTrend && labourTrend.length>1) { var wpMax=Math.max(70,...labourTrend.filter(t=>t.wage_pct!=null).map(t=>t.wage_pct)); %>
+    <h3 class="card-sub">Care wages % of revenue <span class="muted" style="font-weight:400;font-size:12px;">· weekly</span></h3>
+    <div class="chart" style="height:140px;">
+      <% labourTrend.forEach(function(t){ var wp=t.wage_pct; %>
+        <div class="chart-col" title="<%= t.week %>: <%= wp!=null?wp+'% wages of revenue':'n/a' %> · revenue <%= money(t.revenue) %>">
+          <div class="chart-bar <%= wp==null?'':(wp>65?'bad':wp>55?'warn':'good') %>" style="height:<%= wp!=null?Math.round(wp/wpMax*100):0 %>%;"></div>
+          <div class="chart-x"><%= t.week.slice(5) %><br><span><%= wp!=null?wp+'%':'—' %></span></div>
+        </div>
+      <% }); %>
+    </div>
+    <% } %>
+    <p class="footnote">Care wages = educators + leave; kitchen/cleaning shown separately. “After all wages” = revenue − all wages (before rent, food &amp; other costs). Care-wage target ≤ 55–65% of revenue.</p>
+  </div>
+  <% } else { %>
+  <div class="card"><p class="muted" style="margin:0;">No payroll data for this centre in the latest pay week.</p></div>
+  <% } %>
+</section>
+
+<!-- ===================== ACTION PLAN ===================== -->
+<section class="tab-panel" data-panel="actionplan">
+  <% if (typeof actionPlan !== 'undefined' && actionPlan) {
+       const areas = (actionPlan.plan && actionPlan.plan.areas) || {}; const auto = actionPlan.auto || {}; %>
+  <div class="card">
+    <div class="pc-head">
+      <h2 style="margin:0;">Action plan <span class="muted" style="font-weight:400;font-size:13px;">· <%= mLabel(apMonth) %><% if(actionPlan.plan&&actionPlan.plan.overall){ %> · overall <%= actionPlan.plan.overall %><% } %></span></h2>
+      <a class="row-link" href="/action-plans?owna=<%= centre.owna_id %>&month=<%= apMonth %>">Open full action plan →</a>
+    </div>
+    <table style="margin-top:10px;">
+      <thead><tr><th>Area</th><th style="width:80px;">Rating</th><th>Reasoning</th></tr></thead>
       <tbody>
-        <% exitsUpcoming.forEach(function(e){ %>
-          <tr class="future-row">
-            <td><%= e.child_name %></td>
-            <td><%= e.room || '—' %></td>
-            <td><%= e.start_date || '—' %></td>
-            <td><%= e.finish_date %> <span class="tag-fut">scheduled</span></td>
-            <td class="num"><%= (e.tenure_days && e.tenure_days > 0) ? (Math.round(e.tenure_days/30.4)) + ' mo' : '—' %></td>
-            <td><% if (!e.reason || e.reason==='Unknown') { %><span class="muted"><%= e.reason || 'Not recorded' %></span><% } else { %><span class="reason-tag"><%= e.reason %></span><% } %></td>
+        <% (actionPlan.areasDef||[]).forEach(function(a){ var av=areas[a.key]||{}; var rating=av.rating||(auto[a.key]&&auto[a.key].rating)||null; var reason=av.reason||(auto[a.key]&&auto[a.key].reason)||''; %>
+          <tr>
+            <td><strong style="font-size:11px;color:var(--muted);"><%= a.group %></strong><br><%= a.label %></td>
+            <td><span class="rag rag-<%= rating||'none' %>"></span> <span style="text-transform:capitalize;font-size:13px;"><%= rating||'—' %></span></td>
+            <td style="white-space:normal;"><%= reason||'—' %></td>
           </tr>
         <% }); %>
       </tbody>
     </table>
-    </div>
+    <% if (!actionPlan.plan) { %><p class="footnote">No plan saved for <%= mLabel(apMonth) %> yet — ratings shown are auto-suggested from live data. <a href="/action-plans?owna=<%= centre.owna_id %>&month=<%= apMonth %>">Open the action plan</a> to confirm.</p><% } %>
+  </div>
+  <% } else { %>
+  <div class="card"><p class="muted" style="margin:0;">No action plan available.</p></div>
   <% } %>
-</div>
+</section>
+
+<!-- ===================== P&C ===================== -->
+<section class="tab-panel" data-panel="pc">
+  <div class="card">
+    <div class="pc-head">
+      <h2 style="margin:0;">People &amp; culture <% if(hasPc){ %><span class="muted" style="font-weight:400;font-size:13px;">· <%= mLabel(pcMonth) %></span><% } %></h2>
+      <a class="row-link" href="/pc<%= pcMonth ? '?month='+pcMonth : '' %>">P&amp;C detail →</a>
+    </div>
+    <% if (hasPc) { %>
+    <div class="grid kpis" style="margin-top:14px;">
+      <div class="card stat"><div class="n <%= pf(pcRow.enps,pcTargets.enps,'high') %>"><%= pv(pcRow.enps) %></div><div class="l">eNPS<% if(pcTargets.enps!=null){ %> · ≥<%= pcTargets.enps %><% } %></div></div>
+      <div class="card stat"><div class="n <%= pf(pcRow.family_nps,pcTargets.family_nps,'high') %>"><%= pv(pcRow.family_nps) %></div><div class="l">Family NPS<% if(pcTargets.family_nps!=null){ %> · ≥<%= pcTargets.family_nps %><% } %></div></div>
+      <div class="card stat"><div class="n <%= pf(pcRow.turnover,pcTargets.turnover,'low') %>"><%= pv(pcRow.turnover,'%') %></div><div class="l">Turnover<% if(pcTargets.turnover!=null){ %> · ≤<%= pcTargets.turnover %>%<% } %></div></div>
+      <div class="card stat"><div class="n <%= pf(pcRow.checkin_pct,pcTargets.checkin_pct,'high') %>"><%= pv(pcRow.checkin_pct,'%') %></div><div class="l">Career check-ins</div></div>
+      <div class="card stat"><div class="n <%= pf(pcRow.psych_safety,pcTargets.psych_safety,'high') %>"><%= pv(pcRow.psych_safety) %></div><div class="l">Psych safety</div></div>
+    </div>
+    <% } else { %>
+    <p class="muted" style="margin:8px 0 0;">No People &amp; Culture data entered for this centre yet<% if(pcMonth){ %> (latest month: <%= mLabel(pcMonth) %>)<% } %>. <% if (user.role==='admin'){ %>Add it in <a href="/admin/pc">P&amp;C Data</a>.<% } %></p>
+    <% } %>
+  </div>
+</section>
+
+<!-- ===================== Q&C ===================== -->
+<section class="tab-panel" data-panel="qc">
+  <div class="card">
+    <div class="pc-head">
+      <h2 style="margin:0;">Quality &amp; compliance <% if(hasQc){ %><span class="muted" style="font-weight:400;font-size:13px;">· <%= qc.term %></span> <span class="badge <%= qcClass(qc.overall_pct) %>"><%= qc.overall_pct %>% overall</span><% } %></h2>
+      <a class="row-link" href="/qc?owna=<%= centre.owna_id %>">Q&amp;C detail →</a>
+    </div>
+    <% if (hasQc) { var openA=(qc.actions||[]).filter(function(a){return !/^y/i.test((a.completed||'').trim());}).length; %>
+    <div class="qa-grid" style="margin-top:12px;">
+      <% (qc.qa||[]).forEach(function(q){ %>
+        <div class="qa-cell">
+          <div class="qa-code"><%= q.code %></div>
+          <div class="qa-bar-wrap"><div class="qa-bar <%= qcClass(q.pct) %>" style="width:<%= Math.min(q.pct||0,100) %>%;"></div></div>
+          <div class="qa-pct <%= qcClass(q.pct) %>-text"><%= q.pct %>%</div>
+          <div class="qa-name muted"><%= q.name %></div>
+        </div>
+      <% }); %>
+    </div>
+    <p class="sub" style="margin:12px 0 0;"><strong class="bad-text"><%= openA %></strong> open action item<%= openA===1?'':'s' %> of <%= (qc.actions||[]).length %> · <a href="/qc?owna=<%= centre.owna_id %>">view all →</a></p>
+    <% } else { %>
+    <p class="muted" style="margin:8px 0 0;">No compliance audit uploaded for this centre yet. <% if (user.role==='admin'){ %>Add one in <a href="/admin/qc">Q&amp;C Data</a>.<% } else { %>It will appear here once an audit is uploaded.<% } %></p>
+    <% } %>
+  </div>
+</section>
+
+<!-- ===================== EXITS ===================== -->
+<section class="tab-panel" data-panel="exits">
+  <div class="card">
+    <div class="pc-head">
+      <h2 style="margin:0;">Exit report <span class="muted" style="font-weight:400;font-size:13px;">· last 12 months</span></h2>
+      <a class="row-link" href="/exits">All centres →</a>
+    </div>
+    <% var upN = (exitsUpcoming||[]).length; var pastN = (exits||[]).length; %>
+    <p class="sub" style="margin:8px 0 14px;"><strong><%= pastN %></strong> departures · <strong><%= upN %></strong> scheduled to leave · reasons where recorded from LineLeader</p>
+
+    <% if (exitReasons.total) { %>
+      <div style="margin-bottom:18px;">
+        <% exitReasons.rows.forEach(function(r){ var wpct = exitReasons.total ? Math.round(r.n/exitReasons.total*100) : 0; var cls = r.reason==='Another Centre'||r.reason==='Staff/Teacher Issue'?'bad':(r.reason==='Aged Out-Too Old'?'muted-reason':'navy'); %>
+          <div class="reason-row">
+            <div class="reason-label <%= cls %>"><%= r.reason %></div>
+            <div class="reason-bar-wrap"><div class="reason-bar <%= cls %>" style="width:<%= wpct %>%;"></div></div>
+            <div class="reason-n"><%= r.n %></div>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
+
+    <% if (pastN) { %>
+      <div style="overflow-x:auto;">
+      <table data-paginate="8">
+        <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Left</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+        <tbody>
+          <% exits.forEach(function(e){ %>
+            <tr>
+              <td><%= e.child_name %></td>
+              <td><%= e.room || '—' %></td>
+              <td><%= e.start_date || '—' %></td>
+              <td><%= e.finish_date %></td>
+              <td class="num"><%= (e.tenure_days && e.tenure_days > 0) ? (Math.round(e.tenure_days/30.4)) + ' mo' : '—' %></td>
+              <td><% if (!e.reason) { %><span class="muted">Not recorded</span><% } else if (e.reason==='Unknown') { %><span class="muted">Unknown</span><% } else { %><span class="reason-tag <%= e.reason==='Another Centre'||e.reason==='Staff/Teacher Issue'?'bad':'' %>"><%= e.reason %></span><% } %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+      </div>
+    <% } else { %>
+      <p class="muted">No departures recorded in the last 12 months.</p>
+    <% } %>
+
+    <% if (upN) { %>
+      <h2 style="margin-top:22px;">Scheduled to leave</h2>
+      <div style="overflow-x:auto;">
+      <table data-paginate="8">
+        <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Leaving</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+        <tbody>
+          <% exitsUpcoming.forEach(function(e){ %>
+            <tr class="future-row">
+              <td><%= e.child_name %></td>
+              <td><%= e.room || '—' %></td>
+              <td><%= e.start_date || '—' %></td>
+              <td><%= e.finish_date %> <span class="tag-fut">scheduled</span></td>
+              <td class="num"><%= (e.tenure_days && e.tenure_days > 0) ? (Math.round(e.tenure_days/30.4)) + ' mo' : '—' %></td>
+              <td><% if (!e.reason || e.reason==='Unknown') { %><span class="muted"><%= e.reason || 'Not recorded' %></span><% } else { %><span class="reason-tag"><%= e.reason %></span><% } %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+      </div>
+    <% } %>
+  </div>
+</section>
 
 <script>
-// Lightweight client-side pagination for long tables (data-paginate="N").
+// Tabs: show one panel at a time; support #hash deep links (e.g. /centre/x#qc).
+(function(){
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.tab-panel'));
+  function show(name){
+    if(!document.querySelector('.tab[data-tab="'+name+'"]')) return;
+    tabs.forEach(function(t){ t.classList.toggle('is-active', t.dataset.tab===name); });
+    panels.forEach(function(p){ p.classList.toggle('is-active', p.dataset.panel===name); });
+  }
+  tabs.forEach(function(t){ t.addEventListener('click', function(){ show(t.dataset.tab); history.replaceState(null,'','#'+t.dataset.tab); }); });
+  var initial = (location.hash||'').replace('#','');
+  if (initial) show(initial);
+})();
+// Client-side pagination for long tables (data-paginate="N").
 document.querySelectorAll('table[data-paginate]').forEach(function(t){
   var per = parseInt(t.getAttribute('data-paginate')) || 10;
   var tb = t.tBodies[0]; if(!tb) return;

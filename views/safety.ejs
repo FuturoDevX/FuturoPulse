@@ -5,18 +5,27 @@
   const dot = (r) => '<span class="rag rag-'+(r||'none')+'"></span>';
   const h = rep.headline || {};
   const isPartial = (m) => m === rep.currentMonth;
+  const monthLabelSel = (mm) => mm === rep.currentMonth ? (mLabel(mm) + ' (so far)') : mLabel(mm);
 %>
 <div class="page-head">
   <div>
     <h1>Safety &amp; Incidents</h1>
-    <p class="sub">OWNA child incident reports · rolling 12 months · headline figures = last complete month (<%= mLabel(rep.lastComplete) %>)</p>
+    <p class="sub">OWNA child incident reports · figures below are for <strong><%= monthLabelSel(rep.selectedMonth) %></strong><% if (isPartial(rep.selectedMonth)) { %> — this month is still in progress<% } %></p>
   </div>
+  <% if (rep.months.length) { %>
+  <div class="head-actions">
+    <form method="GET" style="display:inline;"><select name="month" onchange="this.form.submit()">
+      <% rep.months.slice().reverse().forEach(function(mm){ %><option value="<%= mm %>" <%= mm===rep.selectedMonth?'selected':'' %>><%= monthLabelSel(mm) %></option><% }); %>
+    </select></form>
+  </div>
+  <% } %>
 </div>
 
 <% if (!rep.months.length) { %>
   <div class="card"><p class="muted" style="margin:0;">No incident data has been captured yet. It populates on the nightly sync from OWNA.</p></div>
 <% } else { %>
 
+<h2 class="section-label"><%= monthLabelSel(rep.selectedMonth) %></h2>
 <div class="grid kpis">
   <div class="card stat"><div class="n"><%= h.total %></div><div class="l">Incident reports</div></div>
   <div class="card stat"><div class="n"><%= h.injuries %></div><div class="l">Injuries</div></div>
@@ -26,7 +35,7 @@
 </div>
 
 <div class="card">
-  <h2 style="margin-top:0;">By centre — <%= mLabel(rep.lastComplete) %></h2>
+  <h2 style="margin-top:0;">By centre — <%= monthLabelSel(rep.selectedMonth) %></h2>
   <div style="overflow-x:auto;"><table>
     <thead><tr>
       <th>Centre</th><th style="width:150px;">Serious (Reg 12)</th>

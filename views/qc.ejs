@@ -19,8 +19,8 @@
   <% if (user.role==='admin') { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/qc">Upload audit</a><% } %>
 </div></div>
 
-<% if (!audit) { %>
-  <div class="card"><p class="muted" style="margin:0;">No audit uploaded yet. <% if (user.role==='admin'){ %>Go to <a href="/admin/qc">Upload audit</a>.<% } %></p></div>
+<% if (!audit) { var sel = (centres.find(function(c){return c.owna_id===owna;})||{}); %>
+  <div class="card"><p class="muted" style="margin:0;">No compliance audit uploaded for <strong><%= shortName(sel.name)||'this centre' %></strong> yet. <% if (user.role==='admin'){ %>Add one in <a href="/admin/qc">Q&amp;C Data</a>.<% } else { %>It will appear here once an audit is uploaded.<% } %></p></div>
 <% } else { %>
 
 <div class="card">

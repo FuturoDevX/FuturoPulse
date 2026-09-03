@@ -3,7 +3,7 @@
    const g = (id,f) => { const r=data[id]; return (r && r[f]!=null) ? r[f] : ''; }; %>
 <div class="page-head"><div>
   <p class="crumb"><a href="/pc?month=<%= month %>">← People &amp; Culture</a></p>
-  <h1>Enter P&amp;C data</h1><p class="sub">Per centre, for the selected month.</p>
+  <h1>P&amp;C Data</h1><p class="sub">Enter People &amp; Culture metrics per centre, for the selected month.</p>
 </div></div>
 <% if (msg) { %><div class="flash"><%= msg %></div><% } %>
 <form method="POST" action="/admin/pc">

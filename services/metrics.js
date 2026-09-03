@@ -557,12 +557,14 @@ function incidentsMonth(ownaId, month, preferComplete) {
 }
 
 // Rolling incident report: per-centre month-by-month grid + last-complete-month headline.
-function incidentsReport(scopedOwnaId, monthsBack = 12) {
+function incidentsReport(scopedOwnaId, monthsBack = 12, headlineMonth = null) {
   let months = db.prepare("SELECT DISTINCT month FROM incidents_monthly ORDER BY month DESC LIMIT ?").all(monthsBack).map((r) => r.month);
   months.reverse(); // chronological (oldest → newest)
-  if (!months.length) return { months: [], rows: [], totals: [], lastComplete: null, currentMonth: new Date().toISOString().slice(0, 7), headline: null };
   const nowMonth = new Date().toISOString().slice(0, 7);
+  if (!months.length) return { months: [], rows: [], totals: [], lastComplete: null, selectedMonth: null, currentMonth: nowMonth, headline: null };
   const lastComplete = months.filter((mo) => mo < nowMonth).slice(-1)[0] || months[months.length - 1];
+  // Headline reflects the chosen month (default: last complete month; the current month is partial).
+  const selectedMonth = (headlineMonth && months.includes(headlineMonth)) ? headlineMonth : lastComplete;
 
   let centreRows = db.prepare(`SELECT DISTINCT c.owna_id, c.name FROM incidents_monthly i JOIN centres c ON c.owna_id = i.owna_id ORDER BY c.name`).all();
   if (scopedOwnaId) centreRows = centreRows.filter((c) => c.owna_id === scopedOwnaId);
@@ -575,7 +577,7 @@ function incidentsReport(scopedOwnaId, monthsBack = 12) {
       const r = row || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 };
       return { month: mo, ...r, hasData: !!row, rating: rateOf(r.reportable) };
     });
-    const hc = cells.find((x) => x.month === lastComplete) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0, rating: rateOf(0) };
+    const hc = cells.find((x) => x.month === selectedMonth) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0, rating: rateOf(0) };
     return { owna_id: c.owna_id, name: c.name.replace("Futuro Childcare & Education - ", ""), cells, headline: hc };
   });
   const totals = months.map((mo) => {
@@ -583,8 +585,8 @@ function incidentsReport(scopedOwnaId, monthsBack = 12) {
     rows.forEach((r) => { const cell = r.cells.find((x) => x.month === mo); ["total","injuries","illness","serious","reportable"].forEach((k) => t[k] += cell[k]); });
     return t;
   });
-  const headline = { ...(totals.find((t) => t.month === lastComplete) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 }), rating: rateOf((totals.find((t) => t.month === lastComplete) || {}).reportable || 0) };
-  return { months, rows, totals, lastComplete, currentMonth: nowMonth, headline };
+  const headline = { ...(totals.find((t) => t.month === selectedMonth) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 }), rating: rateOf((totals.find((t) => t.month === selectedMonth) || {}).reportable || 0) };
+  return { months, rows, totals, lastComplete, selectedMonth, currentMonth: nowMonth, headline };
 }
 function actionPlanMonths(limit = 24) {
   return db.prepare("SELECT DISTINCT month FROM action_plans ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);

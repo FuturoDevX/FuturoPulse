@@ -112,14 +112,17 @@ router.post("/action-plans/edit", requireAdminOrOps, (req, res) => {
 
 // Safety & Incidents (OWNA child incident reports, rolling 12 months).
 router.get("/safety", (req, res) => {
-  const rep = m.incidentsReport(scopedOwnaId(req), 12);
+  const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : null;
+  const rep = m.incidentsReport(scopedOwnaId(req), 12, month);
   res.render("safety", { title: "Safety & Incidents", rep, lastRun: lastRun() });
 });
 
 // Quality & Compliance (from uploaded audits) — navigate by centre and audit period.
 router.get("/qc", (req, res) => {
   const scoped = scopedOwnaId(req);
-  const centresList = m.qcSummary(scoped).map((a) => ({ owna_id: a.owna_id, name: a.centre_name }));
+  // List all operating centres so you can navigate between them even before every audit is uploaded.
+  const all = m.centres().filter((c) => c.owna_id && c.capacity > 0);
+  const centresList = (scoped ? all.filter((c) => c.owna_id === scoped) : all).map((c) => ({ owna_id: c.owna_id, name: c.name }));
   const owna = scoped || (centresList.find((c) => c.owna_id === req.query.owna) ? req.query.owna : (centresList[0] && centresList[0].owna_id));
   const terms = owna ? m.qcTerms(owna) : [];
   const term = terms.find((t) => t.term === req.query.term) ? req.query.term : (terms[0] && terms[0].term);

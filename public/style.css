@@ -217,3 +217,12 @@ tr:hover td.hot { background: #ffedcc; }
 .centre-subnav a:hover { background: #f0f6ff; border-color: #d6e4fb; }
 .ap-rag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 18px; margin-top: 14px; }
 .ap-rag-item { font-size: 13px; color: #1c2b45; display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+
+/* Tabbed centre page + section label */
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 0 0 20px; border-bottom: 2px solid var(--line, #e5e7eb); }
+.tabs .tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 9px 15px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.tabs .tab:hover { color: var(--navy); }
+.tabs .tab.is-active { color: var(--navy); border-bottom-color: var(--navy); }
+.tab-panel { display: none; }
+.tab-panel.is-active { display: block; }
+.section-label { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; margin: 0 0 10px; }
