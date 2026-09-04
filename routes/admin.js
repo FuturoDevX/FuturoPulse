@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { importAuditBuffer } = require("../services/qc-import");
 const { importPcWorkbook } = require("../services/pc-import");
+const fb = require("../services/feedback");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const { runSnapshot, lastRun } = require("../services/snapshot");
 const { owna } = require("../services/owna");
@@ -122,6 +123,17 @@ router.post("/qc/upload", requireAdmin, upload.single("audit"), (req, res) => {
   } catch (e) {
     res.redirect("/admin/qc?err=" + encodeURIComponent("Import failed: " + e.message));
   }
+});
+
+// ---- Feedback review (admin) ----
+router.get("/feedback", requireAdmin, (req, res) => {
+  const filter = ["new", "reviewed", "dismissed"].includes(req.query.status) ? req.query.status : null;
+  res.render("admin-feedback", { title: "Feedback", items: fb.list(filter), counts: fb.counts(), catLabel: fb.CAT_LABEL, filter, msg: req.query.msg });
+});
+router.post("/feedback/:id/status", requireAdmin, (req, res) => {
+  const status = ["new", "reviewed", "dismissed"].includes(req.body.status) ? req.body.status : "reviewed";
+  fb.setStatus(parseInt(req.params.id, 10), status);
+  res.redirect("/admin/feedback" + (req.body.back ? ("?status=" + encodeURIComponent(req.body.back)) : ""));
 });
 
 module.exports = router;

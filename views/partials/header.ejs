@@ -22,6 +22,7 @@
       <a href="/action-plans" class="<%= currentPath.indexOf('/action-plans')===0 ? 'active' : '' %>">Action Plans</a>
       <a href="/safety" class="<%= currentPath === '/safety' ? 'active' : '' %>">Safety &amp; Incidents</a>
       <a href="/rostering" class="<%= currentPath === '/rostering' ? 'active' : '' %>">Rostering</a>
+      <a href="/feedback" class="<%= currentPath === '/feedback' ? 'active' : '' %>">💬 Share feedback</a>
       <% if (!locals.scopedOwnaId) { %>
         <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
         <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>
@@ -46,6 +47,7 @@
         <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>
         <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">P&amp;C Data</a>
         <a href="/admin/qc" class="<%= currentPath === '/admin/qc' ? 'active' : '' %>">Q&amp;C Data</a>
+        <a href="/admin/feedback" class="<%= currentPath === '/admin/feedback' ? 'active' : '' %>">Feedback<% if (locals.fbNewCount) { %> <span class="nav-count"><%= fbNewCount %></span><% } %></a>
       <% } %>
     </nav>
     <div class="side-nav-footer">

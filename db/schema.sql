@@ -273,6 +273,20 @@ CREATE TABLE IF NOT EXISTS incidents_monthly (
   PRIMARY KEY (owna_id, month)
 );
 
+-- ===== Feedback from users trialling the dashboard =====
+CREATE TABLE IF NOT EXISTS feedback (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at  TEXT,
+  user_email  TEXT, user_name TEXT, user_role TEXT,
+  area        TEXT,                 -- which part of the dashboard
+  category    TEXT,                 -- missing | bug | ui | data | performance | idea | other
+  rating      INTEGER,              -- optional overall 1-5
+  message     TEXT NOT NULL,
+  page        TEXT,                 -- path they came from
+  status      TEXT DEFAULT 'new'    -- new | reviewed | dismissed
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
+
 -- ===== AI: cached weekly operations briefing (generated via the Claude API) =====
 CREATE TABLE IF NOT EXISTS ai_briefings (
   period_to   TEXT PRIMARY KEY,        -- week-ending anchor date (YYYY-MM-DD); one briefing per week

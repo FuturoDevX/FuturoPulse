@@ -2,6 +2,7 @@ const express = require("express");
 const m = require("../services/metrics");
 const ai = require("../services/ai");
 const brief = require("../services/ai-briefing");
+const fb = require("../services/feedback");
 const { blockScoped, scopedOwnaId, requireAdminOrOps } = require("../middleware/auth");
 const { lastRun } = require("../services/snapshot");
 const router = express.Router();
@@ -63,6 +64,30 @@ router.get("/", (req, res) => {
     briefingError: req.query.aierr,
     lastRun: lastRun(),
   });
+});
+
+// Feedback form — open to every logged-in user (including demo/trial viewers).
+router.get("/feedback", (req, res) => {
+  res.render("feedback", {
+    title: "Share feedback",
+    areas: fb.AREAS, categories: fb.CATEGORIES,
+    sent: req.query.sent === "1", err: req.query.err === "1",
+    presetArea: req.query.area || "", fromPage: req.query.from || "",
+    lastRun: lastRun(),
+  });
+});
+router.post("/feedback", (req, res) => {
+  const message = (req.body.message || "").trim();
+  if (!message) return res.redirect("/feedback?err=1");
+  const u = req.session.user || {};
+  const rating = parseInt(req.body.rating, 10);
+  fb.add({
+    user_email: u.email || null, user_name: u.name || null, user_role: u.role || null,
+    area: req.body.area || null, category: req.body.category || null,
+    rating: isNaN(rating) ? null : rating,
+    message: message.slice(0, 4000), page: (req.body.page || "").slice(0, 200),
+  });
+  res.redirect("/feedback?sent=1");
 });
 
 // Generate / refresh the AI weekly briefing (admin/ops). Async — calls the Claude API.

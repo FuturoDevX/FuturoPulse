@@ -43,10 +43,12 @@ app.use("/", require("./routes/auth"));
 app.use(requireLogin);
 // Centre list for the sidebar, available to every authenticated view.
 const metrics = require("./services/metrics");
+const feedbackSvc = require("./services/feedback");
 app.use((req, res, next) => {
   const all = metrics.centres();
   const scoped = res.locals.scopedOwnaId;
   res.locals.navCentres = scoped ? all.filter((c) => c.owna_id === scoped) : all;
+  res.locals.fbNewCount = (res.locals.user && res.locals.user.role === "admin") ? feedbackSvc.newCount() : 0;
   next();
 });
 app.use("/admin", require("./routes/admin"));

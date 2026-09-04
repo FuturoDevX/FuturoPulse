@@ -1,0 +1,58 @@
+<%- include('partials/header', { title: 'Feedback' }) %>
+<div class="page-head"><div>
+  <h1>Feedback</h1>
+  <p class="sub">What the team is telling us as they trial the dashboard.</p>
+</div></div>
+<% if (msg) { %><div class="flash"><%= msg %></div><% } %>
+
+<div class="grid kpis" style="margin-bottom:16px;">
+  <div class="card stat"><div class="n"><%= counts.total %></div><div class="l">Total</div></div>
+  <div class="card stat"><div class="n bad-text"><%= counts.new %></div><div class="l">New</div></div>
+  <div class="card stat"><div class="n good-text"><%= counts.reviewed %></div><div class="l">Reviewed</div></div>
+  <div class="card stat"><div class="n muted"><%= counts.dismissed %></div><div class="l">Dismissed</div></div>
+</div>
+
+<div class="pc-tabs" style="margin-bottom:14px;">
+  <a href="/admin/feedback" class="pc-tab <%= !filter?'active':'' %>">All</a>
+  <a href="/admin/feedback?status=new" class="pc-tab <%= filter==='new'?'active':'' %>">New</a>
+  <a href="/admin/feedback?status=reviewed" class="pc-tab <%= filter==='reviewed'?'active':'' %>">Reviewed</a>
+  <a href="/admin/feedback?status=dismissed" class="pc-tab <%= filter==='dismissed'?'active':'' %>">Dismissed</a>
+</div>
+
+<% if (!items.length) { %>
+  <div class="card"><p class="muted" style="margin:0;">No feedback<%= filter?(' in “'+filter+'”'):'' %> yet.</p></div>
+<% } else { %>
+  <% items.forEach(function(f){ %>
+    <div class="card fb-item" style="margin-bottom:12px;">
+      <div class="pc-head" style="align-items:flex-start;">
+        <div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <% if (f.category) { %><span class="badge role-admin" style="font-size:10px;"><%= catLabel[f.category] ? catLabel[f.category].split(' —')[0].split(' (')[0] : f.category %></span><% } %>
+            <% if (f.area) { %><span class="pcm-cad" style="margin:0;"><%= f.area %></span><% } %>
+            <% if (f.rating) { %><span class="pcm-cad" style="margin:0;">· rated <%= f.rating %>/5</span><% } %>
+            <% if (f.status !== 'new') { %><span class="badge" style="font-size:10px;text-transform:uppercase;"><%= f.status %></span><% } %>
+          </div>
+          <div class="pcm-cad" style="margin-top:4px;">
+            <%= f.user_name || 'Someone' %><% if (f.user_role) { %> (<%= f.user_role.replace('_',' ') %>)<% } %>
+            <% if (f.user_email) { %> · <%= f.user_email %><% } %>
+            · <%= (f.created_at||'').slice(0,16) %>
+            <% if (f.page) { %> · from <code><%= f.page %></code><% } %>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <% if (f.status !== 'reviewed') { %>
+            <form method="POST" action="/admin/feedback/<%= f.id %>/status" class="inline"><input type="hidden" name="status" value="reviewed"><% if(filter){ %><input type="hidden" name="back" value="<%= filter %>"><% } %><button type="submit" class="pc-navbtn">✓ Reviewed</button></form>
+          <% } %>
+          <% if (f.status !== 'dismissed') { %>
+            <form method="POST" action="/admin/feedback/<%= f.id %>/status" class="inline"><input type="hidden" name="status" value="dismissed"><% if(filter){ %><input type="hidden" name="back" value="<%= filter %>"><% } %><button type="submit" class="pc-navbtn">Dismiss</button></form>
+          <% } %>
+          <% if (f.status !== 'new') { %>
+            <form method="POST" action="/admin/feedback/<%= f.id %>/status" class="inline"><input type="hidden" name="status" value="new"><% if(filter){ %><input type="hidden" name="back" value="<%= filter %>"><% } %><button type="submit" class="pc-navbtn">Reopen</button></form>
+          <% } %>
+        </div>
+      </div>
+      <p style="margin:10px 0 0;white-space:pre-wrap;font-size:14px;line-height:1.5;"><%= f.message %></p>
+    </div>
+  <% }); %>
+<% } %>
+<%- include('partials/footer') %>

@@ -1,0 +1,56 @@
+<%- include('partials/header', { title: 'Share feedback' }) %>
+<div class="page-head"><div>
+  <h1>Share your feedback</h1>
+  <p class="sub">You’re trialling Futuro Pulse — tell us what you think. Every note helps shape it.</p>
+</div></div>
+
+<% if (sent) { %>
+  <div class="card" style="border-left:3px solid var(--navy);">
+    <h2 style="margin-top:0;">Thank you 🙏</h2>
+    <p class="sub">Your feedback has been logged and will go straight to the team. Spotted something else?</p>
+    <p style="margin-top:12px;"><a class="secondary-btn" style="text-decoration:none;padding:8px 14px;border-radius:6px;" href="/feedback">Add more feedback</a>
+       &nbsp; <a class="secondary-btn" style="text-decoration:none;padding:8px 14px;border-radius:6px;" href="/">Back to the dashboard</a></p>
+  </div>
+<% } else { %>
+  <% if (err) { %><div class="flash bad">Please add a message before submitting.</div><% } %>
+  <div class="card">
+    <p class="sub" style="margin-top:0;">Anything at all — a missing metric, something confusing, how you’d prefer the data shown, a bug, or a big idea. Nothing is too small.</p>
+    <form method="POST" action="/feedback">
+      <input type="hidden" name="page" value="<%= fromPage %>">
+      <div class="user-form">
+        <div>
+          <label>What’s this about?</label>
+          <select name="category">
+            <% categories.forEach(function(c){ %><option value="<%= c[0] %>"><%= c[1] %></option><% }); %>
+          </select>
+        </div>
+        <div>
+          <label>Which part of the dashboard?</label>
+          <select name="area">
+            <option value="">— choose (optional) —</option>
+            <% areas.forEach(function(a){ %><option value="<%= a %>" <%= presetArea===a?'selected':'' %>><%= a %></option><% }); %>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;">
+        <label style="font-weight:600;font-size:13px;">Your feedback</label>
+        <textarea name="message" required rows="6" placeholder="e.g. On the Overview I’d love to see occupancy vs budget side by side… / The wages table is hard to read on my phone… / Could we add a monthly enrolments target line?" style="width:100%;margin-top:6px;padding:10px;border:1px solid var(--border);border-radius:8px;font:inherit;resize:vertical;"></textarea>
+      </div>
+
+      <div style="margin-top:16px;">
+        <label style="font-weight:600;font-size:13px;">Overall, how’s the experience so far? <span class="muted" style="font-weight:400;">(optional)</span></label>
+        <div class="fb-rating" style="margin-top:8px;">
+          <% for (var i=1;i<=5;i++){ %>
+            <label class="fb-star"><input type="radio" name="rating" value="<%= i %>"><span><%= i %></span></label>
+          <% } %>
+          <span class="muted" style="margin-left:8px;font-size:12px;">1 = needs work · 5 = love it</span>
+        </div>
+      </div>
+
+      <div style="margin-top:18px;"><button type="submit">Send feedback</button></div>
+    </form>
+  </div>
+  <p class="footnote">Your name and role are attached automatically so we can follow up if useful — no need to type them.</p>
+<% } %>
+<%- include('partials/footer') %>
