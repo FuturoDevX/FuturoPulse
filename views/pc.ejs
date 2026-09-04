@@ -48,7 +48,7 @@
        const pts = (trend.series[mt.key]||[]);
        const nonNull = pts.filter(function(v){return v!=null;});
        const latest = nonNull.length ? nonNull[nonNull.length-1] : null;
-       const c = chart(pts, mt.target, 300, 90);
+       const pcLc = { labels: trend.axis.map(mLbl), height: 120, suf: mt.suf, target: mt.target, series: [ { name: mt.name, points: pts } ] };
   %>
   <div class="card pc-metric">
     <div class="pc-head">
@@ -58,22 +58,15 @@
       </div>
       <div class="pcm-val <%= flag(latest, mt.target, mt.better) %>"><%= latest==null ? '—' : latest+mt.suf %></div>
     </div>
-    <% if (!c) { %>
-      <p class="muted" style="margin:14px 0 2px;font-size:13px;">No data entered yet.</p>
-    <% } else { %>
-      <svg class="pcm-chart" viewBox="0 0 300 90" preserveAspectRatio="none">
-        <% if (c.ty!=null) { %><line x1="0" y1="<%= c.ty %>" x2="300" y2="<%= c.ty %>" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0.5" vector-effect="non-scaling-stroke"/><% } %>
-        <% c.seg.forEach(function(s){ %><polyline points="<%= s %>" fill="none" stroke="var(--navy)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><% }); %>
-        <% c.dots.forEach(function(d){ %><circle cx="<%= d.cx %>" cy="<%= d.cy %>" r="2.4" fill="var(--navy)"/><% }); %>
-      </svg>
-      <div class="pcm-axis"><span><%= mLbl(trend.axis[0]) %></span><span><%= mLbl(trend.axis[trend.axis.length-1]) %></span></div>
-    <% } %>
+    <div style="margin-top:14px;">
+      <%- include('partials/linechart', { lc: pcLc }) %>
+    </div>
   </div>
   <% }); %>
 </div>
 
 <p class="footnote">
-  Entered in <strong>Admin → P&amp;C Data</strong> at each metric’s cadence — <strong>eNPS</strong> &amp; <strong>psych safety</strong> quarterly, <strong>Family NPS</strong> every 6 months, <strong>career check-ins</strong> monthly. Lines connect the entries that exist and skip months with no data. Dashed line = target. Switch between the group average and a single centre with the selector. eNPS/Family NPS run −100…100.
+  Entered in <strong>Admin → P&amp;C Data</strong> at each metric’s cadence — <strong>eNPS</strong> &amp; <strong>psych safety</strong> quarterly, <strong>Family NPS</strong> every 6 months, <strong>career check-ins</strong> monthly. Lines connect the entries that exist and skip months with no data. The amber dashed line is the target. Switch between the group average and a single centre with the selector. eNPS/Family NPS run −100…100.
 </p>
 
 <%- include('partials/footer') %>
