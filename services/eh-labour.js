@@ -14,10 +14,14 @@ function ownaIdFor(ehCentre, centres) {
   return c ? c.owna_id : null;
 }
 
+// Bucket a KeyPay pay category. "matwc" = the "Other (Mat leave / WC)" column: pay that's
+// neither hours worked nor ordinary paid leave taken (mat/parental, workers comp, and
+// termination / unused-leave payouts). Time-in-lieu taken is treated as leave (time off).
 function classify(payCategory) {
   const n = (payCategory || "").toLowerCase();
-  if (n.includes("leave taken") || n.includes("leave loading")) return "leave";
-  if (n.includes("workers comp") || n.includes("maternity") || n.includes("parental leave")) return "matwc";
+  if (n.includes("workers comp") || n.includes("maternity") || n.includes("parental")
+      || n.includes("unused leave") || n.includes("termination")) return "matwc";
+  if (n.includes("leave taken") || n.includes("leave loading") || n.includes("time in lieu")) return "leave";
   return "worked";
 }
 

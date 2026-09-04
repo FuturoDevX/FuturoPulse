@@ -61,33 +61,49 @@
 <% } %>
 
 <div class="card">
-  <h2 style="margin-top:0;">Educator wages by centre <span class="muted" style="font-weight:400;font-size:13px;">· current week</span></h2>
+  <h2 style="margin-top:0;">Wages by centre <span class="muted" style="font-weight:400;font-size:13px;">· week ending <%= wkLabel(week) %></span></h2>
   <div style="overflow-x:auto;">
   <table class="labour-tbl">
     <thead>
       <tr>
-        <th>Centre</th><th class="num">Occ.</th><th class="num">Revenue</th><th class="num">Emp</th>
-        <th class="num">Worked h</th><th class="num">Leave h</th><th class="num">Educator h</th>
-        <th class="num">Worked $</th><th class="num">Leave $</th><th class="num">Mat/WC $</th>
-        <th class="num">Educator wages</th><th class="num">Wages % rev</th><th class="num">vs Bud Occ</th><th class="num">vs Bud Wages</th><th class="num">vs Bud Hours</th><th class="num">Casual h</th>
+        <th>Centre</th>
+        <th class="num">Actual<br>Occupancy</th>
+        <th class="num">vs Budget<br>Occupancy</th>
+        <th class="num">Revenue<br><span style="font-weight:400;text-transform:none;">(before staff discount)</span></th>
+        <th class="num"># of<br>Employees</th>
+        <th class="num">Worked<br>hours</th>
+        <th class="num">Kitchen<br>Hours</th>
+        <th class="num">Leave<br>Taken</th>
+        <th class="num">Total<br>Hours</th>
+        <th class="num">Worked<br>hours ($$)</th>
+        <th class="num">Leave<br>Taken ($$)</th>
+        <th class="num">Other (Mat<br>Leave / WC) ($$)</th>
+        <th class="num">Total<br>Wages $$</th>
+        <th class="num">vs Budgeted<br>Wages</th>
+        <th class="num">vs Budget<br>Hours</th>
+        <th class="num">Casual hours<br><span style="font-weight:400;text-transform:none;">(Included)</span></th>
       </tr>
     </thead>
     <tbody>
-      <% rows.forEach(function(r){ %>
+      <% rows.forEach(function(r){
+           var kh = (r.kitchen_h||0) + (r.cleaning_h||0);
+           var totalH = (r.worked_h||0) + kh + (r.leave_h||0);
+           var totWage = (r.worked_amt||0) + (r.leave_amt||0) + (r.matwc_amt||0);
+      %>
         <tr>
           <td><%= shortName(r.eh_centre) %></td>
           <td class="num"><% if(r.occupancy==null){ %>—<% }else{ %><span class="<%= occClass(r.occupancy) %>-text"><%= r.occupancy %>%</span><% } %></td>
+          <td class="num"><%- deltaOcc(r.vs_occ) %></td>
           <td class="num"><%= r.revenue ? money(r.revenue) : '—' %></td>
           <td class="num"><%= r.employees %></td>
           <td class="num"><%= h1(r.worked_h) %></td>
+          <td class="num"><%= h1(kh) %></td>
           <td class="num"><%= h1(r.leave_h) %></td>
-          <td class="num"><%= h1(r.care_hours) %></td>
+          <td class="num"><%= h1(totalH) %></td>
           <td class="num"><%= money(r.worked_amt) %></td>
           <td class="num"><%= money(r.leave_amt) %></td>
           <td class="num"><%= r.matwc_amt ? money(r.matwc_amt) : '$0' %></td>
-          <td class="num" style="font-weight:600;"><%= money(r.care_wages) %></td>
-          <td class="num"><% if(r.wage_pct==null){ %>—<% }else{ %><span class="<%= marginClass(r.wage_pct) %>-text" style="font-weight:600;"><%= r.wage_pct %>%</span><% } %></td>
-          <td class="num"><%- deltaOcc(r.vs_occ) %></td>
+          <td class="num" style="font-weight:700;"><%= money(totWage) %></td>
           <td class="num"><%- deltaWages(r.vs_wages) %></td>
           <td class="num"><%- deltaHours(r.vs_hours) %></td>
           <td class="num"><%= h1(r.casual_h) %></td>
@@ -96,14 +112,27 @@
     </tbody>
     <tfoot>
       <tr class="total-row">
-        <td>Total (educators)</td><td class="num">—</td><td class="num"><%= money(t.rev) %></td><td class="num"><%= t.emp %></td>
-        <td class="num"><%= h1(t.wh) %></td><td class="num"><%= h1(t.lh) %></td><td class="num"><%= h1(t.ch) %></td>
-        <td class="num"><%= money(t.wa) %></td><td class="num"><%= money(t.la) %></td><td class="num"><%= money(t.ma) %></td>
-        <td class="num"><%= money(t.cw) %></td><td class="num <%= marginClass(carePct) %>-text"><%= carePct==null?'—':carePct+'%' %></td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num"><%= h1(t.cas) %></td>
+        <td>Total</td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td class="num"><%= money(t.rev) %></td>
+        <td class="num"><%= t.emp %></td>
+        <td class="num"><%= h1(t.wh) %></td>
+        <td class="num"><%= h1(t.kh + t.clh) %></td>
+        <td class="num"><%= h1(t.lh) %></td>
+        <td class="num"><%= h1(t.wh + t.kh + t.clh + t.lh) %></td>
+        <td class="num"><%= money(t.wa) %></td>
+        <td class="num"><%= money(t.la) %></td>
+        <td class="num"><%= money(t.ma) %></td>
+        <td class="num" style="font-weight:700;"><%= money(t.wa + t.la + t.ma) %></td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td class="num"><%= h1(t.cas) %></td>
       </tr>
     </tfoot>
   </table>
   </div>
+  <p class="footnote">Total Hours = worked + kitchen + leave. Total Wages = worked + leave + other (Mat leave / WC); the kitchen/cleaning wage cost is shown separately below. Casual hours are counted within Worked hours. HQ, Cobbitty &amp; Oran Park appear here as they take on staff before opening.</p>
 </div>
 
 <div class="card">
