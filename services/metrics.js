@@ -954,14 +954,23 @@ function compareTrend(metric = "occupancy", n) {
     });
     return { axis: weeks, cadence: "week", series, cfg, metric };
   }
-  const axis = lastMonths(n || 12);
+  // Occupancy extends forward (projected from scheduled bookings, drawn dashed); manual P&C metrics are past-only.
+  const isOcc = metric === "occupancy";
+  const now = todayStr().slice(0, 7); const [yy, mm] = now.split("-").map(Number);
+  const pastN = n || 12, fwdN = isOcc ? 2 : 0;
+  const axis = [];
+  for (let i = pastN; i >= -fwdN; i--) axis.push(new Date(Date.UTC(yy, mm - 1 - i, 1)).toISOString().slice(0, 7));
+  let dashFrom = null;
+  if (isOcc) { const fi = axis.findIndex((mo2) => mo2 >= now); dashFrom = fi > 0 ? fi - 1 : (fi === 0 ? 0 : null); }
   const series = centres.map((ct) => {
     const map = {};
-    if (metric === "occupancy") occupancyTrend(ct.owna_id, 24).forEach((r) => { map[r.month] = r.occupancy; });
-    else { const pt = pcTrend(ct.owna_id, 24); pt.axis.forEach((m, i) => { map[m] = pt.series[metric] ? pt.series[metric][i] : null; }); }
-    return { owna_id: ct.owna_id, name: ct.name.replace("Futuro Childcare & Education - ", ""), points: axis.map((m) => (map[m] == null ? null : map[m])) };
+    if (isOcc) {
+      db.prepare("SELECT substr(metric_date,1,7) month, COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) days FROM daily_metrics WHERE owna_id=? GROUP BY month")
+        .all(ct.owna_id).forEach((r) => { map[r.month] = pct(r.booked, r.cap * r.days); });
+    } else { const pt = pcTrend(ct.owna_id, 24); pt.axis.forEach((mo2, i) => { map[mo2] = pt.series[metric] ? pt.series[metric][i] : null; }); }
+    return { owna_id: ct.owna_id, name: ct.name.replace("Futuro Childcare & Education - ", ""), points: axis.map((mo2) => (map[mo2] == null ? null : map[mo2])) };
   });
-  return { axis, cadence: "month", series, cfg, metric };
+  return { axis, cadence: "month", series, cfg, metric, dashFrom };
 }
 
 // How many new bookings of each day-pattern lift weekly occupancy by each target (pp).
