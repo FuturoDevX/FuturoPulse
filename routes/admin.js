@@ -3,6 +3,7 @@ const { requireAdminOrOps, requireAdmin } = require("../middleware/auth");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const { importAuditBuffer } = require("../services/qc-import");
+const { importPcWorkbook } = require("../services/pc-import");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 const { runSnapshot, lastRun } = require("../services/snapshot");
 const { owna } = require("../services/owna");
@@ -88,7 +89,17 @@ router.get("/pc", requireAdmin, (req, res) => {
   const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : new Date().toISOString().slice(0,7);
   const centres = db.prepare("SELECT owna_id, name FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0) ORDER BY name").all();
   const data = {}; db.prepare("SELECT * FROM pc_metrics WHERE month = ?").all(month).forEach((r) => { data[r.owna_id] = r; });
-  res.render("admin-pc", { title: "P&C Entry", month, centres, data, targets: m.pcTargets(), msg: req.query.msg });
+  res.render("admin-pc", { title: "P&C Entry", month, centres, data, targets: m.pcTargets(), msg: req.query.msg, err: req.query.err });
+});
+// Upload the HR SharePoint P&C workbooks (eNPS Data / Turnover Analysis) — same flow as Q&C.
+router.post("/pc/import", requireAdmin, upload.single("workbook"), (req, res) => {
+  if (!req.file) return res.redirect("/admin/pc?err=" + encodeURIComponent("No file uploaded."));
+  try {
+    const r = importPcWorkbook(req.file.buffer);
+    res.redirect("/admin/pc?msg=" + encodeURIComponent(`Imported ${r.kinds.join(" + ")} — ${r.rows} rows across ${r.centres} centres, ${r.months} months.`));
+  } catch (e) {
+    res.redirect("/admin/pc?err=" + encodeURIComponent("Import failed: " + e.message));
+  }
 });
 router.post("/pc", requireAdmin, (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(req.body.month) ? req.body.month : new Date().toISOString().slice(0,7);

@@ -200,7 +200,10 @@ CREATE TABLE IF NOT EXISTS pc_metrics (
   month             TEXT NOT NULL,        -- YYYY-MM
   enps              REAL,                 -- employee NPS, -100..100
   family_nps        REAL,                 -- family/parent NPS, -100..100
-  turnover          REAL,                 -- %
+  turnover          REAL,                 -- rolling annual (YoY) turnover %
+  turnover_mom      REAL,                 -- single-month turnover %
+  headcount         INTEGER,              -- staff headcount that month
+  leavers           INTEGER,              -- leavers that month
   checkin_due       INTEGER,
   checkin_completed INTEGER,
   psych_safety      REAL,

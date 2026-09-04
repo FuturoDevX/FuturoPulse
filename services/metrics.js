@@ -728,10 +728,14 @@ function savePcTarget(metric, target) {
   db.prepare("INSERT INTO pc_targets (metric, target) VALUES (?,?) ON CONFLICT(metric) DO UPDATE SET target=excluded.target").run(metric, target);
 }
 function savePcMetric(ownaId, month, v) {
+  // Merge: a blank (null) field keeps the existing value, so the manual form and the
+  // SharePoint upload can each fill their own metrics without wiping the other's.
   db.prepare(`INSERT INTO pc_metrics (owna_id, month, enps, family_nps, turnover, checkin_due, checkin_completed, psych_safety, updated_at)
     VALUES (@owna_id,@month,@enps,@family_nps,@turnover,@checkin_due,@checkin_completed,@psych_safety,datetime('now'))
-    ON CONFLICT(owna_id, month) DO UPDATE SET enps=@enps, family_nps=@family_nps, turnover=@turnover, checkin_due=@checkin_due,
-      checkin_completed=@checkin_completed, psych_safety=@psych_safety, updated_at=datetime('now')`)
+    ON CONFLICT(owna_id, month) DO UPDATE SET
+      enps=COALESCE(@enps, enps), family_nps=COALESCE(@family_nps, family_nps), turnover=COALESCE(@turnover, turnover),
+      checkin_due=COALESCE(@checkin_due, checkin_due), checkin_completed=COALESCE(@checkin_completed, checkin_completed),
+      psych_safety=COALESCE(@psych_safety, psych_safety), updated_at=datetime('now')`)
     .run({ owna_id: ownaId, month, family_nps: null, ...v });
 }
 function pcMonths(limit = 24) {

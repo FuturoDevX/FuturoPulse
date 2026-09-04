@@ -23,6 +23,9 @@ function initSchema(db) {
   addColumnIfMissing("labour_weekly", "cleaning_amt", "REAL DEFAULT 0");
   addColumnIfMissing("labour_budget", "budget_support", "REAL");
   addColumnIfMissing("pc_metrics", "family_nps", "REAL");
+  addColumnIfMissing("pc_metrics", "turnover_mom", "REAL");
+  addColumnIfMissing("pc_metrics", "headcount", "INTEGER");
+  addColumnIfMissing("pc_metrics", "leavers", "INTEGER");
   addColumnIfMissing("qc_actions", "term", "TEXT");
   addColumnIfMissing("incidents_monthly", "illness", "INTEGER DEFAULT 0");
   addColumnIfMissing("incidents_monthly", "serious", "INTEGER DEFAULT 0");

@@ -6,6 +6,16 @@
   <h1>P&amp;C Data</h1><p class="sub">Enter People &amp; Culture metrics per centre, for the selected month.</p>
 </div></div>
 <% if (msg) { %><div class="flash"><%= msg %></div><% } %>
+<% if (err) { %><div class="flash bad"><%= err %></div><% } %>
+<div class="card">
+  <h2 style="margin-top:0;">Import from SharePoint spreadsheets</h2>
+  <p class="sub" style="margin-top:2px;">Upload the HR workbooks straight from SharePoint — a sheet per centre. This fills <strong>eNPS</strong> (from “eNPS Data.xlsx”) and <strong>turnover, headcount &amp; leavers</strong> (from “Turnover Analysis Working Document.xlsx”) across every month/quarter in the file, so you don’t retype them below. Upload each workbook once; re-uploading refreshes the figures.</p>
+  <form method="POST" action="/admin/pc/import" enctype="multipart/form-data" class="user-form">
+    <div><label>Workbook (.xlsx)</label><input type="file" name="workbook" accept=".xlsx" required></div>
+    <div style="align-self:end;"><button type="submit">Upload &amp; import</button></div>
+  </form>
+  <p class="footnote" style="margin-top:10px;">Turnover stores the <strong>rolling 12-month (YoY)</strong> figure as the headline; the month-on-month rate, headcount and leavers are kept alongside it. The manual entries below are merged in — an imported value is only replaced when you type over it.</p>
+</div>
 <form method="POST" action="/admin/pc">
   <div class="card" style="padding:14px 20px;">
     <label style="font-size:12px;color:var(--muted);">Month</label>
