@@ -25,8 +25,10 @@
     return '$' + Math.round(v);
   };
   const _fmtVal = (v) => v==null ? '' : (lc.money ? '$' + Math.round(v).toLocaleString('en-AU') : (Math.round(v*10)/10) + (lc.suf||''));
-  // segment builder: array of "x,y" strings, split on nulls
-  const _segs = (pts) => { const out=[]; let cur=[]; pts.forEach((v,i)=>{ if(v==null){ if(cur.length){out.push(cur);cur=[];} } else cur.push(_x(i).toFixed(1)+','+_y(v).toFixed(1)); }); if(cur.length) out.push(cur); return out; };
+  // segment builder: array of "x,y" strings. Normally split on nulls (a gap = missing data);
+  // with lc.connect, draw one continuous line through the real entries (for sparse cadences
+  // like quarterly eNPS, where most months are intentionally empty).
+  const _segs = (pts) => { const out=[]; let cur=[]; pts.forEach((v,i)=>{ if(v==null){ if(!lc.connect && cur.length){out.push(cur);cur=[];} } else cur.push(_x(i).toFixed(1)+','+_y(v).toFixed(1)); }); if(cur.length) out.push(cur); return out; };
 %>
 <% if (!_hasData) { %>
   <p class="muted" style="margin:12px 0 2px;font-size:13px;">No data for this selection yet.</p>

@@ -22,15 +22,24 @@
     <input type="month" name="month" value="<%= month %>" onchange="this.form.action='/admin/pc';this.form.method='GET';this.form.submit();" style="padding:7px;border:1px solid var(--border);border-radius:6px;">
   </div>
   <div class="card">
-    <h2 style="margin-top:0;">Metrics by centre</h2>
+    <h2 style="margin-top:0;">Metrics by centre — <%= new Date(month+'-01T00:00:00Z').toLocaleDateString('en-AU',{month:'long',year:'numeric',timeZone:'UTC'}) %></h2>
+    <p class="sub" style="margin-top:2px;">Type only the <strong>hand-collected</strong> metrics below. <strong>eNPS</strong> and <strong>turnover</strong> are shown greyed — they come from the SharePoint upload above, so there’s nothing to type for them.</p>
     <div style="overflow-x:auto;"><table>
-      <thead><tr><th>Centre</th><th class="num">eNPS</th><th class="num">Family NPS</th><th class="num">Turnover %</th><th class="num">Check-ins due</th><th class="num">Check-ins done</th><th class="num">Psych safety</th></tr></thead>
+      <thead><tr>
+        <th>Centre</th>
+        <th class="num">eNPS<br><small class="muted" style="font-weight:400;">from upload · quarterly</small></th>
+        <th class="num">Turnover&nbsp;% YoY<br><small class="muted" style="font-weight:400;">from upload · monthly</small></th>
+        <th class="num">Family NPS<br><small class="muted" style="font-weight:400;">enter · 6-monthly</small></th>
+        <th class="num">Check-ins due<br><small class="muted" style="font-weight:400;">enter · monthly</small></th>
+        <th class="num">Check-ins done<br><small class="muted" style="font-weight:400;">enter · monthly</small></th>
+        <th class="num">Psych safety<br><small class="muted" style="font-weight:400;">enter · quarterly</small></th>
+      </tr></thead>
       <tbody>
         <% centres.forEach(function(c){ %>
           <tr><td><%= shortName(c.name) %></td>
-            <td class="num"><input type="text" name="enps_<%= c.owna_id %>" value="<%= g(c.owna_id,'enps') %>" style="width:70px;text-align:right;"></td>
+            <td class="num muted"><%= (data[c.owna_id] && data[c.owna_id].enps!=null) ? data[c.owna_id].enps : '—' %></td>
+            <td class="num muted"><%= (data[c.owna_id] && data[c.owna_id].turnover!=null) ? data[c.owna_id].turnover+'%' : '—' %></td>
             <td class="num"><input type="text" name="familynps_<%= c.owna_id %>" value="<%= g(c.owna_id,'family_nps') %>" style="width:70px;text-align:right;"></td>
-            <td class="num"><input type="text" name="turnover_<%= c.owna_id %>" value="<%= g(c.owna_id,'turnover') %>" style="width:70px;text-align:right;"></td>
             <td class="num"><input type="text" name="due_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_due') %>" style="width:70px;text-align:right;"></td>
             <td class="num"><input type="text" name="done_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_completed') %>" style="width:70px;text-align:right;"></td>
             <td class="num"><input type="text" name="psych_<%= c.owna_id %>" value="<%= g(c.owna_id,'psych_safety') %>" style="width:70px;text-align:right;"></td>

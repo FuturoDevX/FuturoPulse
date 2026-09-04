@@ -39,16 +39,18 @@
       <% centres.forEach(function(c){ %><option value="<%= c.owna_id %>" <%= c.owna_id===owna?'selected':'' %>><%= shortName(c.name) %></option><% }); %>
     </select></form>
     <% } %>
+    <% var _q = owna ? ('&owna='+owna) : ''; %>
+    <a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/pc?full=<%= full?'0':'1' %><%= _q %>"><%= full ? 'Show recent only' : 'Explore full history' %></a>
     <% if (user.role === 'admin') { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/pc">Enter data</a><% } %>
   </div>
 </div>
 
 <div class="pc-metric-grid">
   <% METRICS.forEach(function(mt){
-       const pts = (trend.series[mt.key]||[]);
-       const nonNull = pts.filter(function(v){return v!=null;});
-       const latest = nonNull.length ? nonNull[nonNull.length-1] : null;
-       const pcLc = { labels: trend.axis.map(mLbl), height: 120, suf: mt.suf, target: mt.target, series: [ { name: mt.name, points: pts } ] };
+       const s = series[mt.key] || { labels:[], points:[], full:0, shown:0 };
+       const pts = s.points;
+       const latest = pts.length ? pts[pts.length-1] : null;
+       const pcLc = { labels: s.labels, height: 120, suf: mt.suf, target: mt.target, connect: true, series: [ { name: mt.name, points: pts } ] };
   %>
   <div class="card pc-metric">
     <div class="pc-head">
@@ -61,12 +63,15 @@
     <div style="margin-top:14px;">
       <%- include('partials/linechart', { lc: pcLc }) %>
     </div>
+    <% if (!full && s.full > s.shown) { %>
+      <div class="pcm-cad" style="margin-top:8px;">Showing last <%= s.shown %> of <%= s.full %> · <a href="/pc?full=1<%= _q %>">explore all</a></div>
+    <% } %>
   </div>
   <% }); %>
 </div>
 
 <p class="footnote">
-  Entered in <strong>Admin → P&amp;C Data</strong> at each metric’s cadence — <strong>eNPS</strong> &amp; <strong>psych safety</strong> quarterly, <strong>Family NPS</strong> every 6 months, <strong>career check-ins</strong> monthly. Lines connect the entries that exist and skip months with no data. The amber dashed line is the target. Switch between the group average and a single centre with the selector. eNPS/Family NPS run −100…100.
+  Each chart is bucketed by that metric’s own cadence — <strong>eNPS</strong> &amp; <strong>psych safety</strong> by quarter (Q1 25…), <strong>Family NPS</strong> by half-year (H1 25…), <strong>turnover</strong> &amp; <strong>career check-ins</strong> by month. It shows the most recent periods by default; use <strong>Explore full history</strong> (or a card’s “explore all”) to see the whole lifetime. The amber dashed line is the target. Switch between the group average and a single centre with the selector. eNPS &amp; turnover come from the SharePoint upload; the rest are entered in <strong>Admin → P&amp;C Data</strong>. eNPS/Family NPS run −100…100.
 </p>
 
 <%- include('partials/footer') %>

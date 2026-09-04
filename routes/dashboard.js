@@ -155,10 +155,12 @@ router.get("/pc", (req, res) => {
   const centresList = m.centres().filter((c) => !c.opening && c.capacity > 0).map((c) => ({ owna_id: c.owna_id, name: c.name }));
   const owna = scoped || (centresList.find((c) => c.owna_id === req.query.owna) ? req.query.owna : null); // null = all centres (group avg)
   const latestMonth = m.pcMonths(1)[0] || new Date().toISOString().slice(0, 7);
+  const full = req.query.full === "1";
   res.render("pc", {
     title: "People & Culture",
     centres: centresList, owna,
-    trend: m.pcTrend(owna, 18),
+    series: m.pcAllSeries(owna, full),
+    full,
     latest: m.pcForMonth(latestMonth, owna || undefined),
     latestMonth,
     targets: m.pcTargets(),

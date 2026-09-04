@@ -780,6 +780,64 @@ function pcTrend(ownaId, months = 18) {
   return { axis, series };
 }
 
+// ---- Cadence-aware P&C trend: bucket by each metric's natural period, newest-window with exploration ----
+// Each P&C metric is collected on its own rhythm, so plotting them all on a dense monthly axis
+// leaves sparse metrics (quarterly eNPS, 6-monthly Family NPS) looking broken. Bucket instead.
+const PC_CADENCE = { enps: "quarter", family_nps: "half", turnover: "month", checkin_pct: "month", psych_safety: "quarter" };
+const PC_DEFAULT_WIN = { quarter: 4, half: 4, month: 12 }; // periods shown by default (rest via "explore")
+
+function _pcPeriodKey(month, cadence) {
+  const [y, mo] = month.split("-").map(Number);
+  if (cadence === "quarter") return `${y}-Q${Math.ceil(mo / 3)}`;
+  if (cadence === "half") return `${y}-H${mo <= 6 ? 1 : 2}`;
+  return month; // monthly: YYYY-MM
+}
+function _pcPeriodSort(key) { // chronological ordering key
+  const [y, p] = key.split("-");
+  if (p[0] === "Q") return (+y) * 12 + (+p[1]) * 3;
+  if (p[0] === "H") return (+y) * 12 + (+p[1]) * 6;
+  return (+y) * 12 + (+p); // month
+}
+function _pcPeriodLabel(key, cadence) {
+  const [y, p] = key.split("-");
+  if (cadence === "month") return new Date(Date.UTC(+y, (+p) - 1, 1)).toLocaleDateString("en-AU", { month: "short", timeZone: "UTC" }) + " " + y.slice(2);
+  return p + " " + y.slice(2); // "Q3 25" / "H1 25"
+}
+// One metric's series bucketed by its cadence. Only periods that actually have data appear.
+function pcSeriesGrouped(ownaId, metric, cadence, limit) {
+  const rows = ownaId
+    ? db.prepare("SELECT * FROM pc_metrics WHERE owna_id=?").all(ownaId)
+    : db.prepare("SELECT * FROM pc_metrics").all();
+  const buckets = {};
+  rows.forEach((r) => { if (r.month) (buckets[_pcPeriodKey(r.month, cadence)] ||= []).push(r); });
+  const keys = Object.keys(buckets).sort((a, b) => _pcPeriodSort(a) - _pcPeriodSort(b));
+  const pts = keys.map((k) => {
+    const rs = buckets[k];
+    let value;
+    if (metric === "checkin_pct") { // sum due/done across the period, then a single rate
+      let due = 0, done = 0, any = false;
+      rs.forEach((r) => { if (r.checkin_due != null) { due += r.checkin_due; done += (r.checkin_completed || 0); any = true; } });
+      value = any && due > 0 ? Math.round(done / due * 1000) / 10 : null;
+    } else {
+      const vals = rs.map((r) => r[metric]).filter((v) => v != null && v !== "");
+      value = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10 : null;
+    }
+    return { key: k, label: _pcPeriodLabel(k, cadence), value };
+  }).filter((p) => p.value != null);
+  const full = pts.length;
+  const shown = (limit && limit < full) ? pts.slice(-limit) : pts;
+  return { labels: shown.map((p) => p.label), points: shown.map((p) => p.value), cadence, full, shown: shown.length };
+}
+// All P&C metrics at once; `full` shows the whole history instead of the default recent window.
+function pcAllSeries(ownaId, full) {
+  const out = {};
+  PC_METRIC_KEYS.forEach((k) => {
+    const cad = PC_CADENCE[k] || "month";
+    out[k] = pcSeriesGrouped(ownaId, k, cad, full ? null : PC_DEFAULT_WIN[cad]);
+  });
+  return out;
+}
+
 // Group-level P&C for the latest month with data: simple average across centres that have a value.
 function pcGroupLatest() {
   const month = pcMonths(1)[0];
@@ -1153,7 +1211,7 @@ module.exports = {
   forwardOccupancyByCentre, projection, centrePipelineDetail,
   occupancyTrend, occupancyTrendGroup, occupancyTrendGroupFwd,
   labourWeeks, labourForWeek, labourTrend, wagesTrend, compareTrend, COMPARE_METRICS, labourBudgets, saveLabourBudget,
-  pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, PC_TARGET_KEYS,
+  pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, pcAllSeries, PC_TARGET_KEYS,
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
 };
