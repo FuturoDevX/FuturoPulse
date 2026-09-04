@@ -3,6 +3,7 @@ const m = require("../services/metrics");
 const ai = require("../services/ai");
 const brief = require("../services/ai-briefing");
 const fb = require("../services/feedback");
+const askAI = require("../services/ai-ask");
 const { blockScoped, scopedOwnaId, requireAdminOrOps } = require("../middleware/auth");
 const { lastRun } = require("../services/snapshot");
 const router = express.Router();
@@ -64,6 +65,23 @@ router.get("/", (req, res) => {
     briefingError: req.query.aierr,
     lastRun: lastRun(),
   });
+});
+
+// Ask your data — natural-language Q&A over the dashboard (Claude). Open to all logged-in users.
+router.get("/ask", (req, res) => {
+  res.render("ask", { title: "Ask your data", aiEnabled: ai.isEnabled(), examples: askAI.EXAMPLES, lastRun: lastRun() });
+});
+router.post("/ask", async (req, res) => {
+  const question = (req.body && req.body.question || "").toString().trim();
+  if (!question) return res.status(400).json({ error: "Please enter a question." });
+  if (!ai.isEnabled()) return res.status(503).json({ error: "AI is not enabled — set ANTHROPIC_API_KEY." });
+  try {
+    const history = Array.isArray(req.body.history) ? req.body.history : [];
+    const { answer } = await askAI.ask(question, history, scopedOwnaId(req) || null);
+    res.json({ answer });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Feedback form — open to every logged-in user (including demo/trial viewers).

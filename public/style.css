@@ -290,6 +290,24 @@ tr:hover td.hot { background: #ffedcc; }
 .fb-star input:checked + span { background: var(--navy); color: #fff; border-color: var(--navy); }
 .fb-star:hover span { border-color: #cdd9f2; }
 .nav-count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #c0392b; color: #fff; font-size: 11px; font-weight: 700; text-align: center; }
+/* Ask your data (chat) */
+.ask-log { max-height: 52vh; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 10px; }
+.ask-msg { display: flex; }
+.ask-msg.user { justify-content: flex-end; }
+.ask-bubble { max-width: 82%; padding: 10px 13px; border-radius: 12px; font-size: 14px; line-height: 1.5; }
+.ask-msg.ai .ask-bubble { background: #f1f4fb; color: var(--ink, #1f2937); border-bottom-left-radius: 4px; }
+.ask-msg.user .ask-bubble { background: var(--navy); color: #fff; border-bottom-right-radius: 4px; }
+.ask-bubble.thinking { color: var(--muted); font-style: italic; }
+.ask-bubble.err { background: #fdecea; color: #a5271b; }
+.ask-bubble p { margin: 4px 0; } .ask-bubble p:first-child { margin-top: 0; } .ask-bubble p:last-child { margin-bottom: 0; }
+.ask-bubble ul { margin: 4px 0 4px 18px; padding: 0; } .ask-bubble li { margin: 2px 0; }
+.ask-bubble strong { font-weight: 700; }
+.ask-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0; }
+.ask-chip { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 6px 12px; font-size: 12.5px; color: var(--navy); cursor: pointer; }
+.ask-chip:hover { background: #eef2fb; border-color: #cdd9f2; }
+.ask-input { display: flex; gap: 8px; margin-top: 14px; }
+.ask-input input { flex: 1; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; font: inherit; }
+.ask-input button { padding: 0 20px; }
 .pc-metric { margin-bottom: 0; }
 .pcm-name { font-size: 15px; font-weight: 700; color: var(--navy); letter-spacing: -.01em; }
 .pcm-cad { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 2px; }

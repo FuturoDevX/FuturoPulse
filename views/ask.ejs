@@ -1,0 +1,83 @@
+<%- include('partials/header', { title: 'Ask your data' }) %>
+<div class="page-head"><div>
+  <h1>✨ Ask your data</h1>
+  <p class="sub">Ask about your centres in plain English — Claude answers from the live dashboard data.</p>
+</div></div>
+
+<% if (!aiEnabled) { %>
+  <div class="card ai-brief">
+    <p class="sub" style="margin:0;">Set an <code>ANTHROPIC_API_KEY</code> environment variable to enable this. It sends a snapshot of your current data to the Claude API and returns an answer — no data is stored and no database queries are generated.</p>
+  </div>
+<% } else { %>
+  <div class="card">
+    <div id="askLog" class="ask-log" aria-live="polite">
+      <div class="ask-msg ai"><div class="ask-bubble">Hi 👋 Ask me anything about your centres — occupancy, wages, margin, turnover, enrolments and more. Try one of these:</div></div>
+      <div class="ask-chips">
+        <% examples.forEach(function(q){ %><button type="button" class="ask-chip" data-q="<%= q %>"><%= q %></button><% }); %>
+      </div>
+    </div>
+    <form id="askForm" class="ask-input">
+      <input id="askInput" type="text" autocomplete="off" placeholder="e.g. Which centres are over budget on wages?" maxlength="1000">
+      <button type="submit" id="askSend">Ask</button>
+    </form>
+    <p class="footnote" style="margin-top:10px;">Answers come from a current snapshot of the dashboard, respecting your access. Claude only uses that data — if something isn’t in it, it’ll say so. Double-check anything important against the source pages.</p>
+  </div>
+
+  <script>
+  (function(){
+    var log = document.getElementById('askLog');
+    var form = document.getElementById('askForm');
+    var input = document.getElementById('askInput');
+    var send = document.getElementById('askSend');
+    var history = [];        // [{role, content}]
+    var busy = false;
+
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function md(t){ // tiny, safe markdown: bold, italic, bullets, line breaks
+      var lines = String(t).split(/\r?\n/), out='', inList=false;
+      for (var i=0;i<lines.length;i++){
+        var ln = lines[i].trim();
+        if(!ln){ if(inList){out+='</ul>';inList=false;} continue; }
+        var b = ln.match(/^[-*]\s+(.*)$/);
+        var inline = function(s){ return esc(s).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/(^|[^*])\*(?!\*)(.+?)\*/g,'$1<em>$2</em>'); };
+        if(b){ if(!inList){out+='<ul>';inList=true;} out+='<li>'+inline(b[1])+'</li>'; }
+        else { if(inList){out+='</ul>';inList=false;} out+='<p>'+inline(ln)+'</p>'; }
+      }
+      if(inList)out+='</ul>';
+      return out;
+    }
+    function bubble(role, html, cls){
+      var wrap = document.createElement('div');
+      wrap.className = 'ask-msg ' + role;
+      wrap.innerHTML = '<div class="ask-bubble ' + (cls||'') + '">' + html + '</div>';
+      log.appendChild(wrap);
+      log.scrollTop = log.scrollHeight;
+      return wrap;
+    }
+    function ask(q){
+      if(busy || !q) return;
+      busy = true; send.disabled = true; input.value='';
+      var chips = log.querySelector('.ask-chips'); if(chips) chips.remove();
+      bubble('user', esc(q));
+      var thinking = bubble('ai', 'Thinking…', 'thinking');
+      fetch('/ask', { method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ question:q, history: history.slice(-6) }) })
+      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+      .then(function(res){
+        thinking.remove();
+        if(!res.ok || res.j.error){ bubble('ai', esc(res.j.error || 'Something went wrong.'), 'err'); }
+        else {
+          bubble('ai', md(res.j.answer));
+          history.push({role:'user', content:q});
+          history.push({role:'assistant', content:res.j.answer});
+        }
+      })
+      .catch(function(){ thinking.remove(); bubble('ai','Network error — please try again.','err'); })
+      .finally(function(){ busy=false; send.disabled=false; input.focus(); });
+    }
+    form.addEventListener('submit', function(e){ e.preventDefault(); ask(input.value.trim()); });
+    log.addEventListener('click', function(e){ var c=e.target.closest('.ask-chip'); if(c) ask(c.getAttribute('data-q')); });
+  })();
+  </script>
+<% } %>
+<%- include('partials/footer') %>

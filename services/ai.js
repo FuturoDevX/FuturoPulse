@@ -9,10 +9,12 @@ const API_URL = "https://api.anthropic.com/v1/messages";
 
 function isEnabled() { return !!process.env.ANTHROPIC_API_KEY; }
 
-// Single-turn completion. Returns Claude's text. Throws with a readable message on failure.
-async function complete({ system, user, maxTokens = 1024, model = MODEL, temperature }) {
+// Completion. Pass `user` (a string, single-turn) or `messages` (an array of {role,content}
+// for multi-turn). Returns Claude's text. Throws with a readable message on failure.
+async function complete({ system, user, messages, maxTokens = 1024, model = MODEL, temperature }) {
   if (!isEnabled()) throw new Error("ANTHROPIC_API_KEY is not set — add it to the environment to enable AI features.");
-  const body = { model, max_tokens: maxTokens, messages: [{ role: "user", content: user }] };
+  const msgs = messages && messages.length ? messages : [{ role: "user", content: user }];
+  const body = { model, max_tokens: maxTokens, messages: msgs };
   if (system) body.system = system;
   if (temperature != null) body.temperature = temperature;
 

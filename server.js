@@ -19,6 +19,7 @@ if (isProd && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.include
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "256kb" })); // for the "Ask your data" fetch API
 app.use(express.static(path.join(__dirname, "public")));
 
 if (isProd) app.set("trust proxy", 1);
