@@ -142,6 +142,27 @@ function occupancyTrendGroup(months = 18) {
   })).slice(-months);
 }
 
+// Group monthly occupancy including FUTURE months projected from scheduled bookings (dashed on charts).
+// projected=true for the current (partial) month and any future month.
+function occupancyTrendGroupFwd(pastMonths = 12, fwdMonths = 2) {
+  const now = todayStr().slice(0, 7);
+  const rows = db.prepare(`
+    SELECT substr(metric_date,1,7) AS month,
+           COALESCE(SUM(booked),0) AS booked, COALESCE(SUM(attended),0) AS attended,
+           COALESCE(SUM(fee_total),0) AS fee, SUM(capacity) AS cap_days
+    FROM daily_metrics GROUP BY month ORDER BY month`).all();
+  const [y, mo] = now.split("-").map(Number);
+  const lo = new Date(Date.UTC(y, mo - 1 - pastMonths, 1)).toISOString().slice(0, 7);
+  const hi = new Date(Date.UTC(y, mo - 1 + fwdMonths, 1)).toISOString().slice(0, 7);
+  return rows.filter((r) => r.month >= lo && r.month <= hi).map((r) => ({
+    month: r.month,
+    occupancy: pct(r.booked, r.cap_days),
+    attendance_rate: r.month < now ? pct(r.attended, r.booked) : null, // attendance only known for past
+    fee_total: round(r.fee),
+    projected: r.month >= now,
+  }));
+}
+
 function centreCcs(ownaId, from, to) {
   return db.prepare(`
     SELECT week_starting, amount FROM ccs_payments
@@ -1117,7 +1138,7 @@ module.exports = {
   llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr, pipelineTrend, pipelineCentres, waitlistJoins,
   exitsSummary, exitReasons, centreExits, exitsLatestDate,
   forwardOccupancyByCentre, projection, centrePipelineDetail,
-  occupancyTrend, occupancyTrendGroup,
+  occupancyTrend, occupancyTrendGroup, occupancyTrendGroupFwd,
   labourWeeks, labourForWeek, labourTrend, wagesTrend, compareTrend, COMPARE_METRICS, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, PC_TARGET_KEYS,
   qcSummary, qcCentre, qcTerms, qcTrend,

@@ -54,7 +54,7 @@ router.get("/", (req, res) => {
     llMap: m.llByOwnaCentre(),
     fcast: m.forwardOccupancyByCentre(30),
     pcGroup: m.pcGroupLatest(),
-    occTrend: m.occupancyTrendGroup(13).filter((t) => t.month < new Date().toISOString().slice(0, 7)).slice(-12),
+    occTrend: m.occupancyTrendGroupFwd(12, 2),
     lastRun: lastRun(),
   });
 });
