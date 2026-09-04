@@ -59,10 +59,17 @@ function parseAudit(buffer) {
   return { centreName, auditor, auditDate, qa, overall_pct, actions };
 }
 
-function importAuditBuffer(buffer, term) {
+function importAuditBuffer(buffer, term, ownaId) {
   const p = parseAudit(buffer);
-  const c = matchCentre(p.centreName);
-  if (!c) throw new Error(`Could not match "${p.centreName}" to a centre.`);
+  // Use the explicitly chosen centre if given; otherwise match from the file's Summary sheet.
+  let c = null;
+  if (ownaId) {
+    c = db.prepare("SELECT owna_id, name FROM centres WHERE owna_id = ?").get(ownaId);
+    if (!c) throw new Error("The selected centre was not found.");
+  } else {
+    c = matchCentre(p.centreName);
+    if (!c) throw new Error(`Could not match "${p.centreName}" to a centre — pick the centre manually from the dropdown.`);
+  }
   // Each audit is one row per (centre, term). Re-uploading the same term replaces it; a new term is added,
   // so history accumulates and trends can be tracked over time.
   const auditTerm = (term && term.trim()) || p.auditDate || "Unknown";

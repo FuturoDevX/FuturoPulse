@@ -109,12 +109,13 @@ router.post("/pc", requireAdmin, (req, res) => {
 
 // ===== Quality & Compliance upload (admin) =====
 router.get("/qc", requireAdmin, (req, res) => {
-  res.render("admin-qc", { title: "Q&C Upload", summary: m.qcSummary(), msg: req.query.msg, err: req.query.err });
+  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+  res.render("admin-qc", { title: "Q&C Data", summary: m.qcSummary(), centres, msg: req.query.msg, err: req.query.err });
 });
 router.post("/qc/upload", requireAdmin, upload.single("audit"), (req, res) => {
   if (!req.file) return res.redirect("/admin/qc?err=" + encodeURIComponent("No file uploaded."));
   try {
-    const r = importAuditBuffer(req.file.buffer, (req.body.term || "").trim());
+    const r = importAuditBuffer(req.file.buffer, (req.body.term || "").trim(), (req.body.owna || "").trim() || null);
     res.redirect("/admin/qc?msg=" + encodeURIComponent(`Imported ${r.centre}: ${r.overall_pct}% overall, ${r.qa} QAs, ${r.actions} actions.`));
   } catch (e) {
     res.redirect("/admin/qc?err=" + encodeURIComponent("Import failed: " + e.message));

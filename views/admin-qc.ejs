@@ -3,22 +3,31 @@
 <div class="page-head"><div>
   <p class="crumb"><a href="/qc">← Quality &amp; Compliance</a></p>
   <h1>Q&amp;C Data</h1>
-  <p class="sub">Upload a compliance audit .xlsx — the centre is matched from the Summary sheet automatically. Each term is kept, so history builds up.</p>
+  <p class="sub">Upload a compliance audit .xlsx. Compliance audits run twice a year, so each upload is tagged with its audit period — history builds up for trend tracking.</p>
 </div></div>
 <% if (msg) { %><div class="flash"><%= msg %></div><% } %>
 <% if (err) { %><div class="flash bad"><%= err %></div><% } %>
 <div class="card">
   <form method="POST" action="/admin/qc/upload" enctype="multipart/form-data" class="user-form">
     <div><label>Audit file (.xlsx)</label><input type="file" name="audit" accept=".xlsx" required></div>
-    <div><label>Term / period</label><input type="text" name="term" placeholder="e.g. Term 2 2026"></div>
+    <div><label>Centre</label>
+      <select name="owna">
+        <option value="">Auto-detect from file</option>
+        <% (centres||[]).forEach(function(c){ %><option value="<%= c.owna_id %>"><%= shortName(c.name) %></option><% }); %>
+      </select>
+    </div>
+    <div><label>Audit period</label><input type="text" name="term" placeholder="e.g. H1 2026" required></div>
     <div style="align-self:end;"><button type="submit">Upload &amp; import</button></div>
   </form>
-  <p class="footnote" style="margin-top:10px;">Give each upload a distinct term (e.g. “Term 1 2026”, “Term 2 2026”). Re-uploading the same term replaces it; a new term adds to the centre’s history for trend tracking.</p>
+  <p class="footnote" style="margin-top:10px;">
+    <strong>Centre:</strong> leave on “Auto-detect” to match the centre from the file’s Summary sheet, or pick it explicitly if the name doesn’t match.
+    <strong>Audit period:</strong> audits are twice a year — use a distinct label like <strong>“H1 2026”</strong> (first half) and <strong>“H2 2026”</strong> (second half). Re-uploading the same period replaces it; a new period adds to the centre’s history.
+  </p>
 </div>
 <div class="card">
   <h2 style="margin-top:0;">Latest audit per centre</h2>
   <% if (!summary.length) { %><p class="muted">None yet.</p><% } else { %>
-    <table><thead><tr><th>Centre</th><th>Term</th><th class="num">Overall</th><th>Audit date</th><th class="num">Open actions</th><th>Uploaded</th></tr></thead>
+    <table><thead><tr><th>Centre</th><th>Period</th><th class="num">Overall</th><th>Audit date</th><th class="num">Open actions</th><th>Uploaded</th></tr></thead>
     <tbody>
       <% summary.forEach(function(c){ %>
         <tr><td><%= shortName(c.centre_name) %></td><td><%= c.term %></td><td class="num"><%= c.overall_pct %>%</td><td><%= c.audit_date || '—' %></td><td class="num"><%= c.open_actions %></td><td class="muted"><%= (c.uploaded_at||'').slice(0,16) %></td></tr>
