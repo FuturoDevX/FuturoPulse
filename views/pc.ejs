@@ -45,29 +45,41 @@
   </div>
 </div>
 
-<div class="pc-metric-grid">
-  <% METRICS.forEach(function(mt){
-       const s = series[mt.key] || { labels:[], points:[], full:0, shown:0 };
-       const pts = s.points;
-       const latest = pts.length ? pts[pts.length-1] : null;
-       const pcLc = { labels: s.labels, height: 120, suf: mt.suf, target: mt.target, connect: true, series: [ { name: mt.name, points: pts } ] };
-  %>
-  <div class="card pc-metric">
-    <div class="pc-head">
-      <div>
-        <div class="pcm-name"><%= mt.name %></div>
-        <div class="pcm-cad"><%= mt.cadence %><% if(mt.target!=null){ %> · target <%= mt.better==='low'?'≤':'≥' %><%= mt.target %><%= mt.suf %><% } %></div>
-      </div>
-      <div class="pcm-val <%= flag(latest, mt.target, mt.better) %>"><%= latest==null ? '—' : latest+mt.suf %></div>
-    </div>
-    <div style="margin-top:14px;">
-      <%- include('partials/linechart', { lc: pcLc }) %>
-    </div>
-    <% if (!full && s.full > s.shown) { %>
-      <div class="pcm-cad" style="margin-top:8px;">Showing last <%= s.shown %> of <%= s.full %> · <a href="/pc?full=1<%= _q %>">explore all</a></div>
-    <% } %>
-  </div>
+<%
+  const _mIdx = METRICS.findIndex(function(x){ return x.key === metric; });
+  const mt = METRICS[_mIdx < 0 ? 0 : _mIdx];
+  const _link = function(k){ return '/pc?metric=' + k + (full?'&full=1':'') + _q; };
+  const s = series[mt.key] || { labels:[], points:[], full:0, shown:0 };
+  const pts = s.points;
+  const latest = pts.length ? pts[pts.length-1] : null;
+  const pcLc = { labels: s.labels, height: 300, suf: mt.suf, target: mt.target, connect: true, series: [ { name: mt.name, points: pts } ] };
+%>
+<div class="pc-tabs">
+  <% METRICS.forEach(function(x){ %>
+    <a href="<%= _link(x.key) %>" class="pc-tab <%= x.key===mt.key?'active':'' %>"><%= x.name %></a>
   <% }); %>
+</div>
+<div class="card pc-metric" style="margin-top:14px;">
+  <div class="pc-head">
+    <div>
+      <div class="pcm-name" style="font-size:20px;"><%= mt.name %></div>
+      <div class="pcm-cad"><%= mt.cadence %><% if(mt.target!=null){ %> · target <%= mt.better==='low'?'≤':'≥' %><%= mt.target %><%= mt.suf %><% } %></div>
+    </div>
+    <div class="pcm-val <%= flag(latest, mt.target, mt.better) %>" style="font-size:40px;"><%= latest==null ? '—' : latest+mt.suf %></div>
+  </div>
+  <div style="margin-top:18px;">
+    <%- include('partials/linechart', { lc: pcLc }) %>
+  </div>
+  <div class="pcm-cad" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span>
+      <% if (s.full > s.shown) { %>Showing last <%= s.shown %> of <%= s.full %> · <a href="/pc?metric=<%= mt.key %>&full=1<%= _q %>">explore all</a><% } else if (full && s.full > 0) { %>Full history (<%= s.full %> periods) · <a href="/pc?metric=<%= mt.key %><%= _q %>">recent only</a><% } else { %><%= s.full %> period<%= s.full===1?'':'s' %> of data<% } %>
+    </span>
+    <span style="display:flex;gap:8px;">
+      <% var _prev = METRICS[(_mIdx-1+METRICS.length)%METRICS.length], _next = METRICS[(_mIdx+1)%METRICS.length]; %>
+      <a class="pc-navbtn" href="<%= _link(_prev.key) %>">← <%= _prev.name %></a>
+      <a class="pc-navbtn" href="<%= _link(_next.key) %>"><%= _next.name %> →</a>
+    </span>
+  </div>
 </div>
 
 <p class="footnote">

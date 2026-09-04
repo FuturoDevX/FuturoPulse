@@ -1,55 +1,23 @@
-<%- include('partials/header', { title: 'P&C Entry' }) %>
-<% const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
-   const g = (id,f) => { const r=data[id]; return (r && r[f]!=null) ? r[f] : ''; }; %>
+<%- include('partials/header', { title: 'P&C Data' }) %>
 <div class="page-head"><div>
-  <p class="crumb"><a href="/pc?month=<%= month %>">← People &amp; Culture</a></p>
-  <h1>P&amp;C Data</h1><p class="sub">Enter People &amp; Culture metrics per centre, for the selected month.</p>
+  <p class="crumb"><a href="/pc">← People &amp; Culture</a></p>
+  <h1>P&amp;C Data</h1><p class="sub">People &amp; Culture metrics come from the HR spreadsheets on SharePoint — upload them here. No manual per-centre entry.</p>
 </div></div>
 <% if (msg) { %><div class="flash"><%= msg %></div><% } %>
 <% if (err) { %><div class="flash bad"><%= err %></div><% } %>
 <div class="card">
   <h2 style="margin-top:0;">Import from SharePoint spreadsheets</h2>
-  <p class="sub" style="margin-top:2px;">Upload the HR workbooks straight from SharePoint — a sheet per centre. This fills <strong>eNPS</strong> (from “eNPS Data.xlsx”) and <strong>turnover, headcount &amp; leavers</strong> (from “Turnover Analysis Working Document.xlsx”) across every month/quarter in the file, so you don’t retype them below. Upload each workbook once; re-uploading refreshes the figures.</p>
+  <p class="sub" style="margin-top:2px;">Upload the HR workbooks straight from SharePoint — a sheet per centre. This fills <strong>eNPS</strong> (from “eNPS Data.xlsx”) and <strong>turnover, headcount &amp; leavers</strong> (from “Turnover Analysis Working Document.xlsx”) across every month/quarter in the file. Upload each workbook once; re-uploading refreshes the figures.</p>
   <form method="POST" action="/admin/pc/import" enctype="multipart/form-data" class="user-form">
     <div><label>Workbook (.xlsx)</label><input type="file" name="workbook" accept=".xlsx" required></div>
     <div style="align-self:end;"><button type="submit">Upload &amp; import</button></div>
   </form>
-  <p class="footnote" style="margin-top:10px;">Turnover stores the <strong>rolling 12-month (YoY)</strong> figure as the headline; the month-on-month rate, headcount and leavers are kept alongside it. The manual entries below are merged in — an imported value is only replaced when you type over it.</p>
+  <p class="footnote" style="margin-top:10px;">Turnover stores the <strong>rolling 12-month (YoY)</strong> figure as the headline; the month-on-month rate, headcount and leavers are kept alongside it. Values load per the periods in the file (eNPS quarterly, turnover monthly).</p>
 </div>
 <form method="POST" action="/admin/pc">
-  <div class="card" style="padding:14px 20px;">
-    <label style="font-size:12px;color:var(--muted);">Month</label>
-    <input type="month" name="month" value="<%= month %>" onchange="this.form.action='/admin/pc';this.form.method='GET';this.form.submit();" style="padding:7px;border:1px solid var(--border);border-radius:6px;">
-  </div>
-  <div class="card">
-    <h2 style="margin-top:0;">Metrics by centre — <%= new Date(month+'-01T00:00:00Z').toLocaleDateString('en-AU',{month:'long',year:'numeric',timeZone:'UTC'}) %></h2>
-    <p class="sub" style="margin-top:2px;">Type only the <strong>hand-collected</strong> metrics below. <strong>eNPS</strong> and <strong>turnover</strong> are shown greyed — they come from the SharePoint upload above, so there’s nothing to type for them.</p>
-    <div style="overflow-x:auto;"><table>
-      <thead><tr>
-        <th>Centre</th>
-        <th class="num">eNPS<br><small class="muted" style="font-weight:400;">from upload · quarterly</small></th>
-        <th class="num">Turnover&nbsp;% YoY<br><small class="muted" style="font-weight:400;">from upload · monthly</small></th>
-        <th class="num">Family NPS<br><small class="muted" style="font-weight:400;">enter · 6-monthly</small></th>
-        <th class="num">Check-ins due<br><small class="muted" style="font-weight:400;">enter · monthly</small></th>
-        <th class="num">Check-ins done<br><small class="muted" style="font-weight:400;">enter · monthly</small></th>
-        <th class="num">Psych safety<br><small class="muted" style="font-weight:400;">enter · quarterly</small></th>
-      </tr></thead>
-      <tbody>
-        <% centres.forEach(function(c){ %>
-          <tr><td><%= shortName(c.name) %></td>
-            <td class="num muted"><%= (data[c.owna_id] && data[c.owna_id].enps!=null) ? data[c.owna_id].enps : '—' %></td>
-            <td class="num muted"><%= (data[c.owna_id] && data[c.owna_id].turnover!=null) ? data[c.owna_id].turnover+'%' : '—' %></td>
-            <td class="num"><input type="text" name="familynps_<%= c.owna_id %>" value="<%= g(c.owna_id,'family_nps') %>" style="width:70px;text-align:right;"></td>
-            <td class="num"><input type="text" name="due_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_due') %>" style="width:70px;text-align:right;"></td>
-            <td class="num"><input type="text" name="done_<%= c.owna_id %>" value="<%= g(c.owna_id,'checkin_completed') %>" style="width:70px;text-align:right;"></td>
-            <td class="num"><input type="text" name="psych_<%= c.owna_id %>" value="<%= g(c.owna_id,'psych_safety') %>" style="width:70px;text-align:right;"></td>
-          </tr>
-        <% }); %>
-      </tbody>
-    </table></div>
-  </div>
   <div class="card">
     <h2 style="margin-top:0;">Targets / benchmarks</h2>
+    <p class="sub" style="margin-top:2px;">The dashed reference line on each P&amp;C chart.</p>
     <div class="user-form">
       <div><label>eNPS (≥)</label><input type="text" name="target_enps" value="<%= targets.enps!=null?targets.enps:'' %>"></div>
       <div><label>Family NPS (≥)</label><input type="text" name="target_family_nps" value="<%= targets.family_nps!=null?targets.family_nps:'' %>"></div>
@@ -58,6 +26,6 @@
       <div><label>Psych safety (≥)</label><input type="text" name="target_psych_safety" value="<%= targets.psych_safety!=null?targets.psych_safety:'' %>"></div>
     </div>
   </div>
-  <button type="submit">Save</button>
+  <button type="submit">Save targets</button>
 </form>
 <%- include('partials/footer') %>

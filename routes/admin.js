@@ -101,20 +101,11 @@ router.post("/pc/import", requireAdmin, upload.single("workbook"), (req, res) =>
     res.redirect("/admin/pc?err=" + encodeURIComponent("Import failed: " + e.message));
   }
 });
+// P&C metric DATA comes from the SharePoint upload (POST /pc/import); this only saves target lines.
 router.post("/pc", requireAdmin, (req, res) => {
-  const month = /^\d{4}-\d{2}$/.test(req.body.month) ? req.body.month : new Date().toISOString().slice(0,7);
   const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.-]/g, "")); return isNaN(n) ? null : n; };
-  const centres = db.prepare("SELECT owna_id FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0)").all();
-  for (const c of centres) {
-    m.savePcMetric(c.owna_id, month, {
-      enps: num(req.body["enps_" + c.owna_id]), family_nps: num(req.body["familynps_" + c.owna_id]),
-      turnover: num(req.body["turnover_" + c.owna_id]),
-      checkin_due: num(req.body["due_" + c.owna_id]), checkin_completed: num(req.body["done_" + c.owna_id]),
-      psych_safety: num(req.body["psych_" + c.owna_id]),
-    });
-  }
   ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"].forEach((k) => { const v = num(req.body["target_" + k]); if (v != null) m.savePcTarget(k, v); });
-  res.redirect("/admin/pc?month=" + month + "&msg=" + encodeURIComponent("Saved."));
+  res.redirect("/admin/pc?msg=" + encodeURIComponent("Targets saved."));
 });
 
 

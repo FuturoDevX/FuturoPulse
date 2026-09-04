@@ -270,6 +270,12 @@ tr:hover td.hot { background: #ffedcc; }
 
 /* People & Culture trend cards */
 .pc-metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.pc-tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--border); }
+.pc-tab { padding: 9px 14px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.pc-tab:hover { color: var(--navy); }
+.pc-tab.active { color: var(--navy); border-bottom-color: var(--navy); }
+.pc-navbtn { background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: 600; color: var(--navy); text-decoration: none; text-transform: none; letter-spacing: 0; }
+.pc-navbtn:hover { background: #eef2fb; border-color: #cdd9f2; }
 .pc-metric { margin-bottom: 0; }
 .pcm-name { font-size: 15px; font-weight: 700; color: var(--navy); letter-spacing: -.01em; }
 .pcm-cad { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 2px; }

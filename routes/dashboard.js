@@ -156,11 +156,13 @@ router.get("/pc", (req, res) => {
   const owna = scoped || (centresList.find((c) => c.owna_id === req.query.owna) ? req.query.owna : null); // null = all centres (group avg)
   const latestMonth = m.pcMonths(1)[0] || new Date().toISOString().slice(0, 7);
   const full = req.query.full === "1";
+  const PC_KEYS = ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"];
+  const metric = PC_KEYS.includes(req.query.metric) ? req.query.metric : "enps";
   res.render("pc", {
     title: "People & Culture",
     centres: centresList, owna,
     series: m.pcAllSeries(owna, full),
-    full,
+    metric, full,
     latest: m.pcForMonth(latestMonth, owna || undefined),
     latestMonth,
     targets: m.pcTargets(),
