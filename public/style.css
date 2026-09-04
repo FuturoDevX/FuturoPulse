@@ -276,6 +276,13 @@ tr:hover td.hot { background: #ffedcc; }
 .pc-tab.active { color: var(--navy); border-bottom-color: var(--navy); }
 .pc-navbtn { background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: 600; color: var(--navy); text-decoration: none; text-transform: none; letter-spacing: 0; }
 .pc-navbtn:hover { background: #eef2fb; border-color: #cdd9f2; }
+.ai-brief { border-left: 3px solid var(--navy); }
+.brief-body { margin-top: 8px; font-size: 14px; line-height: 1.55; color: var(--ink, #1f2937); }
+.brief-body h3, .brief-body h4, .brief-body h5 { margin: 12px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.brief-body p { margin: 6px 0; }
+.brief-body ul { margin: 6px 0 6px 18px; padding: 0; }
+.brief-body li { margin: 3px 0; }
+.brief-body strong { color: var(--navy); }
 .pc-metric { margin-bottom: 0; }
 .pcm-name { font-size: 15px; font-weight: 700; color: var(--navy); letter-spacing: -.01em; }
 .pcm-cad { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 2px; }

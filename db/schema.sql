@@ -272,3 +272,12 @@ CREATE TABLE IF NOT EXISTS incidents_monthly (
   updated_at  TEXT,
   PRIMARY KEY (owna_id, month)
 );
+
+-- ===== AI: cached weekly operations briefing (generated via the Claude API) =====
+CREATE TABLE IF NOT EXISTS ai_briefings (
+  period_to   TEXT PRIMARY KEY,        -- week-ending anchor date (YYYY-MM-DD); one briefing per week
+  period_from TEXT,                    -- week-starting date
+  content     TEXT,                    -- Claude's markdown briefing
+  model       TEXT,                    -- model id used
+  created_at  TEXT
+);

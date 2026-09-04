@@ -1,5 +1,7 @@
 const express = require("express");
 const m = require("../services/metrics");
+const ai = require("../services/ai");
+const brief = require("../services/ai-briefing");
 const { blockScoped, scopedOwnaId, requireAdminOrOps } = require("../middleware/auth");
 const { lastRun } = require("../services/snapshot");
 const router = express.Router();
@@ -55,8 +57,22 @@ router.get("/", (req, res) => {
     fcast: m.forwardOccupancyByCentre(30),
     pcGroup: m.pcGroupLatest(),
     occTrend: m.occupancyTrendGroupFwd(12, 2),
+    briefing: brief.getLatest(),
+    briefingCurrent: brief.isCurrent(brief.getLatest()),
+    aiEnabled: ai.isEnabled(),
+    briefingError: req.query.aierr,
     lastRun: lastRun(),
   });
+});
+
+// Generate / refresh the AI weekly briefing (admin/ops). Async — calls the Claude API.
+router.post("/ai/briefing", requireAdminOrOps, async (req, res) => {
+  try {
+    await brief.generateBriefing();
+    res.redirect("/#briefing");
+  } catch (e) {
+    res.redirect("/?aierr=" + encodeURIComponent(e.message) + "#briefing");
+  }
 });
 
 // Enrolment pipeline / waitlist (LineLeader).

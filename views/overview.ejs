@@ -31,6 +31,49 @@
   <div class="card stat"><div class="n"><%= totals.capacity %></div><div class="l">Total places</div></div>
 </div>
 
+<%
+  // Minimal, safe Markdown -> HTML for the AI briefing (headings, bullets, bold/italic).
+  function _esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function _mdInline(s){ return _esc(s).replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/(^|[^*])\*(?!\*)(.+?)\*/g,'$1<em>$2</em>'); }
+  function mdToHtml(md){
+    const lines = String(md||'').split(/\r?\n/); let out=''; let inList=false;
+    for (const raw of lines){ const line = raw.trim();
+      if(!line){ if(inList){out+='</ul>';inList=false;} continue; }
+      const b = line.match(/^[-*]\s+(.*)$/); const h = line.match(/^(#{1,3})\s+(.*)$/);
+      if(b){ if(!inList){out+='<ul>';inList=true;} out+='<li>'+_mdInline(b[1])+'</li>'; continue; }
+      if(inList){out+='</ul>';inList=false;}
+      if(h){ const lvl=Math.min(h[1].length+2,5); out+='<h'+lvl+'>'+_mdInline(h[2])+'</h'+lvl+'>'; }
+      else out+='<p>'+_mdInline(line)+'</p>';
+    }
+    if(inList)out+='</ul>'; return out;
+  }
+  const canGenerate = ['admin','ops_manager'].includes(user.role);
+%>
+<div class="card ai-brief" id="briefing">
+  <div class="pc-head" style="margin-bottom:6px;">
+    <div>
+      <div class="pcm-name" style="display:flex;align-items:center;gap:8px;">✨ AI weekly briefing
+        <% if (typeof aiEnabled !== 'undefined' && aiEnabled && briefing) { %><span class="badge <%= briefingCurrent ? 'role-admin' : '' %>" style="font-size:10px;"><%= briefingCurrent ? 'Current' : 'Older week' %></span><% } %>
+      </div>
+      <div class="pcm-cad">Written by Claude from this week’s operations data<% if (briefing) { %> · week ending <%= briefing.period_to %> · generated <%= (briefing.created_at||'').slice(0,16) %><% } %></div>
+    </div>
+    <% if (canGenerate && (typeof aiEnabled==='undefined' || aiEnabled)) { %>
+      <form method="POST" action="/ai/briefing" class="inline" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';">
+        <button type="submit" class="secondary-btn"><%= briefing ? '↻ Refresh' : '✨ Generate' %></button>
+      </form>
+    <% } %>
+  </div>
+  <% if (typeof briefingError !== 'undefined' && briefingError) { %><div class="flash bad" style="margin:8px 0;"><%= briefingError %></div><% } %>
+  <% if (briefing) { %>
+    <div class="brief-body"><%- mdToHtml(briefing.content) %></div>
+    <% if (!briefingCurrent && (typeof aiEnabled==='undefined' || aiEnabled)) { %><p class="pcm-cad" style="margin-top:8px;">Newer data is available — Refresh to rewrite for the latest week.</p><% } %>
+  <% } else if (typeof aiEnabled !== 'undefined' && !aiEnabled) { %>
+    <p class="sub" style="margin:6px 0 0;">Set an <code>ANTHROPIC_API_KEY</code> environment variable (and optionally <code>AI_MODEL</code>) to enable this. It calls the Claude API server-side to summarise the week — what moved and what to watch — across all centres.</p>
+  <% } else { %>
+    <p class="sub" style="margin:6px 0 0;"><%= canGenerate ? 'No briefing yet — hit Generate to have Claude summarise the week.' : 'No briefing yet.' %></p>
+  <% } %>
+</div>
+
 <% if (typeof pcGroup !== 'undefined' && pcGroup) {
      const t = pcGroup.targets || {};
      const mlab = (mm)=>{ if(!mm) return ''; const [y,mo]=mm.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
