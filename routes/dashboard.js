@@ -77,8 +77,9 @@ router.post("/ask", async (req, res) => {
   if (!ai.isEnabled()) return res.status(503).json({ error: "AI is not enabled — set ANTHROPIC_API_KEY." });
   try {
     const history = Array.isArray(req.body.history) ? req.body.history : [];
-    const { answer } = await askAI.ask(question, history, scopedOwnaId(req) || null);
-    res.json({ answer });
+    const { answer, toolCalls } = await askAI.ask(question, history, scopedOwnaId(req) || null);
+    const tools = [...new Set((toolCalls || []).map((t) => t.name))];
+    res.json({ answer, tools });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

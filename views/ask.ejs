@@ -67,7 +67,11 @@
         thinking.remove();
         if(!res.ok || res.j.error){ bubble('ai', esc(res.j.error || 'Something went wrong.'), 'err'); }
         else {
-          bubble('ai', md(res.j.answer));
+          var LABELS = { occupancy_for_period:'occupancy', waitlist:'waitlist', expected_starts:'expected starts',
+                         projected_occupancy:'projection', tours:'tours', current_state:'current performance', centres_list:'centre list' };
+          var used = (res.j.tools||[]).map(function(t){ return LABELS[t] || t; });
+          var extra = used.length ? '<div class="ask-src">Checked: ' + esc(used.join(' · ')) + '</div>' : '';
+          bubble('ai', md(res.j.answer) + extra);
           history.push({role:'user', content:q});
           history.push({role:'assistant', content:res.j.answer});
         }
