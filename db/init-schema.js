@@ -30,6 +30,13 @@ function initSchema(db) {
   addColumnIfMissing("incidents_monthly", "illness", "INTEGER DEFAULT 0");
   addColumnIfMissing("incidents_monthly", "serious", "INTEGER DEFAULT 0");
 
+  addColumnIfMissing("action_plan_items", "start_date", "TEXT");
+  addColumnIfMissing("action_plan_items", "due_date", "TEXT");
+  addColumnIfMissing("action_plan_items", "progress", "TEXT");
+  addColumnIfMissing("action_plan_items", "outcome", "TEXT");
+  addColumnIfMissing("action_plan_items", "priority", "TEXT");
+  addColumnIfMissing("action_plan_items", "job_reference", "TEXT");
+
   // ai_briefings moved from one-row-per-week (PK period_to) to one-per-date-range (PK period_key).
   // It is a regenerable cache, so recreate it rather than migrate rows.
   const abCols = db.prepare("PRAGMA table_info(ai_briefings)").all().map((c) => c.name);
@@ -40,10 +47,16 @@ function initSchema(db) {
   }
 
   // Seed the default admin if it doesn't exist yet.
+  const isProd = process.env.NODE_ENV === "production";
   const email = process.env.ADMIN_EMAIL || "admin@example.com";
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
   if (!existing) {
     const pw = process.env.ADMIN_DEFAULT_PASSWORD || "ChangeMe123!";
+    // Never seed a production admin with the published default or a weak/missing password.
+    if (isProd && (!process.env.ADMIN_EMAIL || /example\.com$/i.test(email) || !process.env.ADMIN_DEFAULT_PASSWORD || pw === "ChangeMe123!" || pw.length < 12)) {
+      console.error("Refusing to create the default admin in production: set ADMIN_EMAIL and a strong (12+ char) ADMIN_DEFAULT_PASSWORD.");
+      process.exit(1);
+    }
     const hash = bcrypt.hashSync(pw, 10);
     db.prepare("INSERT INTO users (email, name, password_hash, role) VALUES (?,?,?,?)").run(email, "Admin", hash, "admin");
     console.log(`[init] created admin user ${email} (change the password after first login)`);

@@ -25,7 +25,7 @@ function classify(payCategory) {
   return "worked";
 }
 
-async function runLabourSnapshot({ weeks = WEEKS, log = console.log } = {}) {
+async function runLabourSnapshot({ weeks = WEEKS, log = console.log, dryRun = false } = {}) {
   if (!eh.hasCreds()) { log("[EH] no payroll credentials — skipping"); return { skipped: true }; }
 
   // 1) Employee map: id -> { isKitchen, isCasual }.
@@ -42,31 +42,31 @@ async function runLabourSnapshot({ weeks = WEEKS, log = console.log } = {}) {
     });
   }
 
-  // 2) Pay runs -> datePaid => periodEnding, limited to recent `weeks` distinct periods.
-  const runs = await eh.payRuns();
-  const paidToPeriod = new Map();
-  const periods = [];
-  for (const r of runs) {
-    const paid = d10(r.datePaid), end = d10(r.payPeriodEnding);
-    if (!paid || !end) continue;
-    paidToPeriod.set(paid, end);
-    if (!periods.includes(end)) periods.push(end);
-  }
+  // Use each finalised run's own pay period, never its payment date.
+  if (!Number.isInteger(weeks) || weeks < 1 || weeks > 260) throw new Error("Invalid wage history window.");
+  const allRuns = await eh.payRuns();
+  const runs = allRuns.filter(r => r.isFinalised === true);
+  if (runs.some(r => !/^\d{4}-\d{2}-\d{2}$/.test(d10(r.payPeriodEnding) || ""))) throw new Error("Pay period missing; no wages saved.");
+  const periods = [...new Set(runs.map(r => d10(r.payPeriodEnding)))].sort().reverse();
   const keepPeriods = new Set(periods.slice(0, weeks));
-  const paidDates = [...paidToPeriod.entries()].filter(([, e]) => keepPeriods.has(e)).map(([p]) => p).sort();
-  if (!paidDates.length) { log("[EH] no pay runs"); return { ok: true, weeks: 0 }; }
-  const fromDate = paidDates[0], toDate = paidDates[paidDates.length - 1];
-
-  // 3) Pay-category detail for the window.
-  const rows = await eh.payCategoriesReport(fromDate, toDate);
-  log(`[EH] ${emps.length} employees, ${keepPeriods.size} weeks, ${rows.length} pay lines (${fromDate}..${toDate})`);
+  const selected = runs.filter(r => keepPeriods.has(d10(r.payPeriodEnding)));
+  if (!selected.length) return { ok: true, weeks: 0, rows: 0 };
+  const rows = [], reconciliation = [];
+  const locations = await eh.locations();
+  for (const run of selected) {
+    const [detail, totals] = await Promise.all([eh.earnings(run.id), eh.runTotals(run.id)]);
+    const normalised = normaliseRun(run, detail, totals);
+    rows.push(...normalised.rows.map(row => ({ ...row, sourceLocation: row.location, location: centreLocation(row.location_id, locations) })));
+    reconciliation.push(normalised.reconciliation);
+  }
+  log(`[EH] ${selected.length} finalised runs reconciled across ${keepPeriods.size} periods`);
 
   // 4) Aggregate per (centre, week).
   const centres = db.prepare(`SELECT owna_id, name FROM centres`).all();
   const agg = new Map(); // key eh_centre|week
   const empSeen = new Map(); // key -> Set of employeeIds
   for (const r of rows) {
-    const week = paidToPeriod.get(d10(r.datePaid));
+    const week = r.week_ending;
     if (!week || !keepPeriods.has(week)) continue;
     const centre = r.location || "(none)";
     const key = centre + "|" + week;
@@ -75,8 +75,8 @@ async function runLabourSnapshot({ weeks = WEEKS, log = console.log } = {}) {
     const em = empMap.get(r.employeeId) || {};
     const hrs = Number(r.units) || 0, amt = Number(r.amount) || 0, sup = Number(r.superAmount) || 0;
     let bucket = classify(r.payCategory);
-    if (bucket === "worked" && em.isKitchen) bucket = "kitchen";
-    else if (bucket === "worked" && em.isCleaning) bucket = "cleaning";
+    if (bucket === "worked" && (em.isKitchen || /kitchen|chef/i.test(r.sourceLocation || ""))) bucket = "kitchen";
+    else if (bucket === "worked" && (em.isCleaning || /clean/i.test(r.sourceLocation || ""))) bucket = "cleaning";
     if (bucket === "worked") { a.worked_h += hrs; a.worked_amt += amt; if (em.isCasual) a.casual_h += hrs; }
     else if (bucket === "kitchen") { a.kitchen_h += hrs; a.kitchen_amt += amt; }
     else if (bucket === "cleaning") { a.cleaning_h += hrs; a.cleaning_amt += amt; }
@@ -86,8 +86,12 @@ async function runLabourSnapshot({ weeks = WEEKS, log = console.log } = {}) {
     if (r.employeeId) empSeen.get(key).add(r.employeeId);
   }
 
+  const summary = { ok: true, weeks: keepPeriods.size, rows: agg.size, runs: reconciliation.length,
+    total_wages: Math.round(rows.reduce((a,r) => a + r.amount, 0) * 100) / 100, reconciliation };
+  if (dryRun) return summary;
+
   // 5) Upsert (rebuild the weeks in window).
-  const del = db.prepare(`DELETE FROM labour_weekly WHERE week_ending BETWEEN ? AND ?`);
+  const del = db.prepare(`DELETE FROM labour_weekly WHERE week_ending = ?`);
   const ins = db.prepare(`
     INSERT INTO labour_weekly (eh_centre, week_ending, owna_id, employees, worked_h, worked_amt, kitchen_h, kitchen_amt, cleaning_h, cleaning_amt, leave_h, leave_amt, matwc_amt, casual_h, total_hours, total_wages, super_amt, updated_at)
     VALUES (@eh_centre,@week_ending,@owna_id,@employees,@worked_h,@worked_amt,@kitchen_h,@kitchen_amt,@cleaning_h,@cleaning_amt,@leave_h,@leave_amt,@matwc_amt,@casual_h,@total_hours,@total_wages,@super_amt,datetime('now'))
@@ -96,9 +100,8 @@ async function runLabourSnapshot({ weeks = WEEKS, log = console.log } = {}) {
       leave_h=excluded.leave_h, leave_amt=excluded.leave_amt, matwc_amt=excluded.matwc_amt, casual_h=excluded.casual_h,
       total_hours=excluded.total_hours, total_wages=excluded.total_wages, super_amt=excluded.super_amt, updated_at=datetime('now')
   `);
-  const minW = [...keepPeriods].sort()[0], maxW = [...keepPeriods].sort().slice(-1)[0];
   const tx = db.transaction(() => {
-    del.run(minW, maxW);
+    for (const period of keepPeriods) del.run(period);
     for (const [key, a] of agg) {
       const rnd = (x) => Math.round(x * 100) / 100;
       ins.run({
@@ -111,7 +114,56 @@ async function runLabourSnapshot({ weeks = WEEKS, log = console.log } = {}) {
   });
   tx();
   log(`[EH] labour_weekly rows written: ${agg.size}`);
-  return { ok: true, weeks: keepPeriods.size, rows: agg.size };
+  return summary;
 }
 
-module.exports = { runLabourSnapshot };
+function normaliseRun(run, detail, totals) {
+  if (String(detail?.payRunId) !== String(run.id) || String(totals?.payRunId) !== String(run.id) ||
+      !detail.earningsLines || !totals.payRunTotals) throw new Error("Run identity missing or mismatched; no wages saved.");
+  const rows = [], seen = new Set();
+  for (const [employeeId, lines] of Object.entries(detail.earningsLines)) {
+    if (!Array.isArray(lines)) throw new Error("Invalid earnings response.");
+    for (const line of lines) {
+      if (line.id == null || seen.has(String(line.id))) throw new Error("Duplicate or missing earnings line identity.");
+      seen.add(String(line.id));
+      if (!line.locationName || !line.payCategoryName || !Number.isFinite(Number(line.earnings))) throw new Error("Incomplete earnings line; no wages saved.");
+      rows.push({ week_ending: d10(run.payPeriodEnding), employeeId: Number(employeeId), location: line.locationName, location_id: line.locationId,
+        payCategory: line.payCategoryName, units: Number(line.units) || 0, amount: Number(line.earnings), superAmount: Number(line.super) || 0 });
+    }
+  }
+  // EH rounds each employee's gross, while earnings lines retain up to five decimals.
+  // Reconcile individually; apply only the <= half-cent rounding residual to that
+  // employee's largest line. Missing earnings cannot pass a whole-run tolerance.
+  let roundingAdjustment = 0;
+  const employeeIds = new Set([...Object.keys(totals.payRunTotals), ...rows.map(r => String(r.employeeId))]);
+  for (const id of employeeIds) {
+    const total = totals.payRunTotals[id];
+    if (!total || !Number.isFinite(Number(total.grossEarnings))) throw new Error("Missing employee payroll total.");
+    const employeeRows = rows.filter(r => String(r.employeeId) === id);
+    const delta = Number(total.grossEarnings) - employeeRows.reduce((a,r) => a + r.amount, 0);
+    if (Math.abs(delta) > 0.005001) throw new Error("Employee earnings do not reconcile to payroll totals; no wages saved.");
+    if (employeeRows.length) { employeeRows.reduce((a,b) => Math.abs(a.amount) >= Math.abs(b.amount) ? a : b).amount += delta; roundingAdjustment += delta; }
+  }
+  const expected = Object.values(totals.payRunTotals);
+  if (expected.some(t => !Number.isFinite(Number(t.grossEarnings)))) throw new Error("Invalid payroll totals.");
+  const gross = expected.reduce((a,t) => a + Number(t.grossEarnings), 0);
+  const actual = rows.reduce((a,r) => a + r.amount, 0);
+  if (Math.abs(Math.round(gross * 100) - Math.round(actual * 100)) > 1) throw new Error("Earnings do not reconcile to payroll totals; no wages saved.");
+  return { rows, reconciliation: { run_id: run.id, period_ending: d10(run.payPeriodEnding), lines: rows.length, rounding_adjustment: roundingAdjustment,
+    source_gross: Math.round(gross * 100) / 100, imported_gross: Math.round(actual * 100) / 100 } };
+}
+function centreLocation(id, locations) {
+  const byId = new Map(locations.map(l => [String(l.id),l]));
+  let loc = byId.get(String(id)); const seen = new Set();
+  if (!loc) throw new Error("Unknown payroll location; no wages saved.");
+  while (loc.parentId != null) {
+    if (seen.has(String(loc.id))) throw new Error("Payroll location hierarchy is cyclic.");
+    seen.add(String(loc.id));
+    const parent = byId.get(String(loc.parentId));
+    if (!parent) throw new Error("Payroll parent location missing.");
+    if (parent.parentId == null) break; // direct child of the organisation is a centre/cost centre
+    loc = parent;
+  }
+  return loc.name;
+}
+module.exports = { runLabourSnapshot, normaliseRun, classify, centreLocation };

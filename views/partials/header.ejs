@@ -19,14 +19,14 @@
       <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>">Overview</a>
       <a href="/ask" class="<%= currentPath === '/ask' ? 'active' : '' %>">✨ Ask your data</a>
       <a href="/pc" class="<%= currentPath === '/pc' ? 'active' : '' %>">People &amp; Culture</a>
-      <a href="/qc" class="<%= currentPath === '/qc' ? 'active' : '' %>">Quality &amp; Compliance</a>
-      <a href="/action-plans" class="<%= currentPath.indexOf('/action-plans')===0 ? 'active' : '' %>">Action Plans</a>
+      <% if (locals.canSeeIdentified) { %><a href="/qc" class="<%= currentPath === '/qc' ? 'active' : '' %>">Quality &amp; Compliance</a>
+      <a href="/action-plans" class="<%= currentPath.indexOf('/action-plans')===0 ? 'active' : '' %>">Action Plans</a><% } %>
       <a href="/safety" class="<%= currentPath === '/safety' ? 'active' : '' %>">Safety &amp; Incidents</a>
       <a href="/rostering" class="<%= currentPath === '/rostering' ? 'active' : '' %>">Rostering</a>
       <a href="/feedback" class="<%= currentPath === '/feedback' ? 'active' : '' %>">💬 Share feedback</a>
       <% if (!locals.scopedOwnaId) { %>
         <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
-        <a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a>
+        <% if (locals.canSeeIdentified) { %><a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a><% } %>
         <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>">Projection</a>
         <a href="/wages" class="<%= currentPath === '/wages' ? 'active' : '' %>">Wages &amp; Margin</a>
         <a href="/compare" class="<%= currentPath === '/compare' ? 'active' : '' %>">Compare</a>

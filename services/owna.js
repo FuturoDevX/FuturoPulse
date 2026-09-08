@@ -24,8 +24,8 @@ async function apiGet(path, { query } = {}) {
   let body;
   try { body = text ? JSON.parse(text) : null; } catch { body = text; }
   if (!res.ok) {
-    const msg = body && body.errors ? JSON.stringify(body.errors) : (body || res.statusText);
-    const err = new Error(`OWNA ${res.status} ${path}: ${msg}`);
+    // Status + path only. Never include the response body — it may contain children's or staff records.
+    const err = new Error(`OWNA ${res.status} ${path}`);
     err.status = res.status;
     throw err;
   }

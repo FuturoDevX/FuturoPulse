@@ -14,8 +14,10 @@
     <div><label>Email</label><input type="email" name="email" required placeholder="name@futuro.nsw.edu.au"></div>
     <div><label>Role</label>
       <select name="role" id="roleSel" onchange="document.getElementById('centreWrap').style.display = this.value==='centre' ? 'block':'none';">
-        <option value="exec">Exec — sees everything</option>
-        <option value="centre">Centre — sees only their centre</option>
+        <option value="viewer">Viewer — read-only, all centres, no named children/staff (use for demos)</option>
+        <option value="centre">Centre — read-only, their own centre only</option>
+        <option value="exec">Exec — read-only, all centres, can see named records</option>
+        <option value="ops_manager">Ops manager — exec + edits action plans, budgets, refreshes data</option>
         <option value="admin">Admin — full access + manage users</option>
       </select>
     </div>

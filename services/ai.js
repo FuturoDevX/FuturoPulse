@@ -16,31 +16,17 @@ async function call(body) {
   if (!isEnabled()) throw new Error("ANTHROPIC_API_KEY is not set — add it to the environment to enable AI features.");
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
-  let res;
   try {
-    res = await fetch(API_URL, {
+    const res = await fetch(API_URL, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(body),
-      signal: ctl.signal,
+      headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(body), signal: ctl.signal,
     });
+    if (!res.ok) { await res.body?.cancel(); throw new Error("AI service request failed."); }
+    return await res.json();
   } catch (e) {
-    if (e.name === "AbortError") throw new Error(`The AI request timed out after ${Math.round(TIMEOUT_MS / 1000)}s. Please try again.`);
-    throw new Error("Could not reach the Claude API: " + e.message);
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    let msg = t.slice(0, 300);
-    try { const j = JSON.parse(t); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
-    throw new Error(`Claude API ${res.status}: ${msg}`);
-  }
-  return res.json();
+    throw new Error(e.name === "AbortError" ? "The AI request timed out. Please try again." : "The AI service request failed. Please try again later.");
+  } finally { clearTimeout(timer); }
 }
 
 const textOf = (data) => (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("").trim();
@@ -77,7 +63,7 @@ async function completeWithTools({ system, messages, tools, runTool, maxTokens =
       toolCalls.push({ name: block.name, input: block.input });
       let out;
       try { out = await runTool(block.name, block.input); }
-      catch (e) { out = { error: String(e.message || e) }; }
+      catch (e) { out = { error: "Data lookup failed." }; }
       results.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(out).slice(0, 30000) });
     }
     convo.push({ role: "user", content: results });

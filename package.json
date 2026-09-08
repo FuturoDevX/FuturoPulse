@@ -7,7 +7,10 @@
     "start": "node server.js",
     "seed": "node db/init.js",
     "snapshot": "node db/snapshot-run.js",
-    "backfill": "node db/backfill.js"
+    "backfill": "node db/backfill.js",
+    "backup": "node scripts/backup-db.js",
+    "test": "node --test tests/*.test.js",
+    "restore": "node scripts/restore-db.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

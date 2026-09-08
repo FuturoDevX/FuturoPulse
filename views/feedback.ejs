@@ -15,6 +15,9 @@
   <% if (err) { %><div class="flash bad">Please add a message before submitting.</div><% } %>
   <div class="card">
     <p class="sub" style="margin-top:0;">Anything at all — a missing metric, something confusing, how you’d prefer the data shown, a bug, or a big idea. Nothing is too small.</p>
+    <div class="notice">
+      <strong>How your feedback is handled.</strong> Futuro Early Learning collects your name, email, role, the page you came from and your message so we can improve this dashboard and follow up if useful. Only administrators can read it. It is stored in the dashboard database with our hosting provider. The feedback feature does not send it to the AI service. Automatic feedback expiry is not currently configured. You can ask to see, correct or remove your feedback at any time by contacting <%= privacyContact %>. Please don’t include children’s or other staff members’ names.
+    </div>
     <form method="POST" action="/feedback">
       <input type="hidden" name="page" value="<%= fromPage %>">
       <div class="user-form">

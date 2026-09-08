@@ -2,7 +2,8 @@
 <%
   const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
   const pctClass = (p) => p==null ? '' : (p>=90 ? 'good' : p>=75 ? 'warn' : 'bad');
-  const prPill = (p) => { const c = /high/i.test(p)?'bad':/med/i.test(p)?'warn':'muted'; return '<span class="reason-tag '+(c==='bad'?'bad':'')+'" style="'+(c==='warn'?'background:#fdf3d9;color:#8a6d0b;':'')+'">'+(p||'—')+'</span>'; };
+  const escHtml = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const prPill = (p) => { const c = /high/i.test(p)?'bad':/med/i.test(p)?'warn':'muted'; return '<span class="reason-tag '+(c==='bad'?'bad':'')+'" style="'+(c==='warn'?'background:#fdf3d9;color:#8a6d0b;':'')+'">'+escHtml(p||'—')+'</span>'; };
   const isDone = (c) => /^y/i.test((c||'').trim());
 %>
 <div class="page-head"><div>

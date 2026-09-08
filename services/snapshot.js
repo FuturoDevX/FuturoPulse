@@ -133,7 +133,7 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
         });
         writeCcs([...byWeek.entries()]);
       } catch (e) {
-        log(`[snapshot] CCS pull failed for ${c.name}: ${e.message}`);
+        log(`[snapshot] CCS pull failed for ${c.name}: [details withheld]`);
       }
 
       log(`[snapshot] ${c.name}: ${att.length} bookings, ${byDay.size} days, capacity ${capacity}`);
@@ -143,24 +143,24 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
     try {
       await runLineLeaderSnapshot({ windowDays, forwardDays, log });
     } catch (e) {
-      log(`[snapshot] LineLeader pull failed: ${e.message}`);
+      log(`[snapshot] LineLeader pull failed: [details withheld]`);
     }
 
     // Employment Hero labour (best-effort).
-    try { await runLabourSnapshot({ log }); } catch (e) { log(`[snapshot] EH labour failed: ${e.message}`); }
+    try { await runLabourSnapshot({ log }); } catch (e) { log(`[snapshot] EH labour failed: [details withheld]`); }
 
     // Exit report (OWNA departures + LineLeader reasons) — best-effort.
     try {
       await runExitReport({ log });
     } catch (e) {
-      log(`[snapshot] exit report failed: ${e.message}`);
+      log(`[snapshot] exit report failed: [details withheld]`);
     }
 
     // Child incidents (safety) — best-effort.
-    try { await runIncidents({ windowDays, log }); } catch (e) { log(`[snapshot] incidents failed: ${e.message}`); }
+    try { await runIncidents({ windowDays, log }); } catch (e) { log(`[snapshot] incidents failed: [details withheld]`); }
 
     // Weekly staff roster — best-effort.
-    try { await runRoster({ log }); } catch (e) { log(`[snapshot] roster failed: ${e.message}`); }
+    try { await runRoster({ log }); } catch (e) { log(`[snapshot] roster failed: [details withheld]`); }
 
     db.prepare(
       `UPDATE snapshot_runs SET finished_at=datetime('now'), status='ok', rows_written=? WHERE id=?`
@@ -170,8 +170,8 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
   } catch (e) {
     db.prepare(
       `UPDATE snapshot_runs SET finished_at=datetime('now'), status='error', note=? WHERE id=?`
-    ).run(String(e.message || e), runId);
-    log(`[snapshot] ERROR: ${e.message}`);
+    ).run("Snapshot failed; source details withheld", runId);
+    log(`[snapshot] ERROR: [details withheld]`);
     throw e;
   }
 }
@@ -195,7 +195,7 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
   let rows = 0;
   for (const c of centres) {
     let inc;
-    try { inc = await owna.childIncidents(c.id, from, to); } catch (e) { log(`[incidents] ${c.name}: ${e.message}`); continue; }
+    try { inc = await owna.childIncidents(c.id, from, to); } catch (e) { log(`[incidents] ${c.name}: [details withheld]`); continue; }
     const byMonth = new Map();
     for (const r of inc) {
       const month = (r.incidentDate || "").slice(0, 7);
@@ -303,7 +303,7 @@ async function runOwnaBackfill({ backDays = 730, log = console.log } = {}) {
           }
         });
         write([...byDay.entries()]);
-      } catch (e) { log(`[backfill] ${c.name} ${from}: ${e.message}`); }
+      } catch (e) { log(`[backfill] ${c.name} ${from}: [details withheld]`); }
       cur = next;
     }
     log(`[backfill] ${c.name} done`);
@@ -364,7 +364,7 @@ async function runExitReport({ log = console.log } = {}) {
       }
       log(`[exits] LineLeader withdrawal reasons: ${reasonMap.size}`);
     } catch (e) {
-      log(`[exits] LineLeader reason map failed: ${e.message}`);
+      log(`[exits] LineLeader reason map failed: [details withheld]`);
     }
   }
 
@@ -373,7 +373,7 @@ async function runExitReport({ log = console.log } = {}) {
   const centres = db.prepare(`SELECT owna_id, name FROM centres`).all();
   for (const c of centres) {
     let kids;
-    try { kids = await owna.listChildren(c.owna_id); } catch (e) { log(`[exits] ${c.name}: children pull failed: ${e.message}`); continue; }
+    try { kids = await owna.listChildren(c.owna_id); } catch (e) { log(`[exits] ${c.name}: children pull failed: [details withheld]`); continue; }
     const write = db.transaction((list) => {
       db.prepare(`DELETE FROM child_exits WHERE owna_id = ?`).run(c.owna_id); // full rebuild per centre
       for (const k of list) {
@@ -566,7 +566,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
     });
     const mN = writeMembers([...byChild.values()]);
     log(`[LineLeader] pipeline members=${mN}`);
-  } catch (e) { log(`[LineLeader] members pull failed: ${e.message}`); }
+  } catch (e) { log(`[LineLeader] members pull failed: [details withheld]`); }
 
   // Scheduled TOURS (and orientation days) for the drill-down.
   try {
@@ -595,10 +595,10 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
     });
     const tN = writeTours(allTours);
     log(`[LineLeader] tours=${tN}`);
-  } catch (e) { log(`[LineLeader] tours pull failed: ${e.message}`); }
+  } catch (e) { log(`[LineLeader] tours pull failed: [details withheld]`); }
 
   log(`[LineLeader] pipeline cells=${cells}, started=${started.length}, withdrawn=${withdrawn.length}, projection starts=${psN}`);
-  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: ${e.message}`); }
+  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: [details withheld]`); }
   return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length };
 }
 

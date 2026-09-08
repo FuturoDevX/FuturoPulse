@@ -1,12 +1,30 @@
 const express = require("express");
 const m = require("../services/metrics");
+const db = require("../db/db");
 const ai = require("../services/ai");
 const brief = require("../services/ai-briefing");
 const fb = require("../services/feedback");
 const askAI = require("../services/ai-ask");
-const { blockScoped, scopedOwnaId, requireAdminOrOps } = require("../middleware/auth");
+const { blockScoped, scopedOwnaId, requireAdminOrOps, requireIdentified, canSeeIdentified } = require("../middleware/auth");
 const { lastRun } = require("../services/snapshot");
 const router = express.Router();
+
+// Simple in-memory limits for the AI endpoints: per-user per-hour, plus a daily cap for the whole team.
+// Any logged-in user can reach these, so without limits one person could run up the API bill.
+const AI_PER_HOUR = parseInt(process.env.AI_ASK_PER_HOUR, 10) || 20;
+const AI_DAILY_CAP = parseInt(process.env.AI_DAILY_CAP, 10) || 300;
+const aiHits = new Map(); // user key -> [timestamps in the last hour]
+let aiDay = "", aiDayCount = 0;
+function aiAllowed(req) {
+  const now = Date.now(); const day = new Date().toISOString().slice(0, 10);
+  if (day !== aiDay) { aiDay = day; aiDayCount = 0; }
+  if (aiDayCount >= AI_DAILY_CAP) return "The team's daily AI limit has been reached. Please try again tomorrow.";
+  const u = req.session.user || {}; const key = u.email || u.id || req.ip;
+  const recent = (aiHits.get(key) || []).filter((t) => now - t < 3600000);
+  if (recent.length >= AI_PER_HOUR) return `You've used ${AI_PER_HOUR} AI questions this hour — please try again a little later.`;
+  recent.push(now); aiHits.set(key, recent); aiDayCount++;
+  return null;
+}
 
 // Validate/normalise a ?from&to range, falling back to the default window.
 function resolveRange(req) {
@@ -57,9 +75,9 @@ router.get("/", (req, res) => {
     fwdPresets: fwdPresetsFor(),
     llMap: m.llByOwnaCentre(),
     fcast: m.forwardOccupancyByCentre(30),
-    pcGroup: m.pcGroupLatest(),
-    occTrend: m.occupancyTrendGroupFwd(12, 2),
-    briefing: brief.getForRange(from, to),
+    pcGroup: scoped ? null : m.pcGroupLatest(),
+    occTrend: scoped ? null : m.occupancyTrendGroupFwd(12, 2),
+    briefing: scoped ? null : brief.getForRange(from, to),
     briefingRangeLabel: brief.prettyRange(from, to),
     aiEnabled: ai.isEnabled(),
     briefingError: req.query.aierr,
@@ -75,13 +93,14 @@ router.post("/ask", async (req, res) => {
   const question = (req.body && req.body.question || "").toString().trim();
   if (!question) return res.status(400).json({ error: "Please enter a question." });
   if (!ai.isEnabled()) return res.status(503).json({ error: "AI is not enabled — set ANTHROPIC_API_KEY." });
+  const limited = aiAllowed(req); if (limited) return res.status(429).json({ error: limited });
   try {
     const history = Array.isArray(req.body.history) ? req.body.history : [];
     const { answer, toolCalls } = await askAI.ask(question, history, scopedOwnaId(req) || null);
     const tools = [...new Set((toolCalls || []).map((t) => t.name))];
     res.json({ answer, tools });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: "The AI request failed. Please try again later." });
   }
 });
 
@@ -118,11 +137,12 @@ router.post("/ai/briefing", requireAdminOrOps, async (req, res) => {
   let to = re.test(req.body.to) ? req.body.to : def.to;
   if (from > to) [from, to] = [to, from];
   const qs = `?from=${from}&to=${to}`;
+  const limited = aiAllowed(req); if (limited) return res.redirect("/" + qs + "&aierr=" + encodeURIComponent(limited) + "#briefing");
   try {
     await brief.generateBriefing(from, to);
     res.redirect("/" + qs + "#briefing");
   } catch (e) {
-    res.redirect("/" + qs + "&aierr=" + encodeURIComponent(e.message) + "#briefing");
+    res.redirect("/" + qs + "&aierr=" + encodeURIComponent("The briefing could not be generated. Please try again later.") + "#briefing");
   }
 });
 
@@ -136,7 +156,7 @@ router.get("/pipeline", blockScoped, (req, res) => {
 });
 
 // Per-centre enrolment pipeline drill-down (stages, members, tours, waitlist trend).
-router.get("/centre/:id/pipeline", (req, res) => {
+router.get("/centre/:id/pipeline", requireIdentified, (req, res) => {
   const c = m.centre(req.params.id);
   if (!c) return res.status(404).render("error", { message: "Centre not found." });
   const scoped = scopedOwnaId(req);
@@ -160,24 +180,29 @@ function apResolve(req) {
   const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : (months[0] || now);
   return { centres, owna, months: months.length ? months : [now], month };
 }
-router.get("/action-plans", (req, res) => {
+router.get("/action-plans", requireIdentified, (req, res) => {
   const { centres, owna, months, month } = apResolve(req);
   const centre = m.centre(owna);
   res.render("action-plan", { title: "Action Plans", centres, owna, months, month, centre,
-    data: owna ? m.actionPlanGet(owna, month) : null, cats: AP_CATS, canEdit: ["admin","exec","ops_manager"].includes(req.session.user.role) });
+    data: owna ? m.actionPlanGet(owna, month) : null, cats: AP_CATS, canEdit: ["admin","ops_manager"].includes(req.session.user.role) });
 });
 router.get("/action-plans/edit", requireAdminOrOps, (req, res) => {
-  const centres = m.centres().filter((c) => !c.opening); const owna = centres.find((c)=>c.owna_id===req.query.owna) ? req.query.owna : centres[0].owna_id;
+  const centres = m.centres().filter((c) => !c.opening); if (!centres.length) return res.status(404).render("error", {message:"No centres available."}); const owna = centres.find((c)=>c.owna_id===req.query.owna) ? req.query.owna : centres[0].owna_id;
   const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : new Date().toISOString().slice(0,7);
   res.render("action-plan-edit", { title: "Edit Action Plan", centres, owna, month, centre: m.centre(owna), data: m.actionPlanGet(owna, month), cats: AP_CATS });
 });
 router.post("/action-plans/edit", requireAdminOrOps, (req, res) => {
   const owna = req.body.owna; const month = req.body.month;
-  const areas = {}; m.AP_AREAS.forEach((a) => { areas[a.key] = { rating: req.body["rating_"+a.key] || "", reason: req.body["reason_"+a.key] || "" }; });
-  m.saveActionPlan(owna, month, req.body.overall || "", req.body.context || "", areas);
+  if (!m.centre(owna) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).render("error", { message: "Select a valid centre and month." });
+  const RAG = ["green", "amber", "red"]; const rag = (v) => (RAG.includes(v) ? v : "");
+  const areas = {}; m.AP_AREAS.forEach((a) => { areas[a.key] = { rating: rag(req.body["rating_"+a.key]), reason: String(req.body["reason_"+a.key] || "").slice(0, 2000) }; });
+
   const items = [];
-  AP_CATS.forEach(([cat]) => { for (let i=0;i<6;i++){ items.push({ category: cat, focus_area: req.body[`f_${cat}_${i}`]||"", actions: req.body[`a_${cat}_${i}`]||"", owner: req.body[`o_${cat}_${i}`]||"", status: req.body[`s_${cat}_${i}`]||"" }); } });
-  m.replaceActionItems(owna, month, items);
+  AP_CATS.forEach(([cat]) => { for (let i=0;i<Math.min(200,Math.max(6,Number(req.body["rows_"+cat])||6));i++){ items.push({ category: cat, focus_area: req.body[`f_${cat}_${i}`]||"", actions: req.body[`a_${cat}_${i}`]||"", owner: req.body[`o_${cat}_${i}`]||"", status: req.body[`s_${cat}_${i}`]||"", start_date: String(req.body[`start_date_${cat}_${i}`] || "").slice(0,4000), due_date: String(req.body[`due_date_${cat}_${i}`] || "").slice(0,4000), progress: String(req.body[`progress_${cat}_${i}`] || "").slice(0,4000), outcome: String(req.body[`outcome_${cat}_${i}`] || "").slice(0,4000), priority: String(req.body[`priority_${cat}_${i}`] || "").slice(0,4000), job_reference: String(req.body[`job_reference_${cat}_${i}`] || "").slice(0,4000) }); } });
+  db.transaction(() => {
+    m.saveActionPlan(owna, month, rag(req.body.overall), String(req.body.context || "").slice(0, 4000), areas);
+    m.replaceActionItems(owna, month, items);
+  })();
   res.redirect(`/action-plans?owna=${owna}&month=${month}`);
 });
 
@@ -199,7 +224,7 @@ router.get("/safety", (req, res) => {
 });
 
 // Quality & Compliance (from uploaded audits) — navigate by centre and audit period.
-router.get("/qc", (req, res) => {
+router.get("/qc", requireIdentified, (req, res) => {
   const scoped = scopedOwnaId(req);
   // List all operating centres so you can navigate between them even before every audit is uploaded.
   const all = m.centres().filter((c) => c.owna_id && c.capacity > 0);
@@ -227,7 +252,7 @@ router.get("/pc", (req, res) => {
   const metric = PC_KEYS.includes(req.query.metric) ? req.query.metric : "enps";
   res.render("pc", {
     title: "People & Culture",
-    centres: centresList, owna,
+    centres: scoped ? centresList.filter(c => c.owna_id === scoped) : centresList, owna,
     series: m.pcAllSeries(owna, full),
     metric, full,
     latest: m.pcForMonth(latestMonth, owna || undefined),
@@ -266,7 +291,7 @@ router.get("/projection", blockScoped, (req, res) => {
 });
 
 // Exit report (OWNA departures + LineLeader reasons), group-wide.
-router.get("/exits", blockScoped, (req, res) => {
+router.get("/exits", blockScoped, requireIdentified, (req, res) => {
   res.render("exits", {
     title: "Exit Report",
     summary: m.exitsSummary(),
@@ -286,6 +311,7 @@ router.get("/centre/:id", (req, res) => {
 
   // Pre-opening centres (LineLeader pipeline only, no OWNA data yet) get a pipeline-focused page.
   if (c.opening) {
+    if (!canSeeIdentified(req)) return res.redirect("/pipeline?owna=" + encodeURIComponent(c.owna_id));
     return res.render("centre-pipeline", { title: c.name + " — Pipeline", centre: c, detail: m.centrePipelineDetail(c.owna_id), today: m.todayStr(), lastRun: lastRun() });
   }
 
@@ -303,7 +329,7 @@ router.get("/centre/:id", (req, res) => {
   const labour = m.centreLabourLatest(c.owna_id);
   // Centre hub: latest action plan, P&C and Q&C for this centre.
   const apMonth = m.actionPlanMonths(1)[0] || m.todayStr().slice(0, 7);
-  const actionPlan = m.actionPlanGet(c.owna_id, apMonth);
+  const actionPlan = canSeeIdentified(req) ? m.actionPlanGet(c.owna_id, apMonth) : null;
   const pcMonth = m.pcMonths(1)[0];
   const pcRow = pcMonth ? m.pcForMonth(pcMonth, c.owna_id)[0] : null;
 
@@ -334,7 +360,7 @@ router.get("/centre/:id", (req, res) => {
     insights: m.centreInsights(c.owna_id, c.capacity, m.pct(agg.booked, capacityDays), pipeline, labour),
     actionPlan, apMonth,
     pcRow, pcMonth, pcTargets: m.pcTargets(),
-    qc: m.qcCentre(c.owna_id),
+    qc: canSeeIdentified(req) ? m.qcCentre(c.owna_id) : null,
     roster: m.rosterCentre(c.owna_id, 12),
     lastRun: lastRun(),
   });

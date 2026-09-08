@@ -25,7 +25,7 @@ async function login() {
   });
   if (!res.ok) {
     const t = await res.text();
-    throw new Error(`LineLeader login ${res.status}: ${t.slice(0, 200)}`);
+    throw new Error(`LineLeader login ${res.status}`); // no response body in the error
   }
   const body = await res.json();
   _token = body.token;
@@ -53,7 +53,7 @@ async function apiGet(path, { query } = {}) {
   const total = parseInt(res.headers.get("x-total-count") || "0", 10);
   const text = await res.text();
   let body; try { body = text ? JSON.parse(text) : null; } catch { body = text; }
-  if (!res.ok) throw new Error(`LineLeader ${res.status} ${url.pathname}: ${JSON.stringify(body).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`LineLeader ${res.status} ${url.pathname}`); // no response body: it may contain child/family records
   return { body, total };
 }
 

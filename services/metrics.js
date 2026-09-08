@@ -673,8 +673,8 @@ function saveActionPlan(ownaId, month, overall, context, areas) {
 function replaceActionItems(ownaId, month, items) {
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM action_plan_items WHERE owna_id=? AND month=?").run(ownaId, month);
-    const ins = db.prepare("INSERT INTO action_plan_items (owna_id, month, category, focus_area, actions, owner, status, sort) VALUES (?,?,?,?,?,?,?,?)");
-    items.forEach((it, i) => { if ((it.focus_area || it.actions || "").trim()) ins.run(ownaId, month, it.category, it.focus_area, it.actions, it.owner, it.status, i); });
+    const ins = db.prepare("INSERT INTO action_plan_items (owna_id, month, category, focus_area, actions, owner, status, sort, start_date, due_date, progress, outcome, priority, job_reference) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    items.forEach((it, i) => { if ((it.focus_area || it.actions || "").trim()) ins.run(ownaId, month, it.category, it.focus_area, it.actions, it.owner, it.status, i, it.start_date || "", it.due_date || "", it.progress || "", it.outcome || "", it.priority || "", it.job_reference || ""); });
   });
   tx();
 }

@@ -258,10 +258,10 @@
     </div>
     <% } %>
 
-    <% if (roster.leave && roster.leave.length) { %>
+    <% if (locals.canSeeIdentified && roster.leave && roster.leave.length) { %>
     <h3 class="card-sub">On leave this week</h3>
     <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--text);line-height:1.7;">
-      <% roster.leave.slice(0,15).forEach(function(l){ %><li><%= l.staff %> — <%= l.leavetype %><%= l.hours?(' · '+l.hours+'h'):'' %></li><% }); %>
+      <% roster.leave.slice(0,15).forEach(function(l){ %><li><%= locals.canSeeIdentified ? l.staff : 'Staff member' %> — <%= l.leavetype %><%= l.hours?(' · '+l.hours+'h'):'' %></li><% }); %>
     </ul>
     <% } %>
     <p class="footnote">Rostered hours &amp; hours-per-booking from OWNA’s weekly roster. Worked hours = Employment Hero actual hours scoped to what OWNA rosters — educators + kitchen (cooks) — excluding paid leave and cleaning. Worked − rostered flags overtime (positive) or under-worked rosters (negative); ±3% is on plan.</p>
@@ -355,7 +355,7 @@
     <% var upN = (exitsUpcoming||[]).length; var pastN = (exits||[]).length; %>
     <p class="sub" style="margin:8px 0 14px;"><strong><%= pastN %></strong> departures · <strong><%= upN %></strong> scheduled to leave · reasons where recorded from LineLeader</p>
 
-    <% if (exitReasons.total) { %>
+    <% if (locals.canSeeIdentified && exitReasons.total) { %>
       <div style="margin-bottom:18px;">
         <% exitReasons.rows.forEach(function(r){ var wpct = exitReasons.total ? Math.round(r.n/exitReasons.total*100) : 0; var cls = r.reason==='Another Centre'||r.reason==='Staff/Teacher Issue'?'bad':(r.reason==='Aged Out-Too Old'?'muted-reason':'navy'); %>
           <div class="reason-row">
@@ -367,14 +367,14 @@
       </div>
     <% } %>
 
-    <% if (pastN) { %>
+    <% if (locals.canSeeIdentified && pastN) { %>
       <div style="overflow-x:auto;">
       <table data-paginate="8">
         <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Left</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
         <tbody>
           <% exits.forEach(function(e){ %>
             <tr>
-              <td><%= e.child_name %></td>
+              <td><%= locals.canSeeIdentified ? e.child_name : 'Child (name hidden)' %></td>
               <td><%= e.room || '—' %></td>
               <td><%= e.start_date || '—' %></td>
               <td><%= e.finish_date %></td>
@@ -385,11 +385,11 @@
         </tbody>
       </table>
       </div>
-    <% } else { %>
+    <% } else if (!pastN) { %>
       <p class="muted">No departures recorded in the last 12 months.</p>
     <% } %>
 
-    <% if (upN) { %>
+    <% if (locals.canSeeIdentified && upN) { %>
       <h2 style="margin-top:22px;">Scheduled to leave</h2>
       <div style="overflow-x:auto;">
       <table data-paginate="8">
@@ -397,7 +397,7 @@
         <tbody>
           <% exitsUpcoming.forEach(function(e){ %>
             <tr class="future-row">
-              <td><%= e.child_name %></td>
+              <td><%= locals.canSeeIdentified ? e.child_name : 'Child (name hidden)' %></td>
               <td><%= e.room || '—' %></td>
               <td><%= e.start_date || '—' %></td>
               <td><%= e.finish_date %> <span class="tag-fut">scheduled</span></td>

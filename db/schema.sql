@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   email         TEXT UNIQUE NOT NULL,
   name          TEXT,
   password_hash TEXT NOT NULL,
-  role          TEXT NOT NULL DEFAULT 'admin',   -- admin | ops_manager | viewer
+  role          TEXT NOT NULL DEFAULT 'viewer',  -- viewer | centre | exec | ops_manager | admin (least privilege by default)
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -245,7 +245,8 @@ CREATE TABLE IF NOT EXISTS action_plans (
 CREATE TABLE IF NOT EXISTS action_plan_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owna_id TEXT, month TEXT, category TEXT,   -- urgent|bau|support|keep
-  focus_area TEXT, actions TEXT, owner TEXT, status TEXT, sort INTEGER DEFAULT 0
+  focus_area TEXT, actions TEXT, owner TEXT, status TEXT, sort INTEGER DEFAULT 0,
+  start_date TEXT, due_date TEXT, progress TEXT, outcome TEXT, priority TEXT, job_reference TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_apitems ON action_plan_items(owna_id, month);
 

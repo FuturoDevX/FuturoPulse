@@ -49,6 +49,7 @@
   }
   const canGenerate = ['admin','ops_manager'].includes(user.role);
 %>
+<% if (!locals.scopedOwnaId) { %>
 <div class="card ai-brief" id="briefing">
   <div class="pc-head" style="margin-bottom:6px;">
     <div>
@@ -74,6 +75,7 @@
     <p class="sub" style="margin:6px 0 0;">No briefing for <strong><%= briefingRangeLabel %></strong> yet<%= canGenerate ? ' — hit Generate to have Claude summarise these dates.' : '. Ask an admin to generate one.' %></p>
   <% } %>
 </div>
+<% } %>
 
 <% if (typeof pcGroup !== 'undefined' && pcGroup) {
      const t = pcGroup.targets || {};

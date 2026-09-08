@@ -59,6 +59,14 @@ services:
         value: 16
       # Default admin (change password after first login)
       - key: ADMIN_EMAIL
-        value: christo.kruger@futuro.nsw.edu.au
+        sync: false
+      - key: PRIVACY_CONTACT
+        value: the Privacy Officer
+      - key: AI_ASK_PER_HOUR
+        value: 20
+      - key: AI_DAILY_CAP
+        value: 300
+      - key: TZ
+        value: Australia/Sydney
       - key: ADMIN_DEFAULT_PASSWORD
         sync: false

@@ -35,17 +35,25 @@
   </div>
   <% cats.forEach(function(cat){ var items=itemsBy(cat[0]); %>
     <div class="card">
-      <h2 style="margin-top:0;"><%= cat[1] %></h2>
+      <h2 style="margin-top:0;"><%= cat[1] %></h2><input type="hidden" name="rows_<%= cat[0] %>" value="<%= Math.max(6,items.length+1) %>">
       <table>
         <thead><tr><th>Focus area</th><th>Actions</th><th>Owner</th><th>Status</th></tr></thead>
         <tbody>
-          <% for (var i=0;i<6;i++){ var it=items[i]||{}; %>
+          <% for (var i=0;i<Math.max(6,items.length+1);i++){ var it=items[i]||{}; %>
             <tr>
               <td><input type="text" name="f_<%= cat[0] %>_<%= i %>" value="<%= it.focus_area||'' %>" style="width:100%;"></td>
               <td><input type="text" name="a_<%= cat[0] %>_<%= i %>" value="<%= it.actions||'' %>" style="width:100%;"></td>
               <td><input type="text" name="o_<%= cat[0] %>_<%= i %>" value="<%= it.owner||'' %>" style="width:120px;"></td>
               <td><input type="text" name="s_<%= cat[0] %>_<%= i %>" value="<%= it.status||'' %>" style="width:120px;" placeholder="Not started/Underway/Done"></td>
             </tr>
+            <tr><td colspan="4"><details><summary>Dates, progress and intended outcome</summary><div class="user-form">
+<div><label>Start / logged date</label><input type="date" name="start_date_<%= cat[0] %>_<%= i %>" value="<%= it.start_date||'' %>"></div>
+<div><label>Goal completion date</label><input type="date" name="due_date_<%= cat[0] %>_<%= i %>" value="<%= it.due_date||'' %>"></div>
+<div><label>Progress / monthly update</label><input type="text" name="progress_<%= cat[0] %>_<%= i %>" value="<%= it.progress||'' %>"></div>
+<div><label>Intended outcome / why it matters</label><input type="text" name="outcome_<%= cat[0] %>_<%= i %>" value="<%= it.outcome||'' %>"></div>
+<div><label>Priority</label><input type="text" name="priority_<%= cat[0] %>_<%= i %>" value="<%= it.priority||'' %>"></div>
+<div><label>Support job reference</label><input type="text" name="job_reference_<%= cat[0] %>_<%= i %>" value="<%= it.job_reference||'' %>"></div>
+            </div></details></td></tr>
           <% } %>
         </tbody>
       </table>

@@ -19,7 +19,7 @@ router.post("/refresh", requireAdminOrOps, async (req, res) => {
   refreshing = true;
   // Kick off in the background; the page shows progress via lastRun status.
   runSnapshot()
-    .catch((e) => console.error("[refresh]", e.message))
+    .catch((e) => console.error("[refresh] failed"))
     .finally(() => { refreshing = false; });
   res.redirect("/?msg=" + encodeURIComponent("Refresh started — reload in a moment to see updated figures."));
 });
@@ -60,11 +60,11 @@ router.get("/users", requireAdmin, (req, res) => {
 router.post("/users", requireAdmin, (req, res) => {
   const email = (req.body.email || "").trim().toLowerCase();
   const name = (req.body.name || "").trim();
-  const role = ["admin", "exec", "centre"].includes(req.body.role) ? req.body.role : "exec";
+  const role = ["viewer", "centre", "exec", "ops_manager", "admin"].includes(req.body.role) ? req.body.role : "viewer";
   const location_id = role === "centre" ? (req.body.location_id || null) : null;
   const password = req.body.password || "";
-  if (!email || password.length < 6) return res.redirect("/admin/users?err=" + encodeURIComponent("Email and a 6+ char password are required."));
-  if (role === "centre" && !location_id) return res.redirect("/admin/users?err=" + encodeURIComponent("Pick a centre for a centre-scoped user."));
+  if (!email || password.length < 12) return res.redirect("/admin/users?err=" + encodeURIComponent("Email and a 12+ char password are required."));
+  if (role === "centre" && (!location_id || !db.prepare("SELECT 1 FROM centres WHERE owna_id = ?").get(location_id))) return res.redirect("/admin/users?err=" + encodeURIComponent("Pick a centre for a centre-scoped user."));
   if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) return res.redirect("/admin/users?err=" + encodeURIComponent("That email already exists."));
   db.prepare("INSERT INTO users (email, name, password_hash, role, location_id) VALUES (?,?,?,?,?)")
     .run(email, name, bcrypt.hashSync(password, 10), role, location_id);
@@ -79,7 +79,7 @@ router.post("/users/:id/delete", requireAdmin, (req, res) => {
 router.post("/users/:id/reset", requireAdmin, (req, res) => {
   const id = parseInt(req.params.id, 10);
   const password = req.body.password || "";
-  if (password.length < 6) return res.redirect("/admin/users?err=" + encodeURIComponent("New password must be 6+ chars."));
+  if (password.length < 12) return res.redirect("/admin/users?err=" + encodeURIComponent("New password must be 12+ chars."));
   db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(bcrypt.hashSync(password, 10), id);
   res.redirect("/admin/users?msg=" + encodeURIComponent("Password reset."));
 });

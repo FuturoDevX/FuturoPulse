@@ -2,7 +2,7 @@
 <%
   const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
   const mLabel = (m) => { if(!m) return ''; const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); };
-  const dot = (r) => '<span class="rag rag-'+(r||'none')+'"></span>';
+  const dot = (r) => '<span class="rag rag-'+(['green','amber','red'].includes(r) ? r : 'none')+'"></span>';
   const areas = (data && data.plan) ? data.plan.areas : {};
   const auto = data ? data.auto : {};
 %>
@@ -41,7 +41,7 @@
     <h2 style="margin-top:0;"><%= cat[1] %></h2>
     <div style="overflow-x:auto;"><table>
       <thead><tr><th>Focus area</th><th>Actions</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody><% items.forEach(function(i){ %><tr><td><%= i.focus_area %></td><td style="white-space:normal;"><%= i.actions %></td><td><%= i.owner||'—' %></td><td><span class="reason-tag"><%= i.status||'—' %></span></td></tr><% }); %></tbody>
+      <tbody><% items.forEach(function(i){ %><tr><td><%= i.focus_area %></td><td style="white-space:normal;"><%= i.actions %></td><td><%= i.owner||'—' %></td><td><span class="reason-tag"><%= i.status||'—' %></span></td></tr><% if(i.start_date||i.due_date||i.progress||i.outcome||i.priority||i.job_reference){ %><tr><td colspan="4" style="white-space:normal;"><div class="user-form"><% [['Start / logged',i.start_date],['Due',i.due_date],['Progress',i.progress],['Intended outcome',i.outcome],['Priority',i.priority],['Job reference',i.job_reference]].forEach(function(f){if(f[1]){ %><div><strong><%= f[0] %>:</strong> <%= f[1] %></div><% }}); %></div></td></tr><% } %><% }); %></tbody>
     </table></div>
   </div>
 <% }); %>

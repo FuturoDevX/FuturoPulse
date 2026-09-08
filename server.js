@@ -16,6 +16,7 @@ if (isProd && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.include
   process.exit(1);
 }
 
+app.locals.privacyContact = process.env.PRIVACY_CONTACT || "the Privacy Officer";
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 app.use(express.urlencoded({ extended: true }));
@@ -42,6 +43,15 @@ app.use("/", require("./routes/auth"));
 
 // Everything below requires a login
 app.use(requireLogin);
+app.use((req,res,next) => {
+  res.set("Cache-Control", "no-store"); res.set("Referrer-Policy", "no-referrer");
+  res.set("X-Content-Type-Options", "nosniff"); res.set("X-Frame-Options", "DENY");
+  if (!["GET","HEAD","OPTIONS"].includes(req.method) && req.headers.origin) {
+    let host; try { host = new URL(req.headers.origin).host; } catch { return res.sendStatus(403); }
+    if (host !== req.get("host")) return res.sendStatus(403);
+  }
+  next();
+});
 // Centre list for the sidebar, available to every authenticated view.
 const metrics = require("./services/metrics");
 const feedbackSvc = require("./services/feedback");
@@ -57,20 +67,22 @@ app.use("/", require("./routes/dashboard"));
 
 app.use((req, res) => res.status(404).render("error", { message: "Page not found." }));
 app.use((err, req, res, next) => {
-  console.error(err);
+  // Log the error type and where it happened — never the full object, which can carry request data.
+  console.error("[error] request failed");
   res.status(500).render("error", { message: "Something went wrong." });
 });
 
 // Nightly snapshot.
 const cronExpr = process.env.SNAPSHOT_CRON || "15 2 * * *";
-if (cron.validate(cronExpr)) {
+if (require.main === module && cron.validate(cronExpr)) {
   cron.schedule(cronExpr, () => {
     console.log("[cron] nightly OWNA snapshot starting");
-    runSnapshot().catch((e) => console.error("[cron] snapshot failed:", e.message));
+    runSnapshot().catch((e) => console.error("[cron] snapshot failed"));
   });
   console.log(`[cron] nightly snapshot scheduled: ${cronExpr}`);
-} else {
+} else if (require.main === module) {
   console.warn(`[cron] invalid SNAPSHOT_CRON "${cronExpr}" — nightly snapshot disabled`);
 }
 
-app.listen(PORT, () => console.log(`Futuro Pulse on http://localhost:${PORT}`));
+if (require.main === module) app.listen(PORT, () => console.log(`Futuro Pulse on http://localhost:${PORT}`));
+module.exports = app;

@@ -25,6 +25,7 @@ function resolveCentre(name, scopedOwnaId) {
   const centres = db.prepare("SELECT owna_id, name, capacity, opening FROM centres WHERE capacity > 0 OR opening = 1").all();
   if (scopedOwnaId) {
     const mine = centres.find((c) => c.owna_id === scopedOwnaId);
+    if (!mine) return { error: "Your account has no valid centre scope." };
     if (name) {
       const asked = centres.find((c) => short(c.name).toLowerCase().includes(String(name).toLowerCase().trim()));
       if (asked && asked.owna_id !== scopedOwnaId) return { error: "You can only see data for your own centre." };
@@ -192,7 +193,7 @@ function runTool(name, input, scopedOwnaId) {
   const t = TOOLS[name];
   if (!t) return { error: `Unknown tool "${name}".` };
   try { return t.fn(input || {}, scopedOwnaId || null); }
-  catch (e) { return { error: `${name} failed: ${e.message}` }; }
+  catch (e) { return { error: "The requested data could not be retrieved." }; }
 }
 
 module.exports = { TOOL_SPECS, runTool, resolveCentre, addDays, mondayOf };
