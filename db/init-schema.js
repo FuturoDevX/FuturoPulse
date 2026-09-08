@@ -30,6 +30,15 @@ function initSchema(db) {
   addColumnIfMissing("incidents_monthly", "illness", "INTEGER DEFAULT 0");
   addColumnIfMissing("incidents_monthly", "serious", "INTEGER DEFAULT 0");
 
+  // ai_briefings moved from one-row-per-week (PK period_to) to one-per-date-range (PK period_key).
+  // It is a regenerable cache, so recreate it rather than migrate rows.
+  const abCols = db.prepare("PRAGMA table_info(ai_briefings)").all().map((c) => c.name);
+  if (abCols.length && !abCols.includes("period_key")) {
+    db.exec("DROP TABLE ai_briefings");
+    db.exec(schema); // all CREATE ... IF NOT EXISTS — recreates it with the new shape
+    console.log("[init] rebuilt ai_briefings for per-range caching");
+  }
+
   // Seed the default admin if it doesn't exist yet.
   const email = process.env.ADMIN_EMAIL || "admin@example.com";
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);

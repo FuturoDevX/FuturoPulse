@@ -289,8 +289,9 @@ CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
 
 -- ===== AI: cached weekly operations briefing (generated via the Claude API) =====
 CREATE TABLE IF NOT EXISTS ai_briefings (
-  period_to   TEXT PRIMARY KEY,        -- week-ending anchor date (YYYY-MM-DD); one briefing per week
-  period_from TEXT,                    -- week-starting date
+  period_key  TEXT PRIMARY KEY,        -- "<from>..<to>" — one cached briefing per selected date range
+  period_from TEXT,                    -- range start (YYYY-MM-DD)
+  period_to   TEXT,                    -- range end (YYYY-MM-DD)
   content     TEXT,                    -- Claude's markdown briefing
   model       TEXT,                    -- model id used
   created_at  TEXT

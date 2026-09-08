@@ -52,25 +52,26 @@
 <div class="card ai-brief" id="briefing">
   <div class="pc-head" style="margin-bottom:6px;">
     <div>
-      <div class="pcm-name" style="display:flex;align-items:center;gap:8px;">✨ AI weekly briefing
-        <% if (typeof aiEnabled !== 'undefined' && aiEnabled && briefing) { %><span class="badge <%= briefingCurrent ? 'role-admin' : '' %>" style="font-size:10px;"><%= briefingCurrent ? 'Current' : 'Older week' %></span><% } %>
+      <div class="pcm-name" style="display:flex;align-items:center;gap:8px;">✨ AI briefing
+        <span class="badge" style="font-size:10px;"><%= briefingRangeLabel %></span>
       </div>
-      <div class="pcm-cad">Written by Claude from this week’s operations data<% if (briefing) { %> · week ending <%= briefing.period_to %> · generated <%= (briefing.created_at||'').slice(0,16) %><% } %></div>
+      <div class="pcm-cad">Written by Claude from the selected period<% if (briefing) { %> · generated <%= (briefing.created_at||'').slice(0,16) %><% } %></div>
     </div>
     <% if (canGenerate && (typeof aiEnabled==='undefined' || aiEnabled)) { %>
       <form method="POST" action="/ai/briefing" class="inline" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';">
-        <button type="submit" class="secondary-btn"><%= briefing ? '↻ Refresh' : '✨ Generate' %></button>
+        <input type="hidden" name="from" value="<%= from %>">
+        <input type="hidden" name="to" value="<%= to %>">
+        <button type="submit" class="secondary-btn"><%= briefing ? '↻ Refresh' : '✨ Generate for these dates' %></button>
       </form>
     <% } %>
   </div>
   <% if (typeof briefingError !== 'undefined' && briefingError) { %><div class="flash bad" style="margin:8px 0;"><%= briefingError %></div><% } %>
   <% if (briefing) { %>
     <div class="brief-body"><%- mdToHtml(briefing.content) %></div>
-    <% if (!briefingCurrent && (typeof aiEnabled==='undefined' || aiEnabled)) { %><p class="pcm-cad" style="margin-top:8px;">Newer data is available — Refresh to rewrite for the latest week.</p><% } %>
   <% } else if (typeof aiEnabled !== 'undefined' && !aiEnabled) { %>
     <p class="sub" style="margin:6px 0 0;">Set an <code>ANTHROPIC_API_KEY</code> environment variable (and optionally <code>AI_MODEL</code>) to enable this. It calls the Claude API server-side to summarise the week — what moved and what to watch — across all centres.</p>
   <% } else { %>
-    <p class="sub" style="margin:6px 0 0;"><%= canGenerate ? 'No briefing yet — hit Generate to have Claude summarise the week.' : 'No briefing yet.' %></p>
+    <p class="sub" style="margin:6px 0 0;">No briefing for <strong><%= briefingRangeLabel %></strong> yet<%= canGenerate ? ' — hit Generate to have Claude summarise these dates.' : '. Ask an admin to generate one.' %></p>
   <% } %>
 </div>
 

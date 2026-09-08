@@ -59,8 +59,8 @@ router.get("/", (req, res) => {
     fcast: m.forwardOccupancyByCentre(30),
     pcGroup: m.pcGroupLatest(),
     occTrend: m.occupancyTrendGroupFwd(12, 2),
-    briefing: brief.getLatest(),
-    briefingCurrent: brief.isCurrent(brief.getLatest()),
+    briefing: brief.getForRange(from, to),
+    briefingRangeLabel: brief.prettyRange(from, to),
     aiEnabled: ai.isEnabled(),
     briefingError: req.query.aierr,
     lastRun: lastRun(),
@@ -111,11 +111,18 @@ router.post("/feedback", (req, res) => {
 
 // Generate / refresh the AI weekly briefing (admin/ops). Async — calls the Claude API.
 router.post("/ai/briefing", requireAdminOrOps, async (req, res) => {
+  // Generate for the range the user currently has selected, so the briefing matches the dates.
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  const def = m.defaultRange();
+  let from = re.test(req.body.from) ? req.body.from : def.from;
+  let to = re.test(req.body.to) ? req.body.to : def.to;
+  if (from > to) [from, to] = [to, from];
+  const qs = `?from=${from}&to=${to}`;
   try {
-    await brief.generateBriefing();
-    res.redirect("/#briefing");
+    await brief.generateBriefing(from, to);
+    res.redirect("/" + qs + "#briefing");
   } catch (e) {
-    res.redirect("/?aierr=" + encodeURIComponent(e.message) + "#briefing");
+    res.redirect("/" + qs + "&aierr=" + encodeURIComponent(e.message) + "#briefing");
   }
 });
 
