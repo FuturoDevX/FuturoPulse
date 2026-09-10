@@ -40,7 +40,7 @@
       <% if (openingCentres.length) { %>
         <div class="side-nav-divider">Opening soon</div>
         <% openingCentres.forEach(function(c){ %>
-          <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= navShort(c.name) %> <span class="nav-soon"><%= c.opening_year ? c.opening_year : 'soon' %></span></a>
+          <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= navShort(c.name) %> <span class="nav-soon"><%= c.opening_month ? (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][c.opening_month-1] + ' ' + c.opening_year) : (c.opening_year ? c.opening_year : 'soon') %></span></a>
         <% }); %>
       <% } %>
       <% if (user.role === 'admin') { %>

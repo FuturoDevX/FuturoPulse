@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS centres (
   last_updated  TEXT,
   ll_id         INTEGER,              -- linked LineLeader centre id (enrolment pipeline)
   opening       INTEGER DEFAULT 0,    -- 1 = pre-opening (LineLeader pipeline only, not yet in OWNA)
-  opening_year  INTEGER               -- expected opening year for pre-opening centres (e.g. 2028); NULL = not set
+  opening_year  INTEGER,              -- expected opening year for pre-opening centres (e.g. 2028); NULL = not set
+  opening_month INTEGER               -- 1-12 when the month is known (e.g. 11 = November); NULL = year only
 );
 
 -- One aggregated row per centre per calendar day.
