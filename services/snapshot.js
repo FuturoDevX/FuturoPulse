@@ -508,6 +508,10 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   writeEnrol(withdrawn, "withdrawn");
 
   // Pipeline starts (with weekly schedule) for the enrolment projection — rebuild each run.
+  // Make sure pre-opening LineLeader-only centres (ll-<id> rows) exist BEFORE we map pipeline rows to
+  // centres — otherwise Cobbitty/Oran Park rows are written with owna_id NULL and vanish from every
+  // per-centre view until the next successful run.
+  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: [details withheld]`); }
   const llToOwna = new Map(db.prepare(`SELECT ll_id, owna_id FROM centres WHERE ll_id IS NOT NULL`).all().map((r) => [r.ll_id, r.owna_id]));
   const today2 = new Date().toISOString().slice(0, 10);
   const writePs = db.transaction((rows) => {
@@ -598,7 +602,6 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   } catch (e) { log(`[LineLeader] tours pull failed: [details withheld]`); }
 
   log(`[LineLeader] pipeline cells=${cells}, started=${started.length}, withdrawn=${withdrawn.length}, projection starts=${psN}`);
-  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: [details withheld]`); }
   return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length };
 }
 
