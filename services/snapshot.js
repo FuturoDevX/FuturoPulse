@@ -370,7 +370,8 @@ async function runExitReport({ log = console.log } = {}) {
 
   // 2) OWNA children with a finishDate → the authoritative exit list.
   let total = 0, matched = 0;
-  const centres = db.prepare(`SELECT owna_id, name FROM centres`).all();
+  // Operating centres only — pre-opening centres are LineLeader-only and have no OWNA children yet.
+  const centres = db.prepare(`SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0)`).all();
   for (const c of centres) {
     let kids;
     try { kids = await owna.listChildren(c.owna_id); } catch (e) { log(`[exits] ${c.name}: children pull failed: [details withheld]`); continue; }
@@ -608,7 +609,9 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
 // Create/refresh "pre-opening" centre records for LineLeader centres that have a real pipeline
 // but aren't yet linked to an operating OWNA centre (e.g. Oran Park, Cobbitty). Data-driven so it
 // works on a fresh deploy: they appear in the sidebar and get a pipeline-focused centre page.
-function ensureOpeningCentres({ minPipeline = 10, log = console.log } = {}) {
+// Every active LineLeader centre not linked to OWNA becomes a pre-opening centre row. The old
+// threshold of 10 pipeline families hid Park Rd (opening 2028) while it had one family.
+function ensureOpeningCentres({ minPipeline = 1, log = console.log } = {}) {
   const date = (db.prepare("SELECT MAX(snapshot_date) d FROM ll_pipeline").get() || {}).d;
   if (!date) return { ok: true, n: 0 };
   const linked = new Set(db.prepare("SELECT ll_id FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0)").all().map((r) => r.ll_id));

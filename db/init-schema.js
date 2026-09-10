@@ -18,6 +18,7 @@ function initSchema(db) {
   };
   addColumnIfMissing("centres", "ll_id", "INTEGER");
   addColumnIfMissing("centres", "opening", "INTEGER DEFAULT 0");
+  addColumnIfMissing("centres", "opening_year", "INTEGER");
   addColumnIfMissing("users", "location_id", "TEXT");
   addColumnIfMissing("labour_weekly", "cleaning_h", "REAL DEFAULT 0");
   addColumnIfMissing("labour_weekly", "cleaning_amt", "REAL DEFAULT 0");

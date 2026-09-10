@@ -221,7 +221,7 @@
     </div>
     <div class="grid kpis" style="margin-top:14px;">
       <div class="card stat"><div class="n"><%= hnum(rl.total_hours) %></div><div class="l">Rostered hours</div></div>
-      <div class="card stat"><div class="n"><%= rl.avg_hpb==null?'—':rl.avg_hpb %></div><div class="l">Avg hours / booking</div></div>
+      <div class="card stat"><div class="n"><%= rl.avg_hpb==null?'—':rl.avg_hpb %></div><div class="l">Avg HPOP (hours per occupied place)</div></div>
       <div class="card stat"><div class="n"><%= hnum(roster.paid_hours) %></div><div class="l">Worked hours (EH)</div></div>
       <div class="card stat"><div class="n <%= vcls %>"><%= roster.variance==null?'—':(roster.variance>0?'+':'')+hnum(roster.variance) %></div><div class="l">Worked − rostered<% if(vpct!=null){ %> · <%= (vpct>0?'+':'')+vpct %>%<% } %></div></div>
     </div>
@@ -229,7 +229,7 @@
     <h3 class="card-sub">Rostered hours by day</h3>
     <div class="chart" style="height:150px;">
       <% wd.forEach(function(d){ %>
-        <div class="chart-col" title="<%= cap3(d.day) %>: <%= hnum(d.hours) %>h rostered · <%= d.hpb==null?'—':d.hpb %> hrs/booking · <%= d.staff %> staff over <%= d.shifts %> shifts">
+        <div class="chart-col" title="<%= cap3(d.day) %>: <%= hnum(d.hours) %>h rostered · <%= d.hpb==null?'—':d.hpb %> HPOP · <%= d.staff %> staff over <%= d.shifts %> shifts">
           <div class="chart-bar good" style="height:<%= Math.round((d.hours||0)/dmax*100) %>%;"></div>
           <div class="chart-x"><strong><%= cap3(d.day) %></strong><br><span><%= hnum(d.hours) %>h</span></div>
         </div>
@@ -247,10 +247,10 @@
     </table></div>
 
     <% var hpbTrend = (roster.trend||[]).filter(function(x){return x.avg_hpb!=null;}); if (hpbTrend.length>1) { var hmax=Math.max(2,...hpbTrend.map(function(x){return x.avg_hpb;})); %>
-    <h3 class="card-sub">Hours per booking <span class="muted" style="font-weight:400;font-size:12px;">· weekly trend</span></h3>
+    <h3 class="card-sub">Hours per occupied place (HPOP) <span class="muted" style="font-weight:400;font-size:12px;">· weekly trend</span></h3>
     <div class="chart" style="height:150px;">
       <% hpbTrend.forEach(function(x){ %>
-        <div class="chart-col" title="wk <%= x.week_starting %>: <%= x.avg_hpb %> hrs/booking · rostered <%= hnum(x.total_hours) %>h · paid <%= hnum(x.paid_hours) %>h">
+        <div class="chart-col" title="wk <%= x.week_starting %>: <%= x.avg_hpb %> HPOP · rostered <%= hnum(x.total_hours) %>h · paid <%= hnum(x.paid_hours) %>h">
           <div class="chart-bar" style="height:<%= Math.round(x.avg_hpb/hmax*100) %>%; background:var(--navy);"></div>
           <div class="chart-x"><%= x.week_starting.slice(5) %><br><span><%= x.avg_hpb %></span></div>
         </div>
@@ -264,7 +264,7 @@
       <% roster.leave.slice(0,15).forEach(function(l){ %><li><%= locals.canSeeIdentified ? l.staff : 'Staff member' %> — <%= l.leavetype %><%= l.hours?(' · '+l.hours+'h'):'' %></li><% }); %>
     </ul>
     <% } %>
-    <p class="footnote">Rostered hours &amp; hours-per-booking from OWNA’s weekly roster. Worked hours = Employment Hero actual hours scoped to what OWNA rosters — educators + kitchen (cooks) — excluding paid leave and cleaning. Worked − rostered flags overtime (positive) or under-worked rosters (negative); ±3% is on plan.</p>
+    <p class="footnote">Rostered hours &amp; hours per occupied place (HPOP) from OWNA’s weekly roster. Worked hours = Employment Hero actual hours scoped to what OWNA rosters — educators + kitchen (cooks) — excluding paid leave and cleaning. Worked − rostered flags overtime (positive) or under-worked rosters (negative); ±3% is on plan.</p>
   </div>
   <% } else { %>
   <div class="card"><p class="muted" style="margin:0;">No roster data for this centre yet. It populates on the nightly sync from OWNA.</p></div>

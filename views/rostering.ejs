@@ -11,7 +11,7 @@
 <div class="page-head">
   <div>
     <h1>Rostering</h1>
-    <p class="sub">OWNA weekly staff roster · rostered hours &amp; hours-per-booking, reconciled to Employment Hero worked hours<% if(week){ %> · week of <%= wkLabel(week) %><% } %></p>
+    <p class="sub">OWNA weekly staff roster · rostered hours &amp; hours per occupied place (HPOP), reconciled to Employment Hero worked hours<% if(week){ %> · week of <%= wkLabel(week) %><% } %></p>
   </div>
   <% if (weeks.length) { %>
   <div class="head-actions">
@@ -28,7 +28,7 @@
 
 <div class="grid kpis">
   <div class="card stat"><div class="n"><%= h1(t.rost) %></div><div class="l">Rostered hours</div></div>
-  <div class="card stat"><div class="n"><%= groupHpb==null?'—':groupHpb %></div><div class="l">Avg hours / booking</div></div>
+  <div class="card stat"><div class="n"><%= groupHpb==null?'—':groupHpb %></div><div class="l">Avg HPOP (hours per occupied place)</div></div>
   <div class="card stat"><div class="n"><%= h1(t.paid) %></div><div class="l">Worked hours (Employment Hero)</div></div>
   <div class="card stat"><div class="n <%= varClass(groupVarPct) %>"><%= groupVar==null?'—':(groupVar>0?'+':'')+h1(groupVar) %></div><div class="l">Worked − rostered<% if(groupVarPct!=null){ %> · <%= (groupVarPct>0?'+':'')+groupVarPct %>%<% } %></div></div>
 </div>
@@ -65,7 +65,7 @@
     <% } %>
   </table></div>
   <p class="footnote">
-    <strong>Rostered hours</strong> = OWNA weekly roster (educators + cooks/floaters). <strong>Hours per booking</strong> = rostered educator-hours ÷ booked child-days that day, averaged across the week — lower is leaner, higher is more staff per child. <strong>Worked hours</strong> = Employment Hero actual worked hours for the matching week, scoped to what OWNA rosters — educators + kitchen (cooks) — and excluding paid leave and cleaning (cleaners aren’t on the OWNA roster). <strong>Worked − rostered</strong> flags unplanned overtime (positive) or under-worked rosters (negative); within ±3% is on plan.
+    <strong>Rostered hours</strong> = OWNA weekly roster (educators + cooks/floaters). <strong>Hours per occupied place (HPOP)</strong> = rostered educator-hours ÷ booked child-days that day, averaged across the week — lower is leaner, higher is more staff per child. <strong>Worked hours</strong> = Employment Hero actual worked hours for the matching week, scoped to what OWNA rosters — educators + kitchen (cooks) — and excluding paid leave and cleaning (cleaners aren’t on the OWNA roster). <strong>Worked − rostered</strong> flags unplanned overtime (positive) or under-worked rosters (negative); within ±3% is on plan.
     <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
   </p>
 </div>

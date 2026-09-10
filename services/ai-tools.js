@@ -170,9 +170,9 @@ function currentState(_input, scoped) {
 }
 
 function centresList(_input, scoped) {
-  const rows = db.prepare("SELECT owna_id, name, capacity, enrolled, opening FROM centres WHERE capacity > 0 OR opening = 1 ORDER BY name").all()
+  const rows = db.prepare("SELECT owna_id, name, capacity, enrolled, opening, opening_year FROM centres WHERE capacity > 0 OR opening = 1 ORDER BY name").all()
     .filter((r) => !scoped || r.owna_id === scoped)
-    .map((r) => ({ centre: short(r.name), licensed_places: r.capacity, enrolled: r.enrolled, status: r.opening ? "pre-opening" : "operating" }));
+    .map((r) => ({ centre: short(r.name), licensed_places: r.capacity, enrolled: r.enrolled, status: r.opening ? ("pre-opening" + (r.opening_year ? ", expected " + r.opening_year : "")) : "operating" }));
   const dm = db.prepare("SELECT MIN(metric_date) mn, MAX(metric_date) mx FROM daily_metrics").get();
   return { today: m.todayStr(), centres: rows, booking_data_available: { earliest: dm.mn, latest: dm.mx } };
 }
