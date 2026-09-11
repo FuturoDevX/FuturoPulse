@@ -982,20 +982,30 @@ function exitsByYear(kind = "fy", today = todayStr()) {
 
 // Finish dates already set in OWNA (upcoming = 1) per month for the current month and the following
 // `months` - 1, per operating centre and for the group; anything beyond the window is counted in `later`.
+// A row still flagged upcoming with a finish month before the current one lands in `overdue` — the flag is
+// stamped at snapshot time, so a missed or partly failed snapshot across a month end leaves rows dated in the
+// past. They are counted, not dropped, so the total always reconciles with the scheduled-to-leave headcount.
 // This is the COE leaver signal: confirmed departures whose places will need refilling.
 function upcomingExitsByMonth(months = 8, today = todayStr()) {
   const axis = []; for (let i = 0; i < months; i++) axis.push(monthKey(today, i));
   const last = axis[axis.length - 1];
-  const map = new Map(), laterMap = new Map();
+  const map = new Map(), laterMap = new Map(), overdueMap = new Map();
   db.prepare(`SELECT owna_id, substr(finish_date, 1, 7) AS month, COUNT(*) AS n FROM child_exits WHERE upcoming = 1 GROUP BY owna_id, month`).all()
-    .forEach((r) => { if (r.month > last) laterMap.set(r.owna_id, (laterMap.get(r.owna_id) || 0) + r.n); else map.set(`${r.owna_id}|${r.month}`, r.n); });
+    .forEach((r) => {
+      if (r.month > last) laterMap.set(r.owna_id, (laterMap.get(r.owna_id) || 0) + r.n);
+      else if (r.month < axis[0]) overdueMap.set(r.owna_id, (overdueMap.get(r.owna_id) || 0) + r.n);
+      else map.set(`${r.owna_id}|${r.month}`, r.n);
+    });
   const rows = exitCentres().map((c) => {
     const points = axis.map((mo) => map.get(`${c.owna_id}|${mo}`) || 0);
-    const later = laterMap.get(c.owna_id) || 0;
-    return { owna_id: c.owna_id, name: c.name, points, later, total: points.reduce((s, v) => s + v, 0) + later };
+    const later = laterMap.get(c.owna_id) || 0, overdue = overdueMap.get(c.owna_id) || 0;
+    return { owna_id: c.owna_id, name: c.name, points, later, overdue, total: points.reduce((s, v) => s + v, 0) + overdue + later };
   });
-  const group = { points: axis.map((_, i) => rows.reduce((s, r) => s + r.points[i], 0)), later: rows.reduce((s, r) => s + r.later, 0) };
-  group.total = group.points.reduce((s, v) => s + v, 0) + group.later;
+  const group = {
+    points: axis.map((_, i) => rows.reduce((s, r) => s + r.points[i], 0)),
+    later: rows.reduce((s, r) => s + r.later, 0), overdue: rows.reduce((s, r) => s + r.overdue, 0),
+  };
+  group.total = group.points.reduce((s, v) => s + v, 0) + group.overdue + group.later;
   return { months: axis, rows, group };
 }
 

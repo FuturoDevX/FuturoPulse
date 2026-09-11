@@ -106,15 +106,15 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Finish dates already set <span class="muted" style="font-weight:400;font-size:13px;">· next <%= upcomingByMonth.months.length %> months · the COE leaver signal</span></h2>
-  <p class="footnote" style="margin-top:0;">Children whose OWNA finish date is already in the future — confirmed leavers, so each month’s count is enrolment that will need replacing. This is the COE leaver signal: it reflects finish dates entered in OWNA so far, not a forecast.</p>
+  <p class="footnote" style="margin-top:0;">Children whose OWNA finish date is already set — confirmed leavers, so each month’s count is enrolment that will need replacing. This is the COE leaver signal: it reflects finish dates entered in OWNA so far, not a forecast. <strong>Past due</strong> holds finish dates that have already passed while OWNA still lists the child as leaving: the flag is set when the snapshot runs, so a missed run across a month end leaves them here. Counting them keeps the total equal to the <strong>Scheduled to leave</strong> figure above.</p>
   <div style="overflow-x:auto;"><table>
-    <thead><tr><th>Centre</th><% upcomingByMonth.months.forEach(function(mo){ %><th class="num"><%= mShort(mo) %></th><% }); %><th class="num">Later</th><th class="num">Total</th></tr></thead>
+    <thead><tr><th>Centre</th><th class="num">Past due</th><% upcomingByMonth.months.forEach(function(mo){ %><th class="num"><%= mShort(mo) %></th><% }); %><th class="num">Later</th><th class="num">Total</th></tr></thead>
     <tbody>
       <% upcomingByMonth.rows.forEach(function(r){ %>
-        <tr><td><%= shortName(r.name) %></td><% r.points.forEach(function(v){ %><td class="num"><%= v || '' %></td><% }); %><td class="num"><%= r.later || '' %></td><td class="num"><strong><%= r.total %></strong></td></tr>
+        <tr><td><%= shortName(r.name) %></td><td class="num"><%= r.overdue || '' %></td><% r.points.forEach(function(v){ %><td class="num"><%= v || '' %></td><% }); %><td class="num"><%= r.later || '' %></td><td class="num"><strong><%= r.total %></strong></td></tr>
       <% }); %>
     </tbody>
-    <tfoot><tr class="total-row"><td>All centres</td><% upcomingByMonth.group.points.forEach(function(v){ %><td class="num"><%= v %></td><% }); %><td class="num"><%= upcomingByMonth.group.later %></td><td class="num"><%= upcomingByMonth.group.total %></td></tr></tfoot>
+    <tfoot><tr class="total-row"><td>All centres</td><td class="num"><%= upcomingByMonth.group.overdue %></td><% upcomingByMonth.group.points.forEach(function(v){ %><td class="num"><%= v %></td><% }); %><td class="num"><%= upcomingByMonth.group.later %></td><td class="num"><%= upcomingByMonth.group.total %></td></tr></tfoot>
   </table></div>
 </div>
 

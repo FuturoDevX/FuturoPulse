@@ -357,11 +357,23 @@ test('Week 1 batch 1',async(t)=>{
   cy.years.forEach(y=>assert.equal(cy.rows[0].counts[y.key],fixA.filter(d=>d.slice(0,4)===y.key).length,'CY '+y.key));
   assert.equal(m.exitsByYear('bogus').kind,'fy');
   assert.deepEqual(m.exitsByYear('fy','2026-09-11').years.map(y=>y.label).slice(-1),['FY 2026-27']);
-  // Finish dates already set: current month + 7, anything later in `later`.
+  // Finish dates already set: current month + 7, anything later in `later`, anything already past in `overdue`.
   const up=m.upcomingExitsByMonth(8);
   assert.deepEqual(up.months,[0,1,2,3,4,5,6,7].map(monthShift));
-  assert.deepEqual(up.rows.map(r=>[r.owna_id,r.points,r.later,r.total]),[['a',[0,1,0,1,0,0,0,0],0,2],['b',[0,0,0,0,0,0,0,0],1,1],['c',[0,0,0,0,0,0,0,0],0,0]]);
-  assert.deepEqual(up.group,{points:[0,1,0,1,0,0,0,0],later:1,total:3});
+  assert.deepEqual(up.rows.map(r=>[r.owna_id,r.points,r.overdue,r.later,r.total]),[['a',[0,1,0,1,0,0,0,0],0,0,2],['b',[0,0,0,0,0,0,0,0],0,1,1],['c',[0,0,0,0,0,0,0,0],0,0,0]]);
+  assert.deepEqual(up.group,{points:[0,1,0,1,0,0,0,0],overdue:0,later:1,total:3});
+  // The upcoming flag is stamped when the snapshot runs, so a run missed across a month end leaves rows dated before
+  // the axis starts. Those belong in `overdue`, never dropped: the total has to keep equalling the "Scheduled to
+  // leave" KPI. `today` below is a month past a6's finish date (monthShift(1)+'-15'), which puts a6 in the past.
+  const kpi=m.exitsSummary().reduce((s,r)=>s+r.upcoming,0);
+  assert.equal(kpi,3);
+  const late=m.upcomingExitsByMonth(8,monthShift(2)+'-15');
+  assert.equal(late.months[0],monthShift(2));
+  assert.deepEqual(late.rows.map(r=>[r.owna_id,r.points,r.overdue,r.later,r.total]),[['a',[0,1,0,0,0,0,0,0],1,0,2],['b',[0,0,0,0,0,0,0,1],0,0,1],['c',[0,0,0,0,0,0,0,0],0,0,0]]);
+  assert.deepEqual(late.group,{points:[0,1,0,0,0,0,0,1],overdue:1,later:0,total:3});
+  [0,2,4,12].forEach((n)=>{const d=monthShift(n)+'-15',g=m.upcomingExitsByMonth(8,d).group;
+   assert.equal(g.total,kpi,'total for today='+d);assert.equal(g.points.reduce((s,v)=>s+v,0)+g.overdue+g.later,kpi);});
+  assert.equal(m.upcomingExitsByMonth(8,monthShift(12)+'-15').group.overdue,3); // every scheduled finish now in the past
  });
  await t.test('tenureByCentre averages departed children with a positive tenure, in years, with a JS median',()=>{
   const tn=m.tenureByCentre();
@@ -401,6 +413,8 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(html,/href="\/exits\?year=fy" class="on"/);assert.match(html,/href="\/exits\?year=cy" class=""/);
   assert.match(html,/Finish dates already set <span[^>]*>· next 8 months · the COE leaver signal/);
   assert.match(html,/This is the COE leaver signal/);
+  assert.match(html,/<th>Centre<\/th><th class="num">Past due<\/th>/); // past-due finishes are shown, not dropped
+  assert.match(html,/<strong>Past due<\/strong> holds finish dates that have already passed/);
   assert.match(html,/<div class="n">1\.02 yrs<\/div><div class="l">Average tenure of departed children<span class="cap">median 0\.77 yrs · based on 6 of 8 departed children/);
   assert.match(html,/Average tenure of departed children <span[^>]*>· years from OWNA start date/);
   assert.match(html,/<td class="num">3<span class="muted"> \(2 without\)<\/span><\/td><td class="num">1\.09<\/td><td class="num">1\.00<\/td>/); // Alpha tenure row
