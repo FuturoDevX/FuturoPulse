@@ -747,5 +747,63 @@ test('Week 1 batch 1',async(t)=>{
    delete process.env.EXIT_LOOKBACK_DAYS;
   }
  });
+ // The de-identification is only real if the names leave the FILE: dropping/clearing a column rewrites the
+ // rows but leaves the old bytes on freed pages and in the WAL, where `strings` still reads them.
+ await t.test('the de-identifying boot leaves no recoverable name or DOB in the database file or its WAL',async()=>{
+  const Database=require('better-sqlite3'), {initSchema}=require('../db/init-schema');
+  const legDir=fs.mkdtempSync(path.join(os.tmpdir(),'pulse-deid-'));
+  const DOB='2021-08-18', LTR='abcdefghijklmnopqrstuvwxyz';
+  const NAMEDOB=/[a-z]{5,}\|(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}/g;
+  const opened=[];
+  // A database as the previous release left it: the legacy child_exits shape (name + DOB columns, child_key
+  // the raw "name|dob"), 400 departures, then the current schema on top — every CREATE is IF NOT EXISTS, so
+  // child_exits keeps its old shape for the migration to find.
+  const legacyDb=(tag)=>{
+   const file=path.join(legDir,tag+'.db'), d=new Database(file);
+   opened.push(d); d.pragma('journal_mode = WAL');
+   d.exec(`CREATE TABLE child_exits (owna_id TEXT NOT NULL, child_key TEXT NOT NULL, child_name TEXT, dob TEXT,
+     room TEXT, start_date TEXT, finish_date TEXT NOT NULL, tenure_days INTEGER, upcoming INTEGER DEFAULT 0,
+     reason TEXT, reason_source TEXT, updated_at TEXT, PRIMARY KEY (owna_id, child_key, finish_date))`);
+   d.exec(fs.readFileSync(path.join(__dirname,'..','db','schema.sql'),'utf8'));
+   const ins=d.prepare("INSERT INTO child_exits(owna_id,child_key,child_name,dob,room,start_date,finish_date,tenure_days,upcoming,updated_at) VALUES(?,?,?,?,'Room 1','2024-01-01',?,300,0,datetime('now'))");
+   for(let i=0;i<400;i++){
+    const sfx=LTR[i%26]+LTR[(i/26|0)%26], name='Zorbulon'+sfx+' Quintrexia'+sfx;
+    ins.run('deid',name.toLowerCase().replace(/[^a-z]/g,'')+'|'+DOB,name,DOB,'2025-0'+(1+i%9)+'-1'+(i%9));
+   }
+   const hits=(re)=>([file,file+'-wal'].map(f=>fs.existsSync(f)?fs.readFileSync(f,'latin1'):'').join('').match(re)||[]).length;
+   assert.ok(hits(/Zorbulon/g)>0&&hits(NAMEDOB)>0,tag+': fixture wrote no recoverable names in the first place');
+   return {d,hits};
+  };
+  const boot=(d)=>{const said=[],real=console.log;console.log=(...a)=>said.push(a.join(' '));try{initSchema(d);}finally{console.log=real;}return said.join('\n');};
+  const scrubbed=(tag,d,hits)=>{
+   // The rows are de-identified, as the earlier release already did...
+   assert.ok(!d.prepare('PRAGMA table_info(child_exits)').all().map(c=>c.name).some(n=>n==='child_name'||n==='dob'),tag+': columns remain');
+   assert.equal(d.prepare("SELECT COUNT(*) n FROM child_exits WHERE child_key LIKE '%|%'").get().n,0);
+   assert.equal(d.prepare('SELECT COUNT(*) n FROM child_exits').get().n,400); // the departures themselves survive
+   // ...and so is the file: no first name, no surname, no "name|dob" key left in the db OR in the WAL.
+   assert.equal(hits(/Zorbulon/g),0,tag+': the database file or WAL still holds the first names');
+   assert.equal(hits(/Quintrexia/g),0,tag+': the database file or WAL still holds the surnames');
+   assert.equal(hits(NAMEDOB),0,tag+': the database file or WAL still holds name|dob keys');
+  };
+  try {
+   // (a) A database that still carries the name-bearing columns.
+   const legacy=legacyDb('legacy');
+   assert.match(boot(legacy.d),/reclaimed the freed pages/);
+   scrubbed('legacy',legacy.d,legacy.hits);
+   // (b) A database the earlier release ALREADY migrated — the live one's situation. The columns are gone
+   // and the keys are opaque, so nothing is left to drop, yet the names are still in the bytes: the reclaim
+   // has to happen on this boot too, or no deploy ever removes them.
+   const done=legacyDb('already-migrated');
+   for(const col of ['child_name','dob']) done.d.exec(`ALTER TABLE child_exits DROP COLUMN ${col}`);
+   done.d.prepare("UPDATE child_exits SET child_key = lower(hex(randomblob(16))) WHERE child_key LIKE '%|%'").run();
+   assert.equal(done.d.prepare("SELECT COUNT(*) n FROM child_exits WHERE child_key LIKE '%|%'").get().n,0);
+   assert.ok(done.hits(/Zorbulon/g)>0,'already-migrated: nothing left to reclaim, so this case proves nothing');
+   assert.match(boot(done.d),/reclaimed the freed pages/);
+   scrubbed('already-migrated',done.d,done.hits);
+   // (c) Once reclaimed, a normal boot must not rewrite the database again.
+   assert.doesNotMatch(boot(done.d),/reclaimed the freed pages/,'a clean boot vacuumed anyway');
+   assert.doesNotMatch(boot(legacy.d),/reclaimed the freed pages/,'a clean boot vacuumed anyway');
+  } finally { for(const d of opened) d.close();fs.rmSync(legDir,{recursive:true,force:true}); }
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

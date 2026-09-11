@@ -44,6 +44,7 @@ function initSchema(db) {
   // put them back, which is why the columns go rather than the rows. SQLite 3.35+ can drop a column that
   // is in no key or index (child_name/dob are in neither); otherwise fall back to clearing the values.
   const exitCols = db.prepare("PRAGMA table_info(child_exits)").all().map((c) => c.name);
+  let deidentified = false; // set when this boot actually removed or rewrote name-bearing data
   for (const col of ["child_name", "dob"]) {
     if (!exitCols.includes(col)) continue;
     try {
@@ -53,12 +54,40 @@ function initSchema(db) {
       db.exec(`UPDATE child_exits SET ${col} = NULL`);
       console.log(`[init] could not drop child_exits.${col} (${e.message}) — cleared every value instead`);
     }
+    deidentified = true;
   }
   // Legacy child_key values were the raw "name|dob" string, i.e. a recoverable name. Replace them with
   // opaque ids; the next exit rebuild re-keys every row with a salted hash anyway.
   if (exitCols.includes("child_key") && db.prepare("SELECT COUNT(*) n FROM child_exits WHERE child_key LIKE '%|%'").get().n) {
     const n = db.prepare("UPDATE child_exits SET child_key = lower(hex(randomblob(16))) WHERE child_key LIKE '%|%'").run().changes;
     console.log(`[init] replaced ${n} name-bearing child_exits keys with opaque ids`);
+    deidentified = true;
+  }
+  // Dropping a column, clearing it or rewriting a key only changes the rows SQL can see: SQLite leaves the
+  // old bytes on the freed pages of the database file and in the WAL, where `strings` still reads them, and
+  // secure_delete is off by default. So the de-identification is not finished until the space is reclaimed
+  // — fold the WAL back and truncate it, then rewrite the file — otherwise the names stay recoverable from
+  // the file and from every backup taken after the migration. This has to cover the databases that were
+  // already migrated by the earlier release as well as the ones still carrying the columns, so it runs once
+  // per database, recorded in user_version (this dashboard uses that pragma for nothing else), and never on
+  // a boot that has nothing to reclaim — a normal boot must not rewrite the database every time.
+  const RECLAIM_STAMP = 1; // bump if a later migration frees name-bearing pages again
+  const stamped = db.pragma("user_version", { simple: true }) >= RECLAIM_STAMP;
+  const mayHoldResidue = deidentified || (!stamped && exitCols.length && !!db.prepare("SELECT 1 FROM child_exits").get());
+  if (mayHoldResidue) {
+    try {
+      db.pragma("secure_delete = ON"); // later deletions zero their pages instead of leaving them readable
+      db.pragma("wal_checkpoint(TRUNCATE)");
+      db.exec("VACUUM");
+      db.pragma("wal_checkpoint(TRUNCATE)"); // apply the rewrite to the file itself, not just to a new WAL
+      db.pragma(`user_version = ${RECLAIM_STAMP}`);
+      console.log("[init] reclaimed the freed pages (WAL checkpoint + VACUUM) so removed names are not recoverable from the database file");
+    } catch (e) {
+      // Leave the stamp unset so the next boot retries, but do not take the dashboard down over housekeeping.
+      console.error(`[init] COULD NOT reclaim the freed pages (${e.message}) — removed names may still be readable in the database file; retrying next boot`);
+    }
+  } else if (!stamped) {
+    db.pragma(`user_version = ${RECLAIM_STAMP}`); // nothing was ever stored here to leave behind
   }
   // Seed exits_monthly from whatever detail the database already holds, so the aggregate starts with the
   // history that is in the current look-back window instead of waiting a year to fill up. One-off: after
