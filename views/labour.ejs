@@ -14,6 +14,8 @@
   const t = rows.reduce((a,r)=>{a.emp+=r.employees;a.wh+=r.worked_h;a.lh+=r.leave_h;a.ch+=r.care_hours;a.wa+=r.worked_amt;a.la+=r.leave_amt;a.ma+=r.matwc_amt;a.cw+=r.care_wages;a.rev+=r.revenue;a.cas+=r.casual_h;a.kh+=r.kitchen_h;a.ka+=r.kitchen_amt;a.clh+=(r.cleaning_h||0);a.cla+=(r.cleaning_amt||0);return a;},{emp:0,wh:0,lh:0,ch:0,wa:0,la:0,ma:0,cw:0,rev:0,cas:0,kh:0,ka:0,clh:0,cla:0});
   const carePct = t.rev>0 ? Math.round(t.cw/t.rev*1000)/10 : null;
   const allPct  = t.rev>0 ? Math.round((t.cw+t.ka+t.cla)/t.rev*1000)/10 : null;
+  const pc = locals.perChild || null; // group wages per booked child-day (centres with bookings only)
+  const perKid = (v) => v == null ? '<span class="muted">—</span>' : money(v);
 %>
 
 <div class="page-head">
@@ -39,6 +41,7 @@
   <div class="card stat"><div class="n <%= marginClass(carePct) %>-text"><%= carePct==null?'—':carePct+'%' %></div><div class="l">Educator wages % of revenue</div></div>
   <div class="card stat"><div class="n"><%= money(t.ka + t.cla) %></div><div class="l">Support-team wages</div></div>
   <div class="card stat"><div class="n <%= marginClass(allPct) %>-text"><%= allPct==null?'—':allPct+'%' %></div><div class="l">All-in (incl support) % rev</div></div>
+  <div class="card stat"><div class="n"><%- perKid(pc && pc.per_child_day) %></div><div class="l">Wages per child-day<span class="cap">educator wages ÷ <%= pc ? pc.child_days.toLocaleString('en-AU') : 0 %> booked child-days · all-in <%- perKid(pc && pc.all_in_per_child_day) %></span></div></div>
 </div>
 
 <% if (typeof wagesTrend !== 'undefined' && wagesTrend && wagesTrend.length) {
@@ -80,7 +83,9 @@
         <th class="num">Worked<br>hours ($$)</th>
         <th class="num">Leave<br>Taken ($$)</th>
         <th class="num">Other (Mat<br>Leave / WC) ($$)</th>
-        <th class="num">Total<br>Wages $$</th>
+        <th class="num">Total<br>Wages $</th>
+        <th class="num">Educator wages<br>per child-day</th>
+        <th class="num">All-in<br>per child-day</th>
         <th class="num">vs Budgeted<br>Wages</th>
         <th class="num">vs Budget<br>Hours</th>
         <th class="num">Casual hours<br><span style="font-weight:400;text-transform:none;">(Included)</span></th>
@@ -106,6 +111,8 @@
           <td class="num"><%= money(r.leave_amt) %></td>
           <td class="num"><%= r.matwc_amt ? money(r.matwc_amt) : '$0' %></td>
           <td class="num" style="font-weight:700;"><%= money(totWage) %></td>
+          <td class="num"><%- perKid(r.wages_per_child_day) %></td>
+          <td class="num"><%- perKid(r.all_in_per_child_day) %></td>
           <td class="num"><%- deltaWages(r.vs_wages) %></td>
           <td class="num"><%- deltaHours(r.vs_hours) %></td>
           <td class="num"><%= h1(r.casual_h) %></td>
@@ -127,6 +134,8 @@
         <td class="num"><%= money(t.la) %></td>
         <td class="num"><%= money(t.ma) %></td>
         <td class="num" style="font-weight:700;"><%= money(t.wa + t.la + t.ma) %></td>
+        <td class="num"><%- perKid(pc && pc.per_child_day) %></td>
+        <td class="num"><%- perKid(pc && pc.all_in_per_child_day) %></td>
         <td class="num">—</td>
         <td class="num">—</td>
         <td class="num"><%= h1(t.cas) %></td>
@@ -135,6 +144,7 @@
   </table>
   </div>
   <p class="footnote">Total Hours = worked + kitchen + leave. Total Wages = worked + leave + other (Mat leave / WC); the kitchen/cleaning wage cost is shown separately below. Casual hours are counted within Worked hours. HQ, Cobbitty &amp; Oran Park appear here as they take on staff before opening.</p>
+  <p class="footnote"><strong>Wages per child-day</strong> = educator wages (worked + leave + other) ÷ booked child-days in the week (OWNA bookings on operating days, Mon–Sun; public-holiday booking rows excluded); <strong>all-in</strong> adds kitchen + cleaning. Whole dollars. Head office and pre-opening rows have no bookings and show “—”; the total row and tile cover centres with bookings only.</p>
 </div>
 
 <div class="card">

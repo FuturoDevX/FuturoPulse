@@ -23,6 +23,15 @@ dm.run('a',today,50,40,10,1,1000); dm.run('a',addDays(today,7),60,60,0,3,1200);
 // Incidents: current month, three months back and eleven months back are inside the 12-month window; twelve back is not.
 const inc=db.prepare('INSERT INTO incidents_monthly(owna_id,month,total,injuries,illness,serious,reportable) VALUES(?,?,?,?,?,?,?)');
 inc.run('a',monthShift(0),10,8,2,0,1); inc.run('a',monthShift(-3),20,15,5,1,2); inc.run('a',monthShift(-11),12,10,2,0,1); inc.run('a',monthShift(-12),30,20,10,2,5);
+// Batch 2 fixtures: one finalised pay week (ending Sun 14 Jun 2026, King's Birthday week). Alpha/Beta map to OWNA centres;
+// HQ has no owna_id and the pre-opening centre has no bookings, so neither can have a per-child-day figure.
+const lw=db.prepare('INSERT INTO labour_weekly(eh_centre,week_ending,owna_id,employees,worked_h,worked_amt,kitchen_h,kitchen_amt,cleaning_h,cleaning_amt,leave_h,leave_amt,matwc_amt,casual_h) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+lw.run('Futuro Alpha','2026-06-14','a',10,300,9000,20,600,10,240,20,600,0,30);
+lw.run('Futuro Beta','2026-06-14','b',5,100,3000,10,400,0,0,5,200,0,0);
+lw.run('Futuro HQ','2026-06-14',null,3,80,5000,0,0,0,0,0,0,0,0);
+lw.run('Futuro Opening','2026-06-14','open',1,20,1000,0,0,0,0,0,0,0,0);
+const INC_FIX=[[monthShift(0),10,8,2,0,1],[monthShift(-3),20,15,5,1,2],[monthShift(-11),12,10,2,0,1],[monthShift(-12),30,20,10,2,5]];
+const incSum=(from,to)=>INC_FIX.filter(f=>f[0]>=from&&f[0]<=to).reduce((a,f)=>({total:a.total+f[1],injuries:a.injuries+f[2],illness:a.illness+f[3],serious:a.serious+f[4],reportable:a.reportable+f[5],months:a.months+1}),{total:0,injuries:0,illness:0,serious:0,reportable:0,months:0});
 const app=require('../server');
 let server,base;
 async function login(role){const r=await fetch(base+'/login',{method:'POST',body:new URLSearchParams({email:role+'@example.test',password:pass}),redirect:'manual'});assert.equal(r.status,302);return r.headers.get('set-cookie').split(';')[0];}
@@ -144,6 +153,108 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(b,/reg12-stat"><div class="n">—<\/div>/);assert.match(b,/No incident data for this centre yet/);
   assert.match(await page('/qc',await login('centre')),/3 months of data/); // scoped to Alpha
   assert.equal((await request('/qc',await login('viewer'))).status,403);
+ });
+ // ===== Batch 2 (Day 2): safety totals + YTD + year choice, Department notifications, wages per child-day =====
+ await t.test('incidentsReport carries year-to-date, last-12-month and window totals for the chosen reporting year',()=>{
+  const fy=m.incidentsReport(null,12,null,'fy');
+  const fyStart=m.yearStart('fy',today).slice(0,7);
+  assert.equal(fy.year.kind,'fy');assert.equal(fy.ytd.kind,'fy');assert.equal(fy.ytd.start,m.yearStart('fy',today));
+  assert.match(fy.ytd.ytdLabel,/^FY \d{4}-\d{2} to date$/);
+  assert.equal(fy.ytd.from_month,fyStart);assert.equal(fy.ytd.to_month,monthShift(0));
+  const eFy=incSum(fyStart,monthShift(0));
+  assert.deepEqual(fy.ytd.group,eFy);
+  assert.deepEqual(fy.ytd.rows,[{owna_id:'a',name:'Centre Alpha',...eFy}]);
+  assert.deepEqual(fy.rows[0].ytd,fy.ytd.rows[0]);
+  // Last 12 calendar months: the three fixture months inside the window, not the one twelve months back.
+  assert.equal(fy.last12.from_month,monthShift(-11));assert.equal(fy.last12.to_month,monthShift(0));
+  assert.deepEqual(fy.last12.group,{total:42,injuries:33,illness:9,serious:1,reportable:4,months:3});
+  assert.deepEqual(fy.rows[0].last12,{owna_id:'a',name:'Centre Alpha',total:42,injuries:33,illness:9,serious:1,reportable:4,months:3});
+  // Window totals = every displayed month (only four distinct months exist, so all four are shown).
+  assert.deepEqual(fy.rows[0].window,{months:4,total:72,injuries:53,illness:19,serious:3,reportable:9});
+  assert.deepEqual(fy.windowTotals,{months:4,total:72,injuries:53,illness:19,serious:3,reportable:9});
+  // Calendar year.
+  const cy=m.incidentsReport(null,12,null,'cy');
+  const cyStart=m.yearStart('cy',today).slice(0,7);
+  assert.equal(cy.ytd.kind,'cy');assert.equal(cy.ytd.from_month,cyStart);
+  assert.match(cy.ytd.ytdLabel,/^\d{4} to date$/);assert.equal(cy.ytd.ytdLabel,cyStart.slice(0,4)+' to date');
+  assert.deepEqual(cy.ytd.group,incSum(cyStart,monthShift(0)));
+  // Explicit "today": FY2026-27 to date on 11 Sep 2026 runs Jul → Sep 2026; unknown year kinds fall back to FY.
+  const fixed=m.incidentsReport(null,12,null,'fy','2026-09-11');
+  assert.equal(fixed.ytd.ytdLabel,'FY 2026-27 to date');assert.equal(fixed.ytd.from_month,'2026-07');assert.equal(fixed.ytd.to_month,'2026-09');
+  assert.equal(fixed.last12.from_month,'2025-10');
+  assert.equal(m.incidentsReport(null,12,null,'cy','2026-09-11').ytd.ytdLabel,'2026 to date');
+  assert.equal(m.incidentsReport(null,12,null,'bogus').ytd.kind,'fy');
+  // Scoped to a centre without incidents: no rows, zero group.
+  const none=m.incidentsReport('b',12,null,'fy');
+  assert.deepEqual(none.rows,[]);assert.deepEqual(none.ytd.group,{total:0,injuries:0,illness:0,serious:0,reportable:0,months:0});
+  // Existing shape is unchanged.
+  assert.equal(fy.rows[0].name,'Centre Alpha');assert.equal(fy.headline.total,fy.totals.find(x=>x.month===fy.selectedMonth).total);
+ });
+ await t.test('Safety page shows Total columns, the YTD block in the warn colour, the FY / Calendar toggle and Department notifications',async()=>{
+  const c=await login('admin');
+  const html=await page('/safety',c);
+  const eFy=incSum(m.yearStart('fy',today).slice(0,7),monthShift(0));
+  assert.match(html,/FY \d{4}-\d{2} to date/);
+  assert.match(html,new RegExp('<div class="n warn-text">'+eFy.total+'</div><div class="l">Total incident reports · FY \\d{4}-\\d{2} to date'));
+  assert.match(html,new RegExp('class="ytd-total">'+eFy.total+'</td>'));
+  assert.match(html,/<th style="text-align:right;">Total<\/th><th style="text-align:right;">Injuries<\/th>/); // monthly and YTD tables
+  assert.match(html,/Total<br><span style="font-weight:400;text-transform:none;">4 mo<\/span>/); // trend grid total column
+  assert.match(html,/border-left:2px solid var\(--line,#e5e7eb\);font-weight:700;">72<br>/);
+  assert.match(html,/Notified to the Department · FY \d{4}-\d{2} to date/);
+  assert.match(html,new RegExp('<div class="n">4</div><div class="l">Notified to the Department · last 12 months'));
+  assert.match(html,/emergency services attended or medical attention sought, from OWNA incident reports/);
+  assert.match(html,/OWNA does not expose a separate “notified” flag/);
+  assert.match(html,/href="\/safety\?year=fy" class="on"/);assert.match(html,/href="\/safety\?year=cy" class=""/);
+  assert.match(html,/>FY<\/a> \| <a href="\/safety\?year=cy"[^>]*>Calendar<\/a>/);
+  assert.match(html,/<input type="hidden" name="year" value="fy">/);
+  assert.doesNotMatch(html,/ to date · Jul \d{4} → Jul/); // sanity: label is the reporting year, not a month
+  const cy=await page('/safety?year=cy',c);
+  const eCy=incSum(m.yearStart('cy',today).slice(0,7),monthShift(0));
+  assert.match(cy,new RegExp('<div class="n warn-text">'+eCy.total+'</div><div class="l">Total incident reports · \\d{4} to date'));
+  assert.doesNotMatch(cy,/FY \d{4}-\d{2} to date/);
+  assert.match(cy,/href="\/safety\?year=cy" class="on"/);assert.match(cy,/<input type="hidden" name="year" value="cy">/);
+  // A chosen month survives the toggle links; the default month does not pin itself.
+  const rep=m.incidentsReport(null,12,null,'fy');
+  const other=rep.months.find(mm=>mm!==rep.lastComplete);
+  assert.match(await page('/safety?month='+other,c),new RegExp('href="/safety\\?year=cy&amp;month='+other+'"'));
+  assert.match(html,/href="\/safety\?year=cy"/);
+  // Viewer (aggregates only) and centre-scoped users still open the page; no child, family or staff names are present.
+  const v=await page('/safety',await login('viewer'));assert.match(v,/Notified to the Department/);assert.doesNotMatch(v,/child_name|family_name/);
+  assert.match(await page('/safety?year=cy',await login('centre')),/\d{4} to date/);
+ });
+ await t.test('ownaWeek returns booked child-days on operating days and labourForWeek prices wages per child-day',()=>{
+  // King's Birthday week: Alpha has booking rows Mon 8 (holiday, 30), Tue 9 (50), Wed 10 (70); Beta Tue 9 (40).
+  assert.deepEqual(m.ownaWeek('a','2026-06-14'),{revenue:3000,occupancy:50,child_days:120,op_days:2});
+  assert.deepEqual(m.ownaWeek('b','2026-06-14'),{revenue:800,occupancy:40,child_days:40,op_days:1});
+  assert.deepEqual(m.ownaWeek(null,'2026-06-14'),{revenue:0,occupancy:null,child_days:0,op_days:0});
+  assert.deepEqual(m.ownaWeek('open','2026-06-14'),{revenue:0,occupancy:null,child_days:0,op_days:0});
+  assert.deepEqual(m.labourWeeks(16),['2026-06-14']);
+  const rows=m.labourForWeek('2026-06-14');
+  const by=Object.fromEntries(rows.map(r=>[r.eh_centre,r]));
+  assert.equal(by['Futuro Alpha'].child_days,120);assert.equal(by['Futuro Alpha'].care_wages,9600);
+  assert.equal(by['Futuro Alpha'].wages_per_child_day,80); // 9600 / 120
+  assert.equal(by['Futuro Alpha'].all_in_per_child_day,87); // (9600 + 600 + 240) / 120
+  assert.equal(by['Futuro Beta'].wages_per_child_day,80); // 3200 / 40
+  assert.equal(by['Futuro Beta'].all_in_per_child_day,90); // (3200 + 400) / 40
+  assert.equal(by['Futuro HQ'].child_days,0);assert.equal(by['Futuro HQ'].wages_per_child_day,null);assert.equal(by['Futuro HQ'].all_in_per_child_day,null);
+  assert.equal(by['Futuro Opening'].wages_per_child_day,null);
+  assert.deepEqual(m.wagesPerChildDay(rows),{centres:2,child_days:160,care_wages:12800,all_wages:14040,per_child_day:80,all_in_per_child_day:88});
+  assert.deepEqual(m.wagesPerChildDay([]),{centres:0,child_days:0,care_wages:0,all_wages:0,per_child_day:null,all_in_per_child_day:null});
+  // Existing fields are untouched.
+  assert.equal(by['Futuro Alpha'].revenue,3000);assert.equal(by['Futuro Alpha'].wage_pct,320);assert.equal(by['Futuro HQ'].worked_amt,5000);
+ });
+ await t.test('Wages page shows per child-day columns, the total row, the group tile and the footnote',async()=>{
+  const c=await login('admin');
+  const html=await page('/wages?week=2026-06-14',c);
+  assert.match(html,/<th class="num">Educator wages<br>per child-day<\/th>\s*<th class="num">All-in<br>per child-day<\/th>/);
+  assert.match(html,/<td class="num">\$80<\/td>\s*<td class="num">\$87<\/td>/); // Alpha
+  assert.match(html,/<td class="num">\$80<\/td>\s*<td class="num">\$90<\/td>/); // Beta
+  assert.match(html,/<td class="num"><span class="muted">—<\/span><\/td>\s*<td class="num"><span class="muted">—<\/span><\/td>/); // HQ / pre-opening
+  assert.match(html,/<td class="num">\$80<\/td>\s*<td class="num">\$88<\/td>\s*<td class="num">—<\/td>/); // total row
+  assert.match(html,/<div class="n">\$80<\/div><div class="l">Wages per child-day<span class="cap">educator wages ÷ 160 booked child-days · all-in \$88<\/span>/);
+  assert.match(html,/<strong>Wages per child-day<\/strong> = educator wages \(worked \+ leave \+ other\) ÷ booked child-days/);
+  assert.doesNotMatch(html,/\$80\.\d/);
+  assert.equal((await request('/wages',await login('centre'))).status,403); // still blocked for centre logins
  });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

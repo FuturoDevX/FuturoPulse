@@ -752,17 +752,41 @@ function incidentsMonth(ownaId, month, preferComplete) {
   return db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? ORDER BY month DESC LIMIT 1").get(ownaId) || null;
 }
 
-// Rolling incident report: per-centre month-by-month grid + last-complete-month headline.
-function incidentsReport(scopedOwnaId, monthsBack = 12, headlineMonth = null) {
+const INCIDENT_KEYS = ["total", "injuries", "illness", "serious", "reportable"];
+
+// Sum incident counts per centre and for the group over an inclusive YYYY-MM range, with how many
+// months of data each centre has in that range. Rows follow the order of `centreRows`.
+function incidentTotalsBetween(centreRows, fromMonth, toMonth) {
+  const q = db.prepare(`
+    SELECT COALESCE(SUM(total),0) total, COALESCE(SUM(injuries),0) injuries, COALESCE(SUM(illness),0) illness,
+           COALESCE(SUM(serious),0) serious, COALESCE(SUM(reportable),0) reportable, COUNT(*) months
+    FROM incidents_monthly WHERE owna_id = ? AND month BETWEEN ? AND ?
+  `);
+  const rows = centreRows.map((c) => ({ owna_id: c.owna_id, name: c.name, ...q.get(c.owna_id, fromMonth, toMonth) }));
+  const group = { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0, months: 0 };
+  rows.forEach((r) => { INCIDENT_KEYS.forEach((k) => { group[k] += r[k]; }); group.months = Math.max(group.months, r.months); });
+  return { from_month: fromMonth, to_month: toMonth, rows, group };
+}
+
+// Rolling incident report: per-centre month-by-month grid + last-complete-month headline, plus
+// year-to-date totals for the chosen reporting year (yearKind 'fy' = from 1 July, 'cy' = from 1 January)
+// and the 12 calendar months ending with the current month. "Notified to the Department" on the Safety
+// page is the `reportable` (Reg 12) count: OWNA exposes no separate notification flag.
+function incidentsReport(scopedOwnaId, monthsBack = 12, headlineMonth = null, yearKind = "fy", today = todayStr()) {
   let months = db.prepare("SELECT DISTINCT month FROM incidents_monthly ORDER BY month DESC LIMIT ?").all(monthsBack).map((r) => r.month);
   months.reverse(); // chronological (oldest → newest)
   const nowMonth = new Date().toISOString().slice(0, 7);
-  if (!months.length) return { months: [], rows: [], totals: [], lastComplete: null, selectedMonth: null, currentMonth: nowMonth, headline: null };
+  const yr = yearRange(yearKind, today);
+  const yStart = Number(yr.start.slice(0, 4));
+  const year = { kind: yr.kind, start: yr.start, label: yr.label,
+    ytdLabel: yr.kind === "cy" ? `${yStart} to date` : `FY ${yStart}-${String(yStart + 1).slice(2)} to date` };
+  if (!months.length) return { months: [], rows: [], totals: [], lastComplete: null, selectedMonth: null, currentMonth: nowMonth, headline: null, year, ytd: null, last12: null, windowTotals: null };
   const lastComplete = months.filter((mo) => mo < nowMonth).slice(-1)[0] || months[months.length - 1];
   // Headline reflects the chosen month (default: last complete month; the current month is partial).
   const selectedMonth = (headlineMonth && months.includes(headlineMonth)) ? headlineMonth : lastComplete;
 
-  let centreRows = db.prepare(`SELECT DISTINCT c.owna_id, c.name FROM incidents_monthly i JOIN centres c ON c.owna_id = i.owna_id ORDER BY c.name`).all();
+  let centreRows = db.prepare(`SELECT DISTINCT c.owna_id, c.name FROM incidents_monthly i JOIN centres c ON c.owna_id = i.owna_id ORDER BY c.name`).all()
+    .map((c) => ({ owna_id: c.owna_id, name: c.name.replace("Futuro Childcare & Education - ", "") }));
   if (scopedOwnaId) centreRows = centreRows.filter((c) => c.owna_id === scopedOwnaId);
   const get = db.prepare("SELECT total, injuries, illness, serious, reportable FROM incidents_monthly WHERE owna_id=? AND month=?");
   const rateOf = (rep) => rag(rep, 0, 1, true); // serious incidents (reg 12): 0 green, 1 amber, 2+ red
@@ -774,7 +798,7 @@ function incidentsReport(scopedOwnaId, monthsBack = 12, headlineMonth = null) {
       return { month: mo, ...r, hasData: !!row, rating: rateOf(r.reportable) };
     });
     const hc = cells.find((x) => x.month === selectedMonth) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0, rating: rateOf(0) };
-    return { owna_id: c.owna_id, name: c.name.replace("Futuro Childcare & Education - ", ""), cells, headline: hc };
+    return { owna_id: c.owna_id, name: c.name, cells, headline: hc };
   });
   const totals = months.map((mo) => {
     const t = { month: mo, total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 };
@@ -782,7 +806,20 @@ function incidentsReport(scopedOwnaId, monthsBack = 12, headlineMonth = null) {
     return t;
   });
   const headline = { ...(totals.find((t) => t.month === selectedMonth) || { total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 }), rating: rateOf((totals.find((t) => t.month === selectedMonth) || {}).reportable || 0) };
-  return { months, rows, totals, lastComplete, selectedMonth, currentMonth: nowMonth, headline };
+  // Totals across the displayed months (the trend grid's trailing column).
+  const windowTotals = { months: months.length, total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 };
+  rows.forEach((r) => {
+    r.window = { months: months.length, total: 0, injuries: 0, illness: 0, serious: 0, reportable: 0 };
+    r.cells.forEach((cell) => { INCIDENT_KEYS.forEach((k) => { r.window[k] += cell[k]; windowTotals[k] += cell[k]; }); });
+  });
+  // Year to date (start of the reporting year → current, partial month) and the last 12 calendar months.
+  const toMonth = today.slice(0, 7);
+  const [ty, tm] = toMonth.split("-").map(Number);
+  const from12 = new Date(Date.UTC(ty, tm - 12, 1)).toISOString().slice(0, 7); // 11 months back
+  const ytd = { ...year, ...incidentTotalsBetween(centreRows, yr.start.slice(0, 7), toMonth) };
+  const last12 = incidentTotalsBetween(centreRows, from12, toMonth);
+  rows.forEach((r, i) => { r.ytd = ytd.rows[i]; r.last12 = last12.rows[i]; });
+  return { months, rows, totals, lastComplete, selectedMonth, currentMonth: nowMonth, headline, year, ytd, last12, windowTotals };
 }
 function actionPlanMonths(limit = 24) {
   return db.prepare("SELECT DISTINCT month FROM action_plans ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);
@@ -985,16 +1022,21 @@ function labourWeeks(limit = 16) {
   return db.prepare(`SELECT week_ending FROM labour_weekly GROUP BY week_ending HAVING COUNT(*) >= 4 ORDER BY week_ending DESC LIMIT ?`).all(limit).map((r) => r.week_ending);
 }
 
-// OWNA revenue + occupancy for the Mon..weekEnding week of a centre.
+// OWNA revenue + occupancy for the Mon..weekEnding week of a centre, plus booked child-days.
+// child_days = booked children summed over the week's operating days (weekdays that are not NSW public
+// holidays — OWNA keeps booking rows on holidays although the centre is closed); op_days = those days.
 function ownaWeek(ownaId, weekEnding) {
-  if (!ownaId) return { revenue: 0, occupancy: null };
+  if (!ownaId) return { revenue: 0, occupancy: null, child_days: 0, op_days: 0 };
   const start = new Date(weekEnding + "T00:00:00"); start.setDate(start.getDate() - 6);
   const from = start.toISOString().slice(0, 10);
   const r = db.prepare(`
     SELECT COALESCE(SUM(fee_total),0) rev, COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) days
     FROM daily_metrics WHERE owna_id = ? AND metric_date BETWEEN ? AND ?
   `).get(ownaId, from, weekEnding);
-  return { revenue: round(r.rev), occupancy: r.days ? pct(r.booked, r.cap * r.days) : null };
+  let child_days = 0; const opDates = new Set();
+  db.prepare(`SELECT metric_date, booked FROM daily_metrics WHERE owna_id = ? AND metric_date BETWEEN ? AND ?`).all(ownaId, from, weekEnding)
+    .forEach((d) => { if (cal.isOperatingDay(d.metric_date)) { child_days += d.booked || 0; opDates.add(d.metric_date); } });
+  return { revenue: round(r.rev), occupancy: r.days ? pct(r.booked, r.cap * r.days) : null, child_days, op_days: opDates.size };
 }
 
 // Full labour table for one week (per centre) with revenue, occupancy and margin.
@@ -1015,6 +1057,7 @@ function labourForWeek(weekEnding) {
       ...r,
       revenue: ow.revenue,
       occupancy: ow.occupancy,
+      child_days: ow.child_days,
       care_hours: Math.round(care_hours * 10) / 10,
       care_wages: Math.round(care_wages),
       wage_pct: ow.revenue > 0 ? Math.round(care_wages / ow.revenue * 1000) / 10 : null,
@@ -1037,9 +1080,27 @@ function labourForWeek(weekEnding) {
     r.vs_hours = b && b.budget_hours != null ? Math.round((allHours - b.budget_hours) * 10) / 10 : null;
     r.vs_occ = (b && b.budget_occ != null && r.occupancy != null) ? Math.round((r.occupancy - b.budget_occ) * 10) / 10 : null;
     r.vs_support = (b && b.budget_support != null) ? Math.round((r.support_amt || 0) - b.budget_support) : null;
+    // Wages per booked child-day (whole dollars): educator (care) wages, and all-in incl. kitchen + cleaning.
+    // Head office / pre-opening rows have no bookings → null (shown as "—").
+    r.wages_per_child_day = r.child_days > 0 ? Math.round(r.care_wages / r.child_days) : null;
+    r.all_in_per_child_day = r.child_days > 0 ? Math.round(allWages / r.child_days) : null;
   });
   mapped.sort((a, b) => b.care_wages - a.care_wages);
   return mapped;
+}
+
+// Group wages per child-day for one week from labourForWeek rows: centres with bookings only
+// (head office and pre-opening rows carry wages but no children, so they are left out of both sides).
+function wagesPerChildDay(rows) {
+  const withKids = (rows || []).filter((r) => r.child_days > 0);
+  const child_days = withKids.reduce((s, r) => s + r.child_days, 0);
+  const care_wages = Math.round(withKids.reduce((s, r) => s + r.care_wages, 0));
+  const all_wages = Math.round(withKids.reduce((s, r) => s + (r.all_wages != null ? r.all_wages : r.care_wages + (r.kitchen_amt || 0) + (r.cleaning_amt || 0)), 0));
+  return {
+    centres: withKids.length, child_days, care_wages, all_wages,
+    per_child_day: child_days > 0 ? Math.round(care_wages / child_days) : null,
+    all_in_per_child_day: child_days > 0 ? Math.round(all_wages / child_days) : null,
+  };
 }
 
 // Weekly trend: total wages, revenue and wage% over time (group, or one centre by owna_id).
@@ -1341,5 +1402,5 @@ module.exports = {
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, pcAllSeries, PC_TARGET_KEYS,
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
-  yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months,
+  yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months, wagesPerChildDay, ownaWeek,
 };

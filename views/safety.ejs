@@ -6,19 +6,27 @@
   const h = rep.headline || {};
   const isPartial = (m) => m === rep.currentMonth;
   const monthLabelSel = (mm) => mm === rep.currentMonth ? (mLabel(mm) + ' (so far)') : mLabel(mm);
+  const yk = (locals.yearKind === 'cy' || (rep.year && rep.year.kind === 'cy')) ? 'cy' : 'fy';
+  // Toggle links keep an explicitly chosen month; the default (last complete month) is left to the route.
+  const monthQS = (rep.selectedMonth && rep.selectedMonth !== rep.lastComplete) ? '&month=' + rep.selectedMonth : '';
+  const yearQS = (k) => '/safety?year=' + k + monthQS;
+  const ytd = rep.ytd, l12 = rep.last12;
+  const ytdRows = (rep.rows || []).map(function(r){ return { name: r.name, y: r.ytd || {}, l: r.last12 || {} }; });
+  const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 %>
 <div class="page-head">
   <div>
     <h1>Safety &amp; Incidents</h1>
-    <p class="sub">OWNA child incident reports · figures below are for <strong><%= monthLabelSel(rep.selectedMonth) %></strong><% if (isPartial(rep.selectedMonth)) { %> — this month is still in progress<% } %></p>
+    <p class="sub">OWNA child incident reports · figures below are for <strong><%= monthLabelSel(rep.selectedMonth) %></strong><% if (isPartial(rep.selectedMonth)) { %> — this month is still in progress<% } %><% if (ytd) { %> · year to date: <strong><%= ytd.ytdLabel %></strong><% } %></p>
   </div>
+  <div class="head-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <span class="year-toggle">Reporting year: <a href="<%= yearQS('fy') %>" class="<%= yk === 'fy' ? 'on' : '' %>" title="Financial year (from 1 July)">FY</a> | <a href="<%= yearQS('cy') %>" class="<%= yk === 'cy' ? 'on' : '' %>" title="Calendar year (from 1 January)">Calendar</a></span>
   <% if (rep.months.length) { %>
-  <div class="head-actions">
-    <form method="GET" style="display:inline;"><select name="month" onchange="this.form.submit()">
+    <form method="GET" style="display:inline;"><input type="hidden" name="year" value="<%= yk %>"><select name="month" onchange="this.form.submit()">
       <% rep.months.slice().reverse().forEach(function(mm){ %><option value="<%= mm %>" <%= mm===rep.selectedMonth?'selected':'' %>><%= monthLabelSel(mm) %></option><% }); %>
     </select></form>
-  </div>
   <% } %>
+  </div>
 </div>
 
 <% if (!rep.months.length) { %>
@@ -27,11 +35,11 @@
 
 <h2 class="section-label"><%= monthLabelSel(rep.selectedMonth) %></h2>
 <div class="grid kpis">
-  <div class="card stat"><div class="n"><%= h.total %></div><div class="l">Incident reports</div></div>
+  <div class="card stat"><div class="n"><%= h.total %></div><div class="l">Total incident reports</div></div>
   <div class="card stat"><div class="n"><%= h.injuries %></div><div class="l">Injuries</div></div>
   <div class="card stat"><div class="n"><%= h.illness %></div><div class="l">Illness</div></div>
   <div class="card stat"><div class="n"><%= h.serious %></div><div class="l">Emergency services</div></div>
-  <div class="card stat <%= h.rating==='red' ? 'hot-card' : (h.rating==='amber' ? '' : '') %>"><div class="n"><%= h.reportable %></div><div class="l"><%- dot(h.rating) %> Serious incidents · Reg 12</div></div>
+  <div class="card stat <%= h.rating==='red' ? 'hot-card' : '' %>"><div class="n"><%= h.reportable %></div><div class="l"><%- dot(h.rating) %> Serious incidents · Reg 12</div></div>
 </div>
 
 <div class="card">
@@ -39,7 +47,7 @@
   <div style="overflow-x:auto;"><table>
     <thead><tr>
       <th>Centre</th><th style="width:150px;">Serious (Reg 12)</th>
-      <th style="text-align:right;">Incidents</th><th style="text-align:right;">Injuries</th>
+      <th style="text-align:right;">Total</th><th style="text-align:right;">Injuries</th>
       <th style="text-align:right;">Illness</th><th style="text-align:right;">Emerg. svc</th>
     </tr></thead>
     <tbody>
@@ -47,7 +55,7 @@
         <tr>
           <td><strong><%= r.name %></strong></td>
           <td><%- dot(c.rating) %> <span style="text-transform:capitalize;"><%= c.rating %></span> · <%= c.reportable %></td>
-          <td style="text-align:right;"><%= c.total %></td>
+          <td style="text-align:right;font-weight:700;"><%= c.total %></td>
           <td style="text-align:right;"><%= c.injuries %></td>
           <td style="text-align:right;"><%= c.illness %></td>
           <td style="text-align:right;"><%= c.serious %></td>
@@ -67,16 +75,74 @@
   </table></div>
 </div>
 
+<% if (ytd) { var g = ytd.group, g12 = l12.group; %>
+<h2 class="section-label"><%= ytd.ytdLabel %> <span style="font-weight:400;text-transform:none;letter-spacing:0;">· <%= mShort(ytd.from_month) %> <%= ytd.from_month.slice(0,4) %> → <%= mShort(ytd.to_month) %> <%= ytd.to_month.slice(0,4) %> (current month partial) · <a href="<%= yearQS(yk === 'fy' ? 'cy' : 'fy') %>">switch to <%= yk === 'fy' ? 'calendar year' : 'financial year' %></a></span></h2>
+<div class="grid kpis">
+  <div class="card stat"><div class="n warn-text"><%= g.total %></div><div class="l">Total incident reports · <%= ytd.ytdLabel %></div></div>
+  <div class="card stat"><div class="n"><%= g.injuries %></div><div class="l">Injuries · YTD</div></div>
+  <div class="card stat"><div class="n"><%= g.illness %></div><div class="l">Illness · YTD</div></div>
+  <div class="card stat"><div class="n"><%= g.serious %></div><div class="l">Emergency services · YTD</div></div>
+  <div class="card stat"><div class="n"><%= g.reportable %></div><div class="l">Serious incidents · Reg 12 · YTD</div></div>
+  <div class="card stat"><div class="n"><%= g.reportable %></div><div class="l">Notified to the Department · <%= ytd.ytdLabel %><span class="cap">= Reg 12 serious incidents: emergency services attended or medical attention sought, from OWNA incident reports</span></div></div>
+  <div class="card stat"><div class="n"><%= g12.reportable %></div><div class="l">Notified to the Department · last 12 months<span class="cap"><%= mShort(l12.from_month) %> <%= l12.from_month.slice(0,4) %> → <%= mShort(l12.to_month) %> <%= l12.to_month.slice(0,4) %> · <%= plural(g12.months, 'month') %> of data</span></div></div>
+</div>
+
 <div class="card">
-  <h2 style="margin-top:0;">Incident volume — 12-month trend</h2>
-  <p class="footnote" style="margin-top:0;">Each cell: total incident count, with the dot showing the serious-incident rating (green 0 · amber 1 · red 2+). “S” = serious incidents (Reg 12) that month.</p>
+  <h2 style="margin-top:0;">By centre — <%= ytd.ytdLabel %></h2>
+  <p class="footnote" style="margin-top:0;">Calendar months from the start of the <%= yk === 'fy' ? 'financial year (1 July)' : 'calendar year (1 January)' %> to the current month, which is still in progress. <strong>Notified to the Department</strong> = Reg 12 serious incidents (emergency services attended or medical attention sought, recorded on OWNA incident reports), which must be notified to the NSW Regulatory Authority within 24 hours.</p>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Centre</th>
+      <th style="text-align:right;">Total</th><th style="text-align:right;">Injuries</th>
+      <th style="text-align:right;">Illness</th><th style="text-align:right;">Emerg. svc</th>
+      <th style="text-align:right;">Serious (Reg 12)</th>
+      <th style="text-align:right;">Notified to the Department<br><span style="font-weight:400;text-transform:none;">YTD</span></th>
+      <th style="text-align:right;">Notified to the Department<br><span style="font-weight:400;text-transform:none;">last 12 months</span></th>
+      <th style="text-align:right;">Months of data<br><span style="font-weight:400;text-transform:none;">YTD</span></th>
+    </tr></thead>
+    <tbody>
+      <% ytdRows.forEach(function(r){ %>
+        <tr>
+          <td><strong><%= r.name %></strong></td>
+          <td style="text-align:right;" class="ytd-total"><%= r.y.total %></td>
+          <td style="text-align:right;"><%= r.y.injuries %></td>
+          <td style="text-align:right;"><%= r.y.illness %></td>
+          <td style="text-align:right;"><%= r.y.serious %></td>
+          <td style="text-align:right;"><%- dot(r.y.reportable<=0?'green':r.y.reportable<=1?'amber':'red') %> <%= r.y.reportable %></td>
+          <td style="text-align:right;font-weight:700;"><%= r.y.reportable %></td>
+          <td style="text-align:right;"><%= r.l.reportable %></td>
+          <td style="text-align:right;"><%= r.y.months %></td>
+        </tr>
+      <% }); %>
+      <% if (ytdRows.length > 1) { %>
+        <tr style="border-top:2px solid var(--line,#e5e7eb);font-weight:700;">
+          <td>All centres</td>
+          <td style="text-align:right;" class="ytd-total"><%= g.total %></td>
+          <td style="text-align:right;"><%= g.injuries %></td>
+          <td style="text-align:right;"><%= g.illness %></td>
+          <td style="text-align:right;"><%= g.serious %></td>
+          <td style="text-align:right;"><%= g.reportable %></td>
+          <td style="text-align:right;"><%= g.reportable %></td>
+          <td style="text-align:right;"><%= g12.reportable %></td>
+          <td style="text-align:right;"><%= g.months %></td>
+        </tr>
+      <% } %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<div class="card">
+  <h2 style="margin-top:0;">Incident volume — <%= rep.months.length %>-month trend</h2>
+  <p class="footnote" style="margin-top:0;">Each cell: total incident count, with the dot showing the serious-incident rating (green 0 · amber 1 · red 2+). “S” = serious incidents (Reg 12) that month. The last column totals the months shown.</p>
   <div style="overflow-x:auto;"><table>
     <thead><tr>
       <th>Centre</th>
       <% rep.months.forEach(function(mo){ %><th style="text-align:center;<%= isPartial(mo)?'opacity:.6;':'' %>"><%= mShort(mo) %><% if(isPartial(mo)){ %>*<% } %></th><% }); %>
+      <th style="text-align:center;border-left:2px solid var(--line,#e5e7eb);">Total<br><span style="font-weight:400;text-transform:none;"><%= rep.months.length %> mo</span></th>
     </tr></thead>
     <tbody>
-      <% rep.rows.forEach(function(r){ %>
+      <% rep.rows.forEach(function(r){ var w = r.window || {}; %>
         <tr>
           <td><strong><%= r.name %></strong></td>
           <% r.cells.forEach(function(cell){ %>
@@ -88,9 +154,10 @@
               <% } %>
             </td>
           <% }); %>
+          <td style="text-align:center;border-left:2px solid var(--line,#e5e7eb);font-weight:700;"><%= w.total %><% if(w.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">S<%= w.reportable %></span><% } %></td>
         </tr>
       <% }); %>
-      <% if (rep.rows.length > 1) { %>
+      <% if (rep.rows.length > 1) { var wt = rep.windowTotals || {}; %>
         <tr style="border-top:2px solid var(--line,#e5e7eb);font-weight:700;">
           <td>All centres</td>
           <% rep.totals.forEach(function(t){ var rt = (t.reportable<=0?'green':t.reportable<=1?'amber':'red'); %>
@@ -99,6 +166,7 @@
               <% if(t.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">S<%= t.reportable %></span><% } %>
             </td>
           <% }); %>
+          <td style="text-align:center;border-left:2px solid var(--line,#e5e7eb);"><%= wt.total %><% if(wt.reportable){ %><br><span class="reason-tag bad" style="font-size:10px;padding:0 5px;">S<%= wt.reportable %></span><% } %></td>
         </tr>
       <% } %>
     </tbody>
@@ -106,7 +174,9 @@
   <p class="footnote">
     * Current month is partial (fills in as the month runs).
     <strong>Serious incident (Reg 12)</strong> = the OWNA report recorded that emergency services attended <em>or</em> medical attention was sought from a registered practitioner/hospital — the two criteria on OWNA’s Serious Incident section. This is what drives the Safety Culture rating in the action plan. (OWNA’s explicit “Is this a Serious Incident?” Yes/No is not returned by the API, so it is derived from those two fields.)
+    <strong>Notified to the Department</strong> is that same Reg 12 count — a serious incident must be notified to the NSW Regulatory Authority (Department of Education) within 24 hours, so this is the number of incidents that required notification. OWNA does not expose a separate “notified” flag or date through its API, so an actual count of notifications lodged cannot be shown; treat it as the notification obligation, not confirmation that each was lodged.
     <strong>Injuries</strong> = physical-injury reports (cuts, bruises, bites, head bumps…); <strong>Illness</strong> = temperature, rash, vomiting, infectious; <strong>Emerg. svc</strong> = emergency services attended.
+    Year to date counts whole calendar months from the start of the reporting year (<%= yk === 'fy' ? 'financial year, 1 July' : 'calendar year, 1 January' %>; switch with FY / Calendar at the top; ?year=fy is the default) to the current month.
     <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
   </p>
 </div>

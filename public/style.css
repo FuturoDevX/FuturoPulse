@@ -343,3 +343,9 @@ tr:hover td.hot { background: #ffedcc; }
 /* Payroll / source-sync status lines (partials/payroll-status.ejs) */
 .flash.warn { background: #fff7e6; border-color: #f0d9a6; color: #7a5a00; }
 .payroll-ok { margin: -6px 0 14px; font-size: 13px; }
+
+/* Reporting-year toggle (Safety page head): FY | Calendar */
+.year-toggle { font-size: 12px; color: var(--muted); margin-right: 12px; white-space: nowrap; }
+.year-toggle a { color: var(--navy); }
+.year-toggle a.on { font-weight: 700; text-decoration: none; }
+.ytd-total { color: var(--warn); font-weight: 700; }

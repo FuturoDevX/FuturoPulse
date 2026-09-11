@@ -222,11 +222,12 @@ router.get("/rostering", (req, res) => {
   res.render("rostering", { title: "Rostering", weeks, week, rows, lastRun: lastRun() });
 });
 
-// Safety & Incidents (OWNA child incident reports, rolling 12 months).
+// Safety & Incidents (OWNA child incident reports, rolling 12 months + year to date; ?year=fy|cy picks the reporting year).
 router.get("/safety", (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : null;
-  const rep = m.incidentsReport(scopedOwnaId(req), 12, month);
-  res.render("safety", { title: "Safety & Incidents", rep, lastRun: lastRun() });
+  const yearKind = req.query.year === "cy" ? "cy" : "fy"; // default: financial year from 1 July
+  const rep = m.incidentsReport(scopedOwnaId(req), 12, month, yearKind);
+  res.render("safety", { title: "Safety & Incidents", rep, yearKind, lastRun: lastRun() });
 });
 
 // Quality & Compliance (from uploaded audits) — navigate by centre and audit period.
@@ -273,10 +274,12 @@ router.get("/pc", (req, res) => {
 router.get("/wages", blockScoped, (req, res) => {
   const weeks = m.labourWeeks(16);
   const week = weeks.includes(req.query.week) ? req.query.week : weeks[0];
+  const rows = week ? m.labourForWeek(week) : [];
   res.render("labour", {
     title: "Wages & Margin",
     weeks, week,
-    rows: week ? m.labourForWeek(week) : [],
+    rows,
+    perChild: m.wagesPerChildDay(rows),
     trend: m.labourTrend(null, 16),
     wagesTrend: m.wagesTrend(null, 16),
     payroll: sourceSyncFor("eh_labour"),
