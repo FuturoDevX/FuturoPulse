@@ -1857,17 +1857,23 @@ function coeOutlook() {
 
   // Backfill child-days for one centre in one month: a start counts from its expected start date, prorated
   // across the month's calendar days, valued at the weekdays asked for scaled to the month's operating days.
+  // A start with no requested days recorded in LineLeader is still a committed child: it is counted in the
+  // headcount and valued at that centre's mean requested days per week, and days_unknown / all_days_unknown
+  // say how many of the children counted carry that estimate, so the page can state it beside the number.
   const backfill = (rows, mo) => {
     const start = mo.month + "-01", end = coeMonthEnd(mo.month);
-    const out = { firm_children: 0, firm_days: 0, all_children: 0, all_days: 0 };
+    const known = rows.map((s) => coeDaysPerWeek(s.days_csv)).filter((n) => n > 0);
+    const fallbackDpw = known.length ? known.reduce((a, n) => a + n, 0) / known.length : 0;
+    const out = { firm_children: 0, firm_days: 0, all_children: 0, all_days: 0, days_unknown: 0, all_days_unknown: 0 };
     for (const s of rows) {
       if (!s.expected_start || s.expected_start > end) continue;
-      const dpw = coeDaysPerWeek(s.days_csv);
-      if (!dpw) continue;                              // no requested days recorded → no child-days to claim
+      const asked = coeDaysPerWeek(s.days_csv);
+      const dpw = asked || fallbackDpw;                // no requested days recorded → the centre's mean, flagged below
+      const unknown = asked ? 0 : 1;
       const frac = s.expected_start <= start ? 1 : (mo.days_in_month - Number(s.expected_start.slice(8, 10)) + 1) / mo.days_in_month;
       const days = dpw * (mo.operating_days / 5) * frac;
-      out.all_children += 1; out.all_days += days;
-      if (COE_FIRM_STATUSES.includes(s.status_id)) { out.firm_children += 1; out.firm_days += days; }
+      out.all_children += 1; out.all_days += days; out.all_days_unknown += unknown;
+      if (COE_FIRM_STATUSES.includes(s.status_id)) { out.firm_children += 1; out.firm_days += days; out.days_unknown += unknown; }
     }
     return out;
   };
@@ -1896,11 +1902,12 @@ function coeOutlook() {
         month: mo.month, operating_days: mo.operating_days,
         available_days: available, run_rate_days: d1(runRate),
         leavers_in_month: inMonth, leavers_to_date: toDate, leaver_days: d1(leaverDays),
-        firm_children: bf.firm_children, firm_days: d1(bf.firm_days),
-        all_children: bf.all_children, all_days: d1(bf.all_days),
+        firm_children: bf.firm_children, firm_days: d1(bf.firm_days), days_unknown: bf.days_unknown,
+        all_children: bf.all_children, all_days: d1(bf.all_days), all_days_unknown: bf.all_days_unknown,
         projected_days: d1(projected), pct: pct(projected, available),
         gap_days: d1(Math.max(0, available * COE_TARGET_PCT / 100 - projected)),
-        _raw: { available, runRate, leaverDays, firm: bf.firm_days, all: bf.all_days, projected, leavers: toDate, inMonth, firmKids: bf.firm_children },
+        _raw: { available, runRate, leaverDays, firm: bf.firm_days, all: bf.all_days, projected, leavers: toDate, inMonth,
+          firmKids: bf.firm_children, unknown: bf.days_unknown, allUnknown: bf.all_days_unknown },
       };
     });
     return { owna_id: c.owna_id, name: c.name, places: c.capacity, enrolled: c.enrolled,
@@ -1916,11 +1923,13 @@ function coeOutlook() {
         const r = c.months[i]._raw;
         a.available += r.available; a.runRate += r.runRate; a.leaverDays += r.leaverDays; a.firm += r.firm; a.all += r.all;
         a.projected += r.projected; a.leavers += r.leavers; a.inMonth += r.inMonth; a.firmKids += r.firmKids;
+        a.unknown += r.unknown; a.allUnknown += r.allUnknown;
         return a;
-      }, { available: 0, runRate: 0, leaverDays: 0, firm: 0, all: 0, projected: 0, leavers: 0, inMonth: 0, firmKids: 0 });
+      }, { available: 0, runRate: 0, leaverDays: 0, firm: 0, all: 0, projected: 0, leavers: 0, inMonth: 0, firmKids: 0, unknown: 0, allUnknown: 0 });
       return { month: mo.month, operating_days: mo.operating_days, available_days: t.available,
         run_rate_days: d1(t.runRate), leavers_in_month: t.inMonth, leavers_to_date: t.leavers, leaver_days: d1(t.leaverDays),
         firm_children: t.firmKids, firm_days: d1(t.firm), all_days: d1(t.all),
+        days_unknown: t.unknown, all_days_unknown: t.allUnknown,
         projected_days: d1(t.projected), pct: pct(t.projected, t.available),
         gap_days: d1(Math.max(0, t.available * COE_TARGET_PCT / 100 - t.projected)) };
     }),
@@ -1941,7 +1950,8 @@ function coeOutlook() {
       }
       return { owna_id: c.owna_id, name: c.name, places: c.capacity, opening_year: c.opening_year, opening_month: c.opening_month,
         months: months.map((mo) => { const bf = backfill(starts, mo);
-          return { month: mo.month, operating_days: mo.operating_days, firm_children: bf.firm_children, firm_days: d1(bf.firm_days), all_children: bf.all_children, all_days: d1(bf.all_days) }; }),
+          return { month: mo.month, operating_days: mo.operating_days, firm_children: bf.firm_children, firm_days: d1(bf.firm_days),
+            all_children: bf.all_children, all_days: d1(bf.all_days), days_unknown: bf.days_unknown, all_days_unknown: bf.all_days_unknown }; }),
         mix, mix_families: mixFamilies };
     });
 

@@ -577,7 +577,7 @@ test('Week 1 batch 1',async(t)=>{
   mkStart(901,'a',5,'2026-11-01','mo,tu,we');        // firm, whole of November: 3 days/wk
   mkStart(902,'a',12,'2026-11-16','mo,tu,we,th,fr'); // firm, from 16 Nov: 5 days/wk × 15 of 30 days
   mkStart(903,'a',4,'2026-11-01','mo,tu');           // waitlist — all-pipeline only, never in the projection
-  mkStart(904,'a',5,'2026-12-05','');                // firm but no requested days recorded → no child-days claimed
+  mkStart(904,'a',5,'2026-12-05','');                // firm, LineLeader carries no requested days → still counted, valued at Alpha's mean (3+5+2)/3 = 3.33 days/wk
   mkStart(905,'a',5,'2027-05-03','mo,tu,we,th,fr');  // starts after the window → out of scope
   mkStart(906,'b',12,'2027-02-10','th,fr');          // Beta's only committed days, from 10 Feb
   mkStart(907,'open',5,'2026-11-02','mo,tu,we,th,fr');
@@ -598,12 +598,19 @@ test('Week 1 batch 1',async(t)=>{
   assert.equal(nov.leaver_days,14);                            // 2.5 × 21/5 × (1 + 10/30)
   assert.equal(nov.firm_children,2);assert.equal(nov.firm_days,23.1);       // 3 × 4.2 + 5 × 4.2 × 15/30
   assert.equal(nov.all_children,3);assert.equal(nov.all_days,31.5);         // + the waitlist family's 2 days/wk
+  assert.equal(nov.days_unknown,0);assert.equal(nov.all_days_unknown,0);    // the start with no recorded days begins in December
   assert.equal(nov.projected_days,429.1);assert.equal(nov.pct,20.4);assert.equal(nov.gap_days,1565.9); // 2100 × 95% − 429.1
   const dec=a.months[1];
   assert.equal(dec.leavers_to_date,3);assert.equal(dec.leavers_in_month,1);  // a7 finishes 15 Dec
   assert.equal(dec.leaver_days,26.4);                          // 10.5 + 10.5 + 10.5 × 16/31
-  assert.equal(dec.firm_children,2);assert.equal(dec.firm_days,33.6);        // both now count for the whole month; the blank days_csv start adds nothing
-  assert.equal(dec.projected_days,427.2);
+  // A committed starter whose requested days are missing is a child either way: it is in the headcount and it is
+  // valued at the centre's mean requested days per week, never silently dropped from the count or the projection.
+  assert.equal(dec.firm_children,3);assert.equal(dec.firm_days,45.8);        // 12.6 + 21 (both whole-month) + 3.33 × 4.2 × 27/31 = 12.2 for the blank days_csv start
+  assert.equal(dec.days_unknown,1);assert.equal(dec.all_days_unknown,1);     // and the page is told how many of those children carry the estimate
+  assert.equal(dec.all_children,4);assert.equal(dec.all_days,54.2);          // 45.8 + the waitlist family's 8.4
+  assert.equal(dec.projected_days,439.4);                                    // 420 − 26.4 + 45.8, not 427.2
+  assert.equal(o.group.months[1].firm_children,3);assert.equal(o.group.months[1].days_unknown,1);
+  assert.equal(o.group.months[1].firm_days,45.8);assert.equal(o.group.months[1].all_days_unknown,1);
   assert.deepEqual(a.months.map(x=>x.leavers_to_date),[2,3,3,3,3,3]);        // leavers stay deducted from every later month
   const b=o.centres[1];
   assert.equal(b.run_week_days,0);assert.equal(b.avg_days_per_child,0);
@@ -622,6 +629,7 @@ test('Week 1 batch 1',async(t)=>{
   const op=o.opening[0];
   assert.equal(op.places,0);assert.equal(op.opening_year,2026);assert.equal(op.opening_month,11);
   assert.deepEqual(op.mix,{mo:2,tu:2,we:1,th:1,fr:1});assert.equal(op.mix_families,2);
+  assert.deepEqual(op.months.map(x=>x.days_unknown),[0,0,0,0,0,0]);          // every start at this centre has its days recorded
   assert.equal(op.months[0].firm_days,20.3);assert.equal(op.months[0].all_days,20.3);assert.equal(op.months[0].firm_children,1); // 5 × 4.2 × 29/30
   assert.equal(op.months[1].firm_days,21);assert.equal(op.months[1].all_days,29.4);assert.equal(op.months[1].all_children,2);
   assert.deepEqual(m.coeMonthKeys('2026-11',3),['2026-11','2026-12','2027-01']);
@@ -639,6 +647,11 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(html,/<strong>placeholder<\/strong> only/);
   assert.match(html,/% once licensed places are confirmed/);                    // opening centres get no percentage
   assert.match(html,/title="429 of 2,100 days">20\.4%<\/td>/);                  // Alpha, November: 429 of 2,100 available child-days
+  // The starter with no requested days recorded is in the count, and the page says so beside the number.
+  assert.match(html,/<td class="num">3<span class="muted"> \(1 est\.\)<\/span><\/td>/);
+  assert.match(html,/1 of them with no requested days recorded, valued at their centre average/);
+  assert.match(html,/marked <strong>\(1 est\.\)<\/strong> in the tables above — 1 of the 4 firm starters counted in Feb 2027\./);
+  assert.match(html,/A committed starter is never dropped from the count or from the projection because its days are missing\./);
   assert.match(html,/<td class="num">5,880<\/td>/);                             // group available child-days in November (280 places × 21 days)
   assert.match(html,/Centre Far/);                                              // only in the sidebar's "Opening soon" list
   assert.doesNotMatch(html.split('<main>')[1],/Centre Far/);                     // not in the outlook itself

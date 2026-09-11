@@ -40,7 +40,7 @@
   <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> licensed places × <%= am.operating_days %> operating days</span></div></div>
   <div class="card stat"><div class="n <%= tone(ga.pct) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · target <%= TGT %>% is a placeholder</span></div></div>
   <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>, at each centre's average booking pattern</span></div></div>
-  <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date</span></div></div>
+  <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date<%= ga.days_unknown ? ' · ' + ga.days_unknown + ' of them with no requested days recorded, valued at their centre average' : '' %></span></div></div>
   <div class="card stat"><div class="n"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></div><div class="l">Gap to the <%= TGT %>% placeholder target<span class="cap">child-days in <%= mLong(am.month) %><%= ga.gap_days > 0 && am.operating_days ? ' · about ' + Math.round(ga.gap_days / (am.operating_days / 5) / 3) + ' children at 3 days a week' : ' · the projection is at or above the placeholder' %></span></div></div>
 </div>
 
@@ -119,7 +119,7 @@
           <td class="num"><%= fmt(x.run_rate_days) %></td>
           <td class="num"><%= x.leavers_to_date %><% if (x.leavers_in_month) { %><span class="muted"> (<%= x.leavers_in_month %> this month)</span><% } %></td>
           <td class="num bad-text"><%= sgn(x.leaver_days) %></td>
-          <td class="num"><%= x.firm_children %></td>
+          <td class="num"><%= x.firm_children %><% if (x.days_unknown) { %><span class="muted"> (<%= x.days_unknown %> est.)</span><% } %></td>
           <td class="num good-text">+<%= fmt(x.firm_days) %></td>
           <td class="num muted"><%= fmt(x.all_days) %></td>
           <td class="num"><strong><%= fmt(x.projected_days) %></strong></td>
@@ -129,7 +129,7 @@
       <% }); %>
     </tbody>
   </table></div>
-  <p class="footnote" style="margin-bottom:0;">Every column is child-days unless it says otherwise. <strong>Available</strong> = licensed places × operating days. <strong>Run rate</strong> = the last complete week's booked child-days × (operating days ÷ 5). <strong>Leavers</strong> is a headcount; <strong>leaver days</strong> values them at the centre average from the day after each finish date. <strong>Firm days</strong> counts Offer Accepted and Pre-Offered only; <strong>all-pipeline days</strong> adds every other status (waitlist, tours, new families) and is shown for context — it is <em>not</em> in the projection. <strong>Projected</strong> = run rate − leaver days + firm days.</p>
+  <p class="footnote" style="margin-bottom:0;">Every column is child-days unless it says otherwise. <strong>Available</strong> = licensed places × operating days. <strong>Run rate</strong> = the last complete week's booked child-days × (operating days ÷ 5). <strong>Leavers</strong> is a headcount; <strong>leaver days</strong> values them at the centre average from the day after each finish date. <strong>Firm days</strong> counts Offer Accepted and Pre-Offered only; <strong>all-pipeline days</strong> adds every other status (waitlist, tours, new families) and is shown for context — it is <em>not</em> in the projection. <strong>Projected</strong> = run rate − leaver days + firm days. <strong>(n est.)</strong> beside a starter count is how many of those children have no requested days recorded in LineLeader: they are still counted as committed, and their child-days use their centre's mean requested days per week.</p>
 </div>
 
 <div class="card">
@@ -151,7 +151,7 @@
           <td class="num"><%= fmt(x.run_rate_days) %></td>
           <td class="num"><%= x.leavers_to_date %></td>
           <td class="num bad-text"><%= sgn(x.leaver_days) %></td>
-          <td class="num"><%= x.firm_children %></td>
+          <td class="num"><%= x.firm_children %><% if (x.days_unknown) { %><span class="muted"> (<%= x.days_unknown %> est.)</span><% } %></td>
           <td class="num good-text">+<%= fmt(x.firm_days) %></td>
           <td class="num muted"><%= fmt(x.all_days) %></td>
           <td class="num"><strong><%= fmt(x.projected_days) %></strong></td>
@@ -168,7 +168,7 @@
         <td class="num"><%= fmt(ga.run_rate_days) %></td>
         <td class="num"><%= ga.leavers_to_date %></td>
         <td class="num"><%= sgn(ga.leaver_days) %></td>
-        <td class="num"><%= ga.firm_children %></td>
+        <td class="num"><%= ga.firm_children %><% if (ga.days_unknown) { %><span class="muted"> (<%= ga.days_unknown %> est.)</span><% } %></td>
         <td class="num">+<%= fmt(ga.firm_days) %></td>
         <td class="num"><%= fmt(ga.all_days) %></td>
         <td class="num"><%= fmt(ga.projected_days) %></td>
@@ -205,7 +205,7 @@
   <div class="two-col" style="margin-top:20px;">
     <% coe.opening.forEach(function(c){ var mx = Math.max.apply(null, Object.keys(c.mix).map(function(k){ return c.mix[k]; }).concat([1])); %>
       <div>
-        <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);"><%= shortName(c.name) %> · requested weekdays <span class="muted" style="font-weight:400;">· <%= c.mix_families %> families in the pipeline</span></h3>
+        <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);"><%= shortName(c.name) %> · requested weekdays <span class="muted" style="font-weight:400;">· <%= c.mix_families %> families with requested days recorded</span></h3>
         <div class="coe-mix">
           <% ['mo','tu','we','th','fr'].forEach(function(d){ %><div style="height:<%= Math.round(c.mix[d] / mx * 100) %>%;" title="<%= c.mix[d] %> families asked for this day"></div><% }); %>
         </div>
@@ -215,7 +215,7 @@
       </div>
     <% }); %>
   </div>
-  <p class="footnote" style="margin-bottom:0;">Weekday mix counts how many pipeline families asked for each day, from every expected start recorded on or after <%= dLong(coe.pipeline_from) %> (no month cut-off), so one family appears in as many columns as the days they asked for. Child-days before a centre's opening month are start dates recorded ahead of the opening in LineLeader, not an error — they are shown as recorded. Park Rd (2028) is excluded: it opens well beyond this window.</p>
+  <p class="footnote" style="margin-bottom:0;">Weekday mix counts how many pipeline families asked for each day, from every expected start recorded on or after <%= dLong(coe.pipeline_from) %> (no month cut-off), so one family appears in as many columns as the days they asked for. A family whose requested days are not recorded is counted in the child-days above, at the centre's mean requested days per week, but cannot appear in the mix. Child-days before a centre's opening month are start dates recorded ahead of the opening in LineLeader, not an error — they are shown as recorded. Park Rd (2028) is excluded: it opens well beyond this window.</p>
 </div>
 <% } %>
 
@@ -226,7 +226,7 @@
     <p><strong>Run rate</strong> = child-days booked in the last complete Mon–Fri week (<%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %>), scaled by operating days ÷ 5. It counts every family who has not set a finish date, which is why it is a ceiling.</p>
     <p><strong>Leavers</strong> = children in OWNA with <em>upcoming</em> finish dates on or after <%= dLong(coe.as_at) %>. The headcount is exact. A child counted in one month stays counted in every later month.</p>
     <p><strong>Leaver child-days</strong> = the centre's average booked days per child per week (last complete week ÷ children enrolled) × operating days ÷ 5, prorated by the share of the month falling after the finish date.</p>
-    <p><strong>Firm backfill</strong> = LineLeader expected starts at <strong>Offer Accepted</strong> or <strong>Pre-Offered</strong> with a start date on or before the month, valued at the weekdays that family asked for, prorated from the start date. Soft interest is excluded on purpose.</p>
+    <p><strong>Firm backfill</strong> = LineLeader expected starts at <strong>Offer Accepted</strong> or <strong>Pre-Offered</strong> with a start date on or before the month, valued at the weekdays that family asked for, prorated from the start date. Soft interest is excluded on purpose. Where LineLeader carries no requested days on the enrolment the child is still counted as committed and valued at that centre's mean requested days per week. Starters valued that way are marked <strong>(<%= ga.days_unknown %> est.)</strong> in the tables above — <%= ga.days_unknown %> of the <%= ga.firm_children %> firm starters counted in <%= mLong(am.month) %>. A committed starter is never dropped from the count or from the projection because its days are missing.</p>
     <p><strong>All-pipeline backfill</strong> = the same calculation across every status, including waitlist and tours. It is the secondary figure and never feeds the projection.</p>
     <p><strong>Projected filled</strong> = run rate − leaver child-days + firm backfill, shown as child-days and as a share of available child-days.</p>
     <p><strong>Target <%= TGT %>%</strong> is a <strong>placeholder</strong> only. It should be a per-centre number the CEO sets, and the colours on this page will follow it once it is.</p>
