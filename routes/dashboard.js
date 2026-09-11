@@ -63,14 +63,20 @@ function fwdPresetsFor() {
 // Overview: all centres side by side.
 router.get("/", (req, res) => {
   const { from, to } = resolveRange(req);
+  const today = m.todayStr();
+  const yearKind = req.query.year === "cy" ? "cy" : "fy"; // reporting year for the YTD tile (default: financial year)
   let rows = m.overview(from, to);
   const scoped = scopedOwnaId(req);
   if (scoped) rows = rows.filter((r) => r.owna_id === scoped);
   res.render("overview", {
     title: "Operations Overview",
-    from, to,
+    from, to, today,
+    hasFuture: to > today, // range includes booked-ahead days
+    yearKind,
     rows,
     totals: m.totals(rows),
+    seats: m.seatsFilled(from, to),
+    util: m.utilisationYtd(yearKind, today),
     presets: presetsFor(),
     fwdPresets: fwdPresetsFor(),
     llMap: m.llByOwnaCentre(),
@@ -237,6 +243,7 @@ router.get("/qc", requireIdentified, (req, res) => {
     centres: centresList, owna, terms, term,
     audit: owna ? m.qcCentre(owna, term) : null,
     trend: owna ? m.qcTrend(owna) : [],
+    reg12: owna ? m.reg12Last12Months(owna) : null,
     lastRun: lastRun(),
   });
 });

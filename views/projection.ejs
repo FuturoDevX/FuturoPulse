@@ -15,9 +15,11 @@
 <div class="page-head">
   <div>
     <h1>Enrolment Projection</h1>
-    <p class="sub">If the CRM pipeline enrolled on their expected start dates &amp; weekly schedule, on top of OWNA's booked occupancy · next <%= p.days %> days (to <%= p.to %>)</p>
+    <p class="sub">If the CRM pipeline enrolled on their expected start dates &amp; weekly schedule, on top of OWNA's booked occupancy · next <%= p.days %> days (to <%= p.to %>)<% if (p.days > 90) { %> · <span class="badge warn">ceiling</span><% } %></p>
   </div>
 </div>
+
+<div class="flash warn proj-trust"><strong>Trust the first 90 days.</strong> Beyond that the line adds pipeline starts but never deducts departures, so it is a ceiling, not a forecast.</div>
 
 <div class="card" style="padding:16px 20px;">
   <div class="proj-controls">
@@ -34,16 +36,17 @@
       <div class="pc-lbl">Horizon</div>
       <div class="btn-group">
         <% [30,90,180].forEach(function(d){ %>
-          <a class="seg <%= p.days===d ? 'on' : '' %>" href="<%= qs(p.scope, d) %>"><%= d===180 ? '6 mo' : d+' d' %></a>
+          <a class="seg <%= p.days===d ? 'on' : '' %>" href="<%= qs(p.scope, d) %>"<%- d > 90 ? ' title="Beyond 90 days the line never deducts departures — a ceiling, not a forecast"' : '' %>><%= d===180 ? '6 mo · ceiling' : d+' d' %></a>
         <% }); %>
       </div>
+      <div class="pc-hint">Default 90 days. Longer horizons are a ceiling: pipeline starts are added, departures are not deducted.</div>
     </div>
   </div>
 </div>
 
 <div class="grid kpis">
   <div class="card stat"><div class="n <%= occClass(baseAll) %>-text"><%= baseAll %>%</div><div class="l">Occupancy now (booked)</div></div>
-  <div class="card stat"><div class="n <%= occClass(projAll) %>-text"><%= projAll %>%</div><div class="l">Projected with pipeline</div></div>
+  <div class="card stat"><div class="n <%= occClass(projAll) %>-text"><%= projAll %>%</div><div class="l">Projected with pipeline<%= p.days > 90 ? ' (ceiling)' : '' %></div></div>
   <div class="card stat"><div class="n" style="color:var(--berry);">+<%= Math.round((projAll-baseAll)*10)/10 %>pt</div><div class="l">Uplift</div></div>
   <div class="card stat"><div class="n"><%= tFamilies %></div><div class="l">Pipeline families included</div></div>
 </div>

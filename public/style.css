@@ -103,6 +103,17 @@ form.inline { display: inline; margin: 0; }
 .flash { background: #eef2fb; border: 1px solid #cdd9f2; color: var(--navy); padding: 10px 14px; border-radius: 6px; margin-bottom: 18px; font-size: 14px; }
 .flash.bad { background: #fbe4e4; border-color: #f0c0c0; color: var(--bad); }
 .footnote { color: var(--muted); font-size: 12px; margin-top: 8px; }
+/* Tile captions: formula notes (muted) and honest labels on booked-ahead ranges (berry) */
+.stat .l .cap { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.35; }
+.stat .l .cap.ahead { color: var(--berry); }
+.stat .l .cap a { color: var(--navy); }
+.stat .l .cap a.on { font-weight: 700; text-decoration: none; }
+th .th-cap { display: block; font-weight: 500; font-size: 10px; color: var(--berry); text-transform: none; letter-spacing: 0; }
+td .fee-ahead { font-size: 11px; color: var(--berry); }
+.proj-trust { font-size: 14px; margin-bottom: 18px; }
+.reg12-card { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.reg12-card .reg12-stat { padding: 6px 18px; min-width: 130px; }
+.reg12-card .reg12-body { flex: 1; min-width: 240px; }
 .muted { color: var(--muted); }
 
 /* Login */

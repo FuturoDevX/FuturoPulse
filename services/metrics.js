@@ -1,6 +1,7 @@
 // Read-model queries over the snapshotted tables. All figures come from SQLite,
 // so pages are fast and work even if OWNA is briefly unreachable.
 const db = require("../db/db");
+const cal = require("./calendar");
 
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
@@ -32,30 +33,42 @@ function centres() {
 }
 
 // One aggregated summary row per centre for a date range.
+// Ranges may run past today (booked-ahead days). Attendance is only known for past days — future rows
+// carry OWNA's default "attending" flag — so attended/absent/attendance_rate are past days only, and
+// fees are split into fee_past (billed to date) and fee_future (booked ahead).
 function overview(from, to) {
+  const today = todayStr();
   const rows = db.prepare(`
     SELECT c.owna_id, c.name, c.alias, c.suburb, c.capacity, c.enrolled,
            COUNT(DISTINCT d.metric_date)      AS days,
            COALESCE(SUM(d.booked),0)          AS booked,
-           COALESCE(SUM(d.attended),0)        AS attended,
-           COALESCE(SUM(d.absent),0)          AS absent,
            COALESCE(SUM(d.casual),0)          AS casual,
-           COALESCE(SUM(d.fee_total),0)       AS fee_total
+           COALESCE(SUM(d.fee_total),0)       AS fee_total,
+           COUNT(DISTINCT CASE WHEN d.metric_date <= @today THEN d.metric_date END) AS past_days,
+           COALESCE(SUM(CASE WHEN d.metric_date <= @today THEN d.booked    END),0) AS past_booked,
+           COALESCE(SUM(CASE WHEN d.metric_date <= @today THEN d.attended  END),0) AS attended,
+           COALESCE(SUM(CASE WHEN d.metric_date <= @today THEN d.absent    END),0) AS absent,
+           COALESCE(SUM(CASE WHEN d.metric_date <= @today THEN d.fee_total END),0) AS fee_past,
+           COALESCE(SUM(CASE WHEN d.metric_date >  @today THEN d.booked    END),0) AS future_booked,
+           COALESCE(SUM(CASE WHEN d.metric_date >  @today THEN d.fee_total END),0) AS fee_future
     FROM centres c
     LEFT JOIN daily_metrics d
-      ON d.owna_id = c.owna_id AND d.metric_date BETWEEN ? AND ?
+      ON d.owna_id = c.owna_id AND d.metric_date BETWEEN @from AND @to
     WHERE c.opening IS NULL OR c.opening = 0
     GROUP BY c.owna_id
     ORDER BY c.name
-  `).all(from, to);
+  `).all({ from, to, today });
 
   return rows.map((r) => {
     const denom = r.capacity * r.days; // capacity-days available in the range
     return {
       ...r,
       fee_total: round(r.fee_total),
-      occupancy: pct(r.booked, denom),          // booked child-days / capacity-days
-      attendance_rate: pct(r.attended, r.booked),
+      fee_past: round(r.fee_past),
+      fee_future: round(r.fee_future),
+      future_days: r.days - r.past_days,
+      occupancy: pct(r.booked, denom),          // booked child-days / capacity-days (incl. booked ahead)
+      attendance_rate: pct(r.attended, r.past_booked), // past days only
       avg_daily_booked: r.days ? Math.round(r.booked / r.days) : 0,
     };
   });
@@ -68,13 +81,21 @@ function totals(rows) {
     a.casual += r.casual; a.fee_total += r.fee_total;
     a.capacity_days += r.capacity * r.days;
     a.days = Math.max(a.days, r.days);
+    // Past/future split (see overview): attendance is judged on past days only.
+    a.past_booked += r.past_booked || 0; a.future_booked += r.future_booked || 0;
+    a.fee_past += r.fee_past || 0; a.fee_future += r.fee_future || 0;
+    a.past_days = Math.max(a.past_days, r.past_days || 0);
+    a.future_days = Math.max(a.future_days, r.future_days || 0);
     return a;
-  }, { capacity: 0, enrolled: 0, booked: 0, attended: 0, absent: 0, casual: 0, fee_total: 0, capacity_days: 0, days: 0 });
+  }, { capacity: 0, enrolled: 0, booked: 0, attended: 0, absent: 0, casual: 0, fee_total: 0, capacity_days: 0, days: 0,
+       past_booked: 0, future_booked: 0, fee_past: 0, fee_future: 0, past_days: 0, future_days: 0 });
   return {
     ...t,
     fee_total: round(t.fee_total),
+    fee_past: round(t.fee_past),
+    fee_future: round(t.fee_future),
     occupancy: pct(t.booked, t.capacity_days),
-    attendance_rate: pct(t.attended, t.booked),
+    attendance_rate: pct(t.attended, t.past_booked),
   };
 }
 
@@ -504,6 +525,112 @@ function weekStart(dateStr) {
   const dow = (d.getDay() + 6) % 7; // 0 = Monday
   d.setDate(d.getDate() - dow);
   return d.toISOString().slice(0, 10);
+}
+
+// ===== Operating days, seats & utilisation =====
+// Operating day = weekday that is not a NSW public holiday (services/calendar.js). OWNA keeps booking
+// rows on public holidays (the centre is closed, nobody attends), so seats and utilisation only count
+// bookings that fall on operating days.
+
+// Start of the reporting year containing `today`: 'fy' = 1 July (Australian financial year), 'cy' = 1 January.
+function yearStart(kind, today = todayStr()) {
+  const y = Number(today.slice(0, 4)), mo = Number(today.slice(5, 7));
+  if (kind === "cy") return `${y}-01-01`;
+  return mo >= 7 ? `${y}-07-01` : `${y - 1}-07-01`;
+}
+
+// The full reporting year around `today`: { kind, start, end, label ("FY2026-27" / "CY2026"), ytdLabel }.
+function yearRange(kind, today = todayStr()) {
+  const k = kind === "cy" ? "cy" : "fy";
+  const start = yearStart(k, today);
+  const y = Number(start.slice(0, 4));
+  return {
+    kind: k, start,
+    end: k === "cy" ? `${y}-12-31` : `${y + 1}-06-30`,
+    label: k === "cy" ? `CY${y}` : `FY${y}-${String(y + 1).slice(2)}`,
+    ytdLabel: k === "cy" ? "CYTD" : "FYTD",
+  };
+}
+
+// Seats filled = average booked children per operating day, per operating centre and for the group:
+// sum of booked on operating days ÷ operating days in the range that have any bookings.
+function seatsFilled(from, to) {
+  const rows = db.prepare(`
+    SELECT d.owna_id, c.name, c.capacity, d.metric_date, d.booked
+    FROM daily_metrics d JOIN centres c ON c.owna_id = d.owna_id
+    WHERE d.metric_date BETWEEN ? AND ? AND (c.opening IS NULL OR c.opening = 0) AND c.capacity > 0
+  `).all(from, to);
+  const byCentre = new Map(); const groupDays = new Set(); let groupBooked = 0;
+  for (const r of rows) {
+    if (!(r.booked > 0) || !cal.isOperatingDay(r.metric_date)) continue;
+    let c = byCentre.get(r.owna_id);
+    if (!c) { c = { owna_id: r.owna_id, name: r.name, capacity: r.capacity, booked: 0, days: 0 }; byCentre.set(r.owna_id, c); }
+    c.booked += r.booked; c.days += 1;
+    groupBooked += r.booked; groupDays.add(r.metric_date);
+  }
+  const finish = (c) => ({ ...c, seats: c.days ? Math.round(c.booked / c.days) : 0 });
+  const list = [...byCentre.values()].sort((a, b) => a.name.localeCompare(b.name)).map(finish);
+  const byOwna = {}; list.forEach((r) => { byOwna[r.owna_id] = r; });
+  return {
+    from, to,
+    operating_days: cal.operatingDays(from, to),
+    rows: list, byOwna,
+    group: finish({ booked: groupBooked, days: groupDays.size }),
+    unknownYears: cal.unknownHolidayYears(from, to),
+  };
+}
+
+// Utilisation year-to-date = booked child-days on operating days from the year start to today
+// ÷ (licensed places × operating days from the year start to today), per operating centre and group.
+// Also returns the annual denominator: operating days in the full year × places (e.g. "253 × 499").
+function utilisationYtd(kind = "fy", today = todayStr()) {
+  const yr = yearRange(kind, today);
+  const to = today > yr.end ? yr.end : today;
+  const centreRows = db.prepare(`
+    SELECT owna_id, name, capacity FROM centres
+    WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name
+  `).all();
+  const bookedRows = db.prepare(`SELECT owna_id, metric_date, booked FROM daily_metrics WHERE metric_date BETWEEN ? AND ?`).all(yr.start, to);
+  const sum = new Map();
+  for (const r of bookedRows) {
+    if (!cal.isOperatingDay(r.metric_date)) continue;
+    sum.set(r.owna_id, (sum.get(r.owna_id) || 0) + (r.booked || 0));
+  }
+  const opDaysYtd = cal.operatingDays(yr.start, to);
+  const opDaysYear = cal.operatingDays(yr.start, yr.end);
+  const rows = centreRows.map((c) => {
+    const booked = sum.get(c.owna_id) || 0;
+    const capDays = c.capacity * opDaysYtd;
+    return { ...c, booked, cap_days: capDays, utilisation: pct(booked, capDays), annual_child_days: c.capacity * opDaysYear };
+  });
+  const byOwna = {}; rows.forEach((r) => { byOwna[r.owna_id] = r; });
+  const places = rows.reduce((s, r) => s + r.capacity, 0);
+  const gBooked = rows.reduce((s, r) => s + r.booked, 0);
+  const gCap = places * opDaysYtd;
+  return {
+    ...yr, today: to,
+    operating_days_ytd: opDaysYtd, operating_days_year: opDaysYear,
+    places, rows, byOwna,
+    group: { booked: gBooked, cap_days: gCap, utilisation: pct(gBooked, gCap), capacity: places, annual_child_days: places * opDaysYear },
+    annual_child_days: places * opDaysYear,
+    unknownYears: cal.unknownHolidayYears(yr.start, yr.end),
+  };
+}
+
+// Serious incidents (Reg 12) for one centre over the 12 calendar months ending with the current month,
+// with how many of those months actually have data. `reportable` = emergency services attended or
+// medical attention sought, recorded from OWNA incident reports.
+function reg12Last12Months(ownaId, today = todayStr()) {
+  const [y, mo] = today.slice(0, 7).split("-").map(Number);
+  const fromMonth = new Date(Date.UTC(y, mo - 12, 1)).toISOString().slice(0, 7); // 11 months back
+  const toMonth = today.slice(0, 7);
+  const r = db.prepare(`
+    SELECT COALESCE(SUM(reportable),0) AS reportable, COALESCE(SUM(serious),0) AS serious, COALESCE(SUM(total),0) AS total,
+           COUNT(*) AS months, MIN(month) AS first_month, MAX(month) AS last_month
+    FROM incidents_monthly WHERE owna_id = ? AND month BETWEEN ? AND ?
+  `).get(ownaId, fromMonth, toMonth);
+  return { from_month: fromMonth, to_month: toMonth, reportable: r.reportable, serious: r.serious, total: r.total,
+    months: r.months, first_month: r.first_month, last_month: r.last_month };
 }
 
 // ===== Exit report read-model =====
@@ -1214,4 +1341,5 @@ module.exports = {
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, pcAllSeries, PC_TARGET_KEYS,
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
+  yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months,
 };
