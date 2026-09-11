@@ -847,10 +847,11 @@ function exitReasons(ownaId) {
 }
 
 // Individual exits for one centre (most recent first). scope: 'past' | 'upcoming' | 'all'.
+// De-identified: child_exits holds no name or date of birth, so there is none to select.
 function centreExits(ownaId, scope = "past", limit = 200) {
   const cond = scope === "past" ? "AND upcoming = 0" : scope === "upcoming" ? "AND upcoming = 1" : "";
   return db.prepare(`
-    SELECT child_name, room, start_date, finish_date, tenure_days, upcoming, reason, reason_source
+    SELECT room, start_date, finish_date, tenure_days, upcoming, reason, reason_source
     FROM child_exits WHERE owna_id = ? ${cond}
     ORDER BY finish_date DESC LIMIT ?
   `).all(ownaId, limit);
@@ -874,42 +875,78 @@ function exitCentres() {
   return db.prepare(`SELECT owna_id, name, capacity, enrolled FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name`).all();
 }
 
-// Earliest departure the snapshot holds. The exits snapshot is rebuilt every sync with a fixed look-back
-// (EXIT_LOOKBACK_DAYS, default 365), so months before this date are "not captured", not zero.
+// Earliest departure the per-child detail holds. child_exits is rebuilt every sync with a fixed look-back
+// (EXIT_LOOKBACK_DAYS, default 365), so it only ever covers the last 12 months.
 function exitsCapturedFrom() {
   const r = db.prepare(`SELECT MIN(finish_date) d FROM child_exits WHERE upcoming = 0`).get();
   return (r && r.d) || null;
 }
 
+// Earliest month the monthly aggregate holds. exits_monthly is written by each exit rebuild before the
+// detail rows age out, so it keeps counting departures the look-back let go of long ago.
+function exitsAggregateFromMonth() {
+  const r = db.prepare(`SELECT MIN(month) m FROM exits_monthly WHERE upcoming = 0`).get();
+  return (r && r.m) || null;
+}
+
+// Where the departure history starts, at the best precision available: the exact date while the detail is
+// the only source, the first of the aggregate's earliest month once the aggregate reaches further back.
+// Months before this are "not captured", not zero.
+function exitsHistoryFrom() {
+  const detail = exitsCapturedFrom(), agg = exitsAggregateFromMonth();
+  if (!agg) return detail;
+  if (!detail || agg < detail.slice(0, 7)) return `${agg}-01`;
+  return detail;
+}
+
+// Past departures per centre and month, keyed "owna_id|YYYY-MM": the detail window where it covers the
+// month, the monthly aggregate before that. The month the look-back starts in is partial in the detail and
+// complete in the aggregate (written before those rows aged out), so it takes the greater of the two.
+function pastDeparturesByMonth() {
+  const detail = new Map();
+  db.prepare(`SELECT owna_id, substr(finish_date, 1, 7) AS month, COUNT(*) n FROM child_exits WHERE upcoming = 0 GROUP BY owna_id, month`).all()
+    .forEach((r) => detail.set(`${r.owna_id}|${r.month}`, r.n));
+  const agg = new Map();
+  db.prepare(`SELECT owna_id, month, SUM(departures) n FROM exits_monthly WHERE upcoming = 0 GROUP BY owna_id, month`).all()
+    .forEach((r) => agg.set(`${r.owna_id}|${r.month}`, r.n));
+  const detailFrom = exitsCapturedFrom();
+  const boundary = detailFrom ? detailFrom.slice(0, 7) : null;
+  const out = new Map();
+  new Set([...detail.keys(), ...agg.keys()]).forEach((k) => {
+    const month = k.slice(-7), d = detail.get(k) || 0, a = agg.get(k) || 0;
+    out.set(k, boundary == null || month < boundary ? a : (month === boundary ? Math.max(d, a) : d));
+  });
+  return out;
+}
+
 // Departures (upcoming = 0) per calendar month for the `months` months ending with the current month, per
-// operating centre and for the group. Months before the snapshot's earliest departure are null (not captured).
+// operating centre and for the group, from the detail window and the monthly aggregate before it. Months
+// before the history starts are null (not captured). `captured_from` is where the per-child detail starts,
+// `history_from` where the counts start — they differ once the aggregate outlives the look-back.
 function exitsByMonth(months = 24, today = todayStr()) {
   const axis = []; for (let i = months - 1; i >= 0; i--) axis.push(monthKey(today, -i));
   const capturedFrom = exitsCapturedFrom();
-  const capMonth = capturedFrom ? capturedFrom.slice(0, 7) : null;
+  const historyFrom = exitsHistoryFrom();
+  const capMonth = historyFrom ? historyFrom.slice(0, 7) : null;
   const captured = (mo) => capMonth != null && mo >= capMonth;
-  const counts = db.prepare(`
-    SELECT owna_id, substr(finish_date, 1, 7) AS month, COUNT(*) AS n
-    FROM child_exits WHERE upcoming = 0 AND substr(finish_date, 1, 7) BETWEEN ? AND ?
-    GROUP BY owna_id, month
-  `).all(axis[0], axis[axis.length - 1]);
-  const map = new Map(); counts.forEach((r) => map.set(`${r.owna_id}|${r.month}`, r.n));
+  const map = pastDeparturesByMonth();
   const rows = exitCentres().map((c) => {
     const points = axis.map((mo) => (captured(mo) ? (map.get(`${c.owna_id}|${mo}`) || 0) : null));
     return { owna_id: c.owna_id, name: c.name, points, total: points.reduce((s, v) => s + (v || 0), 0) };
   });
   const group = { points: axis.map((mo, i) => (captured(mo) ? rows.reduce((s, r) => s + (r.points[i] || 0), 0) : null)) };
   group.total = group.points.reduce((s, v) => s + (v || 0), 0);
-  return { months: axis, current: axis[axis.length - 1], captured_from: capturedFrom, rows, group };
+  return { months: axis, current: axis[axis.length - 1], captured_from: capturedFrom, history_from: historyFrom, rows, group };
 }
 
 // Departures (upcoming = 0) per reporting year — 'fy' = financial years from 1 July (label "FY 2025-26"),
 // 'cy' = calendar years — per operating centre and for the group, from the earliest captured year to the current one.
-// A year is `to_date` when it has not finished, and carries `captured_from` when the snapshot only covers part of it.
+// A year is `to_date` when it has not finished, and carries `captured_from` when the history only covers part of it.
+// Counts come from the monthly aggregate outside the detail look-back, so years keep building as history accumulates.
 function exitsByYear(kind = "fy", today = todayStr()) {
   const k = kind === "cy" ? "cy" : "fy";
   const startYear = (d) => { const y = Number(d.slice(0, 4)); return k === "cy" ? y : (Number(d.slice(5, 7)) >= 7 ? y : y - 1); };
-  const capturedFrom = exitsCapturedFrom();
+  const capturedFrom = exitsHistoryFrom();
   const years = [];
   for (let y = startYear(capturedFrom || today); y <= startYear(today); y++) {
     const start = k === "cy" ? `${y}-01-01` : `${y}-07-01`, end = k === "cy" ? `${y}-12-31` : `${y + 1}-06-30`;
@@ -919,8 +956,10 @@ function exitsByYear(kind = "fy", today = todayStr()) {
     });
   }
   const tally = new Map();
-  db.prepare(`SELECT owna_id, finish_date FROM child_exits WHERE upcoming = 0`).all()
-    .forEach((e) => { const key = `${e.owna_id}|${startYear(e.finish_date)}`; tally.set(key, (tally.get(key) || 0) + 1); });
+  pastDeparturesByMonth().forEach((n, key) => {
+    const ownaId = key.slice(0, -8), yearKey = `${ownaId}|${startYear(key.slice(-7))}`;
+    tally.set(yearKey, (tally.get(yearKey) || 0) + n);
+  });
   const rows = exitCentres().map((c) => {
     const counts = {}; years.forEach((y) => { counts[y.key] = tally.get(`${c.owna_id}|${y.key}`) || 0; });
     return { owna_id: c.owna_id, name: c.name, counts, total: Object.values(counts).reduce((s, v) => s + v, 0) };

@@ -39,6 +39,42 @@ function initSchema(db) {
   addColumnIfMissing("action_plan_items", "priority", "TEXT");
   addColumnIfMissing("action_plan_items", "job_reference", "TEXT");
 
+  // Exit report de-identification (APP 11.2): departed children's names and dates of birth are no longer
+  // collected, so clean them out of any database that already has them. The nightly rebuild would only
+  // put them back, which is why the columns go rather than the rows. SQLite 3.35+ can drop a column that
+  // is in no key or index (child_name/dob are in neither); otherwise fall back to clearing the values.
+  const exitCols = db.prepare("PRAGMA table_info(child_exits)").all().map((c) => c.name);
+  for (const col of ["child_name", "dob"]) {
+    if (!exitCols.includes(col)) continue;
+    try {
+      db.exec(`ALTER TABLE child_exits DROP COLUMN ${col}`);
+      console.log(`[init] dropped child_exits.${col} — the exit report no longer stores it`);
+    } catch (e) {
+      db.exec(`UPDATE child_exits SET ${col} = NULL`);
+      console.log(`[init] could not drop child_exits.${col} (${e.message}) — cleared every value instead`);
+    }
+  }
+  // Legacy child_key values were the raw "name|dob" string, i.e. a recoverable name. Replace them with
+  // opaque ids; the next exit rebuild re-keys every row with a salted hash anyway.
+  if (exitCols.includes("child_key") && db.prepare("SELECT COUNT(*) n FROM child_exits WHERE child_key LIKE '%|%'").get().n) {
+    const n = db.prepare("UPDATE child_exits SET child_key = lower(hex(randomblob(16))) WHERE child_key LIKE '%|%'").run().changes;
+    console.log(`[init] replaced ${n} name-bearing child_exits keys with opaque ids`);
+  }
+  // Seed exits_monthly from whatever detail the database already holds, so the aggregate starts with the
+  // history that is in the current look-back window instead of waiting a year to fill up. One-off: after
+  // this, runExitReport maintains it.
+  if (exitCols.length && !db.prepare("SELECT 1 FROM exits_monthly").get() && db.prepare("SELECT 1 FROM child_exits").get()) {
+    const n = db.prepare(`
+      INSERT INTO exits_monthly (owna_id, month, room, upcoming, departures, tenure_days_sum, tenure_n, updated_at)
+      SELECT owna_id, substr(finish_date, 1, 7), COALESCE(room, ''), COALESCE(upcoming, 0), COUNT(*),
+             COALESCE(SUM(CASE WHEN tenure_days > 0 THEN tenure_days END), 0),
+             SUM(CASE WHEN tenure_days > 0 THEN 1 ELSE 0 END), datetime('now')
+      FROM child_exits WHERE finish_date IS NOT NULL
+      GROUP BY owna_id, substr(finish_date, 1, 7), COALESCE(room, ''), COALESCE(upcoming, 0)
+    `).run().changes;
+    console.log(`[init] seeded exits_monthly with ${n} month rows from the current exit window`);
+  }
+
   // ai_briefings moved from one-row-per-week (PK period_to) to one-per-date-range (PK period_key).
   // It is a regenerable cache, so recreate it rather than migrate rows.
   const abCols = db.prepare("PRAGMA table_info(ai_briefings)").all().map((c) => c.name);

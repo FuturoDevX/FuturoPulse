@@ -87,7 +87,7 @@
     </tbody>
     <tfoot><tr class="total-row"><td>Total · captured months</td><% byMonth.rows.forEach(function(r){ %><td class="num"><%= r.total %></td><% }); %><td class="num"><%= byMonth.group.total %></td></tr></tfoot>
   </table></div>
-  <p class="footnote" style="margin-bottom:0;">— = not captured. The OWNA exits snapshot is rebuilt each sync with a 365-day look-back (EXIT_LOOKBACK_DAYS), so it only ever holds the last 12 months of departures<%= byMonth.captured_from ? ' — nothing before ' + dLong(byMonth.captured_from) : '' %>; the earlier months of this 24-month table stay empty until the look-back is extended. The current month is still in progress.</p>
+  <p class="footnote" style="margin-bottom:0;">— = not captured<%= byMonth.history_from ? ' — nothing before ' + dLong(byMonth.history_from) : '' %>. Per-child detail is held for the last 12 months only (a 365-day look-back, EXIT_LOOKBACK_DAYS, rebuilt every sync); older months are counted from the monthly aggregate, which each rebuild writes before the old rows are dropped. The earlier months of this 24-month table therefore stay empty until the aggregate has built them up, one month at a time. The current month is still in progress.</p>
 </div>
 
 <div class="card">
@@ -101,7 +101,7 @@
     </tbody>
     <tfoot><tr class="total-row"><td>All centres</td><% byYear.years.forEach(function(y){ %><td class="num"><%= byYear.group.counts[y.key] %></td><% }); %><td class="num"><%= byYear.group.total %></td></tr></tfoot>
   </table></div>
-  <p class="footnote" style="margin-bottom:0;">Showing <%= yk === 'fy' ? 'financial years (FY 2025-26 = 1 Jul 2025 – 30 Jun 2026); ?year=fy is the default' : 'calendar years; switch back with FY at the top' %>. A year marked “from …” only holds departures from that date because of the snapshot look-back above, so it understates the full year.</p>
+  <p class="footnote" style="margin-bottom:0;">Showing <%= yk === 'fy' ? 'financial years (FY 2025-26 = 1 Jul 2025 – 30 Jun 2026); ?year=fy is the default' : 'calendar years; switch back with FY at the top' %>. Years are counted from the monthly aggregate, which outlives the 12-month detail window, so they keep accumulating as history builds. A year marked “from …” only holds departures from that date — the aggregate had not started yet — so it understates the full year.</p>
 </div>
 
 <div class="card">
@@ -129,7 +129,7 @@
     </tbody>
     <tfoot><tr class="total-row"><td>All centres</td><td class="num"><%= tenure.group.departed %></td><td class="num"><%= tenure.group.n %></td><td class="num"><%= yrs(tenure.group.avg_years) %></td><td class="num"><%= yrs(tenure.group.median_years) %></td></tr></tfoot>
   </table>
-  <p class="footnote" style="margin-bottom:0;">Tenure = days from the child’s earliest OWNA start date to their finish date, ÷ 365.25, averaged over departed children (not those still scheduled to leave). Children with no start date or a zero-day tenure are excluded — “with recorded tenure” is the count each average rests on, so a centre with many exclusions is a weaker figure. Newer centres naturally show shorter tenure.</p>
+  <p class="footnote" style="margin-bottom:0;">Tenure = days from the child’s earliest OWNA start date to their finish date, ÷ 365.25, averaged over departed children (not those still scheduled to leave). Children with no start date or a zero-day tenure are excluded — “with recorded tenure” is the count each average rests on, so a centre with many exclusions is a weaker figure. Newer centres naturally show shorter tenure. These averages use the last 12 months of departure detail; the monthly aggregate keeps the tenure totals of older departures so this can be extended over more history later.</p>
 </div>
 
 <div class="card">
@@ -170,7 +170,10 @@
 </div>
 
 <p class="footnote">
-  Departures come from OWNA child finish dates (authoritative). Reasons are matched from LineLeader by child name + date of birth — “Not recorded” means no matching LineLeader withdrawal, and “Unknown” means LineLeader has the withdrawal but no reason was entered. Actionable reasons to watch: <strong>Another Centre</strong> (lost to a competitor) and <strong>Staff/Teacher Issue</strong>; <em>Aged Out</em> is natural graduation to school.
+  <strong>Detail covers the last 12 months; years build up from the monthly aggregate.</strong> Departure detail — room, start and finish date, tenure, reason — is rebuilt each sync with a 365-day look-back, so everything on this page except the year table and the earlier months above is drawn from the last 12 months. Before those rows are dropped each rebuild folds them into a monthly count per centre and room, which is what the year table and the older months are built from; that history keeps growing while the detail window stays at 12 months.
+</p>
+<p class="footnote">
+  Departures come from OWNA child finish dates (authoritative). Reasons are matched from LineLeader on child name + date of birth <strong>in memory during the sync</strong> — no child’s name or date of birth is stored by this dashboard (Australian Privacy Principle 11.2: OWNA and LineLeader remain the records of identity). “Not recorded” means no matching LineLeader withdrawal, and “Unknown” means LineLeader has the withdrawal but no reason was entered. Actionable reasons to watch: <strong>Another Centre</strong> (lost to a competitor) and <strong>Staff/Teacher Issue</strong>; <em>Aged Out</em> is natural graduation to school.
 </p>
 
 <%- include('partials/footer') %>

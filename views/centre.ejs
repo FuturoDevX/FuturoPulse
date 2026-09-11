@@ -370,11 +370,10 @@
     <% if (locals.canSeeIdentified && pastN) { %>
       <div style="overflow-x:auto;">
       <table data-paginate="8">
-        <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Left</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+        <thead><tr><th>Room</th><th>Started</th><th>Left</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
         <tbody>
           <% exits.forEach(function(e){ %>
             <tr>
-              <td><%= locals.canSeeIdentified ? e.child_name : 'Child (name hidden)' %></td>
               <td><%= e.room || '—' %></td>
               <td><%= e.start_date || '—' %></td>
               <td><%= e.finish_date %></td>
@@ -393,11 +392,10 @@
       <h2 style="margin-top:22px;">Scheduled to leave</h2>
       <div style="overflow-x:auto;">
       <table data-paginate="8">
-        <thead><tr><th>Child</th><th>Room</th><th>Started</th><th>Leaving</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
+        <thead><tr><th>Room</th><th>Started</th><th>Leaving</th><th class="num">Tenure</th><th>Reason</th></tr></thead>
         <tbody>
           <% exitsUpcoming.forEach(function(e){ %>
             <tr class="future-row">
-              <td><%= locals.canSeeIdentified ? e.child_name : 'Child (name hidden)' %></td>
               <td><%= e.room || '—' %></td>
               <td><%= e.start_date || '—' %></td>
               <td><%= e.finish_date %> <span class="tag-fut">scheduled</span></td>

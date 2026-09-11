@@ -98,11 +98,13 @@ CREATE TABLE IF NOT EXISTS ll_enrolments (
 CREATE INDEX IF NOT EXISTS idx_llenrol_centre ON ll_enrolments(ll_id);
 
 -- ===== Exit report: OWNA departures (finishDate) enriched with LineLeader withdrawal reason =====
+-- De-identified (Australian Privacy Principle 11.2): this dashboard is a derived system, so it holds no
+-- departed child's name or date of birth. OWNA and LineLeader remain the records of identity. child_key
+-- only has to keep two children in a centre apart; it is a salted hash whose salt is never written to
+-- disk (see services/snapshot.js), so no name can be recovered from a row here.
 CREATE TABLE IF NOT EXISTS child_exits (
   owna_id      TEXT NOT NULL,
-  child_key    TEXT NOT NULL,         -- normalised name|dob (stable id for the child within a centre)
-  child_name   TEXT,
-  dob          TEXT,
+  child_key    TEXT NOT NULL,         -- salted hash of the normalised name|dob — opaque, not reversible
   room         TEXT,
   start_date   TEXT,                  -- officialstartdate / activeFrom
   finish_date  TEXT NOT NULL,         -- OWNA finishDate (YYYY-MM-DD)
@@ -115,6 +117,24 @@ CREATE TABLE IF NOT EXISTS child_exits (
 );
 CREATE INDEX IF NOT EXISTS idx_exits_centre ON child_exits(owna_id);
 CREATE INDEX IF NOT EXISTS idx_exits_finish ON child_exits(finish_date);
+
+-- Monthly departure aggregate. child_exits above is rebuilt every night with a rolling look-back
+-- (EXIT_LOOKBACK_DAYS, 365 by default), so departures older than that disappear from it. runExitReport
+-- folds each rebuild into this table BEFORE the old rows go, which is what lets exits by year and tenure
+-- history keep accumulating. Counts only, no per-child rows: room is '' when OWNA recorded none, because
+-- SQLite would otherwise allow duplicate NULL keys.
+CREATE TABLE IF NOT EXISTS exits_monthly (
+  owna_id         TEXT NOT NULL,
+  month           TEXT NOT NULL,         -- YYYY-MM of the finish date
+  room            TEXT NOT NULL DEFAULT '',
+  upcoming        INTEGER NOT NULL DEFAULT 0,
+  departures      INTEGER NOT NULL DEFAULT 0,
+  tenure_days_sum INTEGER NOT NULL DEFAULT 0,  -- sum over departures with a positive tenure
+  tenure_n        INTEGER NOT NULL DEFAULT 0,  -- how many those are (the divisor for an average)
+  updated_at      TEXT,
+  PRIMARY KEY (owna_id, month, room, upcoming)
+);
+CREATE INDEX IF NOT EXISTS idx_exitsmon_month ON exits_monthly(month);
 
 -- ===== Enrolment projection: CRM pipeline families with expected start + weekly schedule =====
 CREATE TABLE IF NOT EXISTS ll_pipeline_starts (

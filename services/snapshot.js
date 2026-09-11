@@ -1,5 +1,6 @@
 // Pulls a rolling window from OWNA and aggregates it into daily_metrics + ccs_payments.
 // Safe to re-run: everything is upserted by (centre, day) / (centre, week).
+const crypto = require("crypto");
 const db = require("../db/db");
 const { owna } = require("./owna");
 const { lineleader } = require("./lineleader");
@@ -411,8 +412,9 @@ async function runOwnaBackfill({ backDays = 730, log = console.log } = {}) {
 
 // ===== Exit report: OWNA departures enriched with LineLeader withdrawal reasons =====
 
-// Only report exits within this look-back (older departures aren't operationally useful).
-const EXIT_LOOKBACK_DAYS = parseInt(process.env.EXIT_LOOKBACK_DAYS || "365", 10);
+// Only keep per-child exit detail within this look-back (read per run, so it can be changed without a
+// restart). Older departures survive as counts in exits_monthly, never as rows about a child.
+const exitLookbackDays = () => parseInt(process.env.EXIT_LOOKBACK_DAYS || "365", 10);
 
 // OWNA stores dates as local-midnight in UTC (e.g. 2025-03-05T13:00:00Z = 6 Mar AEDT),
 // so convert to the Sydney calendar date before comparing/keying. LineLeader plain dates
@@ -427,30 +429,57 @@ function localDate(s) {
     return d.toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" }); // YYYY-MM-DD
   } catch { return d0; }
 }
-// Normalised child key for cross-system matching: first+last name + local dob.
+// Normalised child key for cross-system matching: first+last name + local dob. This is a NAME, so it is
+// used only in memory, to line an OWNA departure up with its LineLeader withdrawal reason — never stored.
 function childKey(name, dob) {
   const n = (name || "").toLowerCase().replace(/[^a-z]/g, "");
   return `${n}|${localDate(dob) || ""}`;
 }
 
+// What actually goes in the database instead (APP 11.2): a salted hash of that key. It only has to keep
+// two children in a centre apart on the same finish date. The salt is random per process and never
+// written to disk, so a stored key cannot be tested against a guessed name. Set EXIT_KEY_SALT to keep
+// keys stable across restarts — the nightly rebuild does not need it, since it rewrites every row.
+const EXIT_KEY_SALT = process.env.EXIT_KEY_SALT || crypto.randomBytes(32).toString("hex");
+function exitRowKey(nameKey) {
+  return crypto.createHmac("sha256", EXIT_KEY_SALT).update(nameKey).digest("hex").slice(0, 32);
+}
+
 const upsertExit = db.prepare(`
-  INSERT INTO child_exits (owna_id, child_key, child_name, dob, room, start_date, finish_date, tenure_days, upcoming, reason, reason_source, updated_at)
-  VALUES (@owna_id, @child_key, @child_name, @dob, @room, @start_date, @finish_date, @tenure_days, @upcoming, @reason, @reason_source, datetime('now'))
+  INSERT INTO child_exits (owna_id, child_key, room, start_date, finish_date, tenure_days, upcoming, reason, reason_source, updated_at)
+  VALUES (@owna_id, @child_key, @room, @start_date, @finish_date, @tenure_days, @upcoming, @reason, @reason_source, datetime('now'))
   ON CONFLICT(owna_id, child_key, finish_date) DO UPDATE SET
-    child_name=@child_name, dob=@dob, room=@room, start_date=@start_date, tenure_days=@tenure_days,
+    room=@room, start_date=@start_date, tenure_days=@tenure_days,
     upcoming=@upcoming, reason=@reason, reason_source=@reason_source, updated_at=datetime('now')
+`);
+
+// The monthly aggregate that outlives the look-back. Months the rebuild fully covers are replaced; the
+// month the look-back starts in is only partly covered by this run (it begins mid-month), so that one
+// keeps the larger of the stored and the new figure rather than shrinking as the window slides.
+const clearExitsMonthly = db.prepare(`DELETE FROM exits_monthly WHERE owna_id = ? AND month > ?`);
+const upsertExitsMonthly = db.prepare(`
+  INSERT INTO exits_monthly (owna_id, month, room, upcoming, departures, tenure_days_sum, tenure_n, updated_at)
+  VALUES (@owna_id, @month, @room, @upcoming, @departures, @tenure_days_sum, @tenure_n, datetime('now'))
+  ON CONFLICT(owna_id, month, room, upcoming) DO UPDATE SET
+    departures = MAX(departures, @departures),
+    tenure_days_sum = MAX(tenure_days_sum, @tenure_days_sum),
+    tenure_n = MAX(tenure_n, @tenure_n),
+    updated_at = datetime('now')
 `);
 
 async function runExitReport({ log = console.log } = {}) {
   const today = new Date().toISOString().slice(0, 10);
-  const cutoff = daysAgo(EXIT_LOOKBACK_DAYS);
+  const lookback = exitLookbackDays();
+  const cutoff = daysAgo(lookback);
+  const cutoffMonth = cutoff.slice(0, 7); // the month the window starts in — only partly covered by this run
 
-  // 1) Build a LineLeader reason map keyed by name|dob (withdrawals over a wide window).
+  // 1) Build a LineLeader reason map keyed by name|dob (withdrawals over a wide window). In memory only:
+  //    it is thrown away when the run ends and nothing derived from a name is written.
   const reasonMap = new Map();
   if (lineleader.hasCreds()) {
     try {
       const isoSec = (d) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
-      const from = isoSec(new Date(Date.now() - (EXIT_LOOKBACK_DAYS + 120) * 864e5));
+      const from = isoSec(new Date(Date.now() - (lookback + 120) * 864e5));
       const to = isoSec(new Date(Date.now() + 30 * 864e5));
       const wd = await lineleader.enrolmentsWithdrawn(from, to);
       for (const r of wd) {
@@ -474,6 +503,7 @@ async function runExitReport({ log = console.log } = {}) {
     try { kids = await owna.listChildren(c.owna_id); } catch (e) { failed += 1; firstError = firstError || errSummary(e); log(`[exits] ${c.name}: children pull failed: ${errSummary(e)}`); continue; }
     const write = db.transaction((list) => {
       db.prepare(`DELETE FROM child_exits WHERE owna_id = ?`).run(c.owna_id); // full rebuild per centre
+      const monthly = new Map(); // month|room|upcoming -> counts, folded in as we go
       for (const k of list) {
         const finish = localDate(k.finishDate);
         if (!finish || finish < cutoff) continue; // only exits within look-back (past or upcoming)
@@ -485,23 +515,35 @@ async function runExitReport({ log = console.log } = {}) {
           .filter(Boolean).filter((d) => d <= finish).sort();
         const start = startCandidates[0] || null;
         const tenure = start ? Math.round((new Date(finish) - new Date(start)) / 864e5) : null;
+        // Match on the name key in memory, store only its salted hash: nothing written here identifies a child.
         const key = childKey(name, dob);
         const hasReason = reasonMap.has(key);
         const reason = hasReason ? reasonMap.get(key) : null;
         if (hasReason) matched += 1;
+        const room = k.room || null;
+        const upcoming = finish > today ? 1 : 0;
         upsertExit.run({
-          owna_id: c.owna_id, child_key: key, child_name: name, dob, room: k.room || null,
+          owna_id: c.owna_id, child_key: exitRowKey(key), room,
           start_date: start, finish_date: finish, tenure_days: tenure,
-          upcoming: finish > today ? 1 : 0,
+          upcoming,
           reason: reason || (hasReason ? "Unknown" : null),
           reason_source: hasReason ? "lineleader" : null,
         });
+        const mk = `${finish.slice(0, 7)}|${room || ""}|${upcoming}`;
+        const agg = monthly.get(mk) || { owna_id: c.owna_id, month: finish.slice(0, 7), room: room || "", upcoming, departures: 0, tenure_days_sum: 0, tenure_n: 0 };
+        agg.departures += 1;
+        if (tenure > 0) { agg.tenure_days_sum += tenure; agg.tenure_n += 1; }
+        monthly.set(mk, agg);
         total += 1;
       }
+      // Fold this rebuild into the aggregate while the rows are still here. Months the window covers in
+      // full are replaced outright; the boundary month keeps the greater of stored and new (see upsert).
+      clearExitsMonthly.run(c.owna_id, cutoffMonth);
+      for (const agg of monthly.values()) upsertExitsMonthly.run(agg);
     });
     write(kids);
   }
-  log(`[exits] ${total} exits (within ${EXIT_LOOKBACK_DAYS}d), ${matched} matched to a LineLeader reason`);
+  log(`[exits] ${total} exits (within ${lookback}d), ${matched} matched to a LineLeader reason`);
   return { ok: true, total, matched, attempts: centres.length, failed, firstError };
 }
 

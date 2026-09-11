@@ -283,8 +283,9 @@ test('Week 1 batch 1',async(t)=>{
   // Fixtures (inserted here so batches 1–2 above are unaffected): a third operating centre with an enrolled headcount
   // but no booking rows, and departures / scheduled finishes anchored to the current month. Names must never render.
   db.prepare("INSERT INTO centres(owna_id,name,capacity,enrolled,opening) VALUES('c','Centre Gamma',80,50,0)").run();
-  const ex=db.prepare("INSERT INTO child_exits(owna_id,child_key,child_name,dob,room,start_date,finish_date,tenure_days,upcoming,reason,reason_source,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))");
-  const mk=(id,key,room,finish,tenure,up,reason)=>ex.run(id,key,'Fixture Child '+key,'2022-01-01',room,null,finish,tenure,up,reason||null,reason?'lineleader':null);
+  // Batch 6: child_exits is de-identified — no child_name, no dob — so the fixtures carry an opaque key only.
+  const ex=db.prepare("INSERT INTO child_exits(owna_id,child_key,room,start_date,finish_date,tenure_days,upcoming,reason,reason_source,updated_at) VALUES(?,?,?,?,?,?,?,?,?,datetime('now'))");
+  const mk=(id,key,room,finish,tenure,up,reason)=>ex.run(id,key,room,null,finish,tenure,up,reason||null,reason?'lineleader':null);
   mk('a','a1','Room 6',monthShift(0)+'-01',730,0,'Aged Out-Too Old'); mk('a','a2','Room 6',monthShift(-1)+'-15',365,0,'Another Centre');
   mk('a','a3','Room 1',monthShift(-3)+'-10',0,0); mk('a','a4','Room 3',monthShift(-6)+'-20',null,0); // zero / missing tenure → excluded from tenure
   mk('a','a5','Room 2',monthShift(-13)+'-05',100,0); // outside the 12-month churn window, inside the 24-month table
@@ -366,7 +367,7 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(html,/<td>Room 6<\/td><td class="num">2<\/td><td class="num">50%<\/td>/);
   assert.match(html,/<td>Not recorded<\/td><td class="num">1<\/td>/);
   assert.match(html,/room at exit as recorded in OWNA/);
-  assert.match(html,/365-day look-back \(EXIT_LOOKBACK_DAYS\)/);assert.match(html,/<td class="num">—<\/td>/); // not-captured months
+  assert.match(html,/365-day look-back, EXIT_LOOKBACK_DAYS/);assert.match(html,/<td class="num">—<\/td>/); // not-captured months
   assert.match(html,/ \(so far\)<\/td>/);
   assert.doesNotMatch(html,/Fixture Child/);
   const cy=await page('/exits?year=cy',c);
@@ -505,9 +506,9 @@ test('Week 1 batch 1',async(t)=>{
   const rw=m.coeRunWeek();
   assert.equal(new Date(rw.to+'T00:00:00Z').getUTCDay(),5);assert.equal(new Date(rw.from+'T00:00:00Z').getUTCDay(),1);assert.ok(rw.to<today);
   for(let i=0;i<5;i++) dm.run('a',addDays(rw.from,i),20,20,0,0,400);              // 5 × 20 = 100 booked child-days in the run week
-  const ex5=db.prepare("INSERT INTO child_exits(owna_id,child_key,child_name,dob,room,start_date,finish_date,tenure_days,upcoming,reason,reason_source,updated_at) VALUES(?,?,?,'2023-01-01','Room 2',NULL,?,NULL,1,NULL,NULL,datetime('now'))");
-  ex5.run('a','a8','Fixture Child A8','2026-11-20');                              // finishes 20 Nov: 10 of November's 30 days lost
-  ex5.run('b','b4','Fixture Child B4','2026-11-10');                              // Beta has no enrolled headcount → no day estimate
+  const ex5=db.prepare("INSERT INTO child_exits(owna_id,child_key,room,start_date,finish_date,tenure_days,upcoming,reason,reason_source,updated_at) VALUES(?,?,'Room 2',NULL,?,NULL,1,NULL,NULL,datetime('now'))");
+  ex5.run('a','a8','2026-11-20');                                                 // finishes 20 Nov: 10 of November's 30 days lost
+  ex5.run('b','b4','2026-11-10');                                                 // Beta has no enrolled headcount → no day estimate
   const st=db.prepare("INSERT INTO ll_pipeline_starts(enrollment_id,ll_id,owna_id,centre_name,child_name,status_id,expected_start,days_csv,updated_at) VALUES(?,1,?,?,?,?,?,?,datetime('now'))");
   const mkStart=(id,owna,status,start,days)=>st.run(id,owna,'Centre '+owna,'Fixture Child S'+id,status,start,days);
   mkStart(901,'a',5,'2026-11-01','mo,tu,we');        // firm, whole of November: 3 days/wk
@@ -585,6 +586,87 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(viewer,/href="\/pipeline"[^>]*>Enrolment Pipeline<\/a>\s*<a href="\/coe"[^>]*>Continuation of Enrolment<\/a>\s*<a href="\/projection"/);
   assert.equal((await request('/coe',await login('exec'))).status,200);
   assert.equal((await request('/coe',await login('centre'))).status,403);        // blockScoped: centre-scoped users stay on their own centre
+ });
+ // ===== Batch 6 (privacy, APP 11.2): departures are stored de-identified; history survives in exits_monthly =====
+ await t.test('runExitReport stores no child name or DOB, still matches LineLeader reasons, and keeps a departure that falls out of the look-back',async()=>{
+  const snapshot=require('../services/snapshot');
+  const {owna}=require('../services/owna'), {lineleader}=require('../services/lineleader');
+  const realChildren=owna.listChildren, realCreds=lineleader.hasCreds, realWithdrawn=lineleader.enrolmentsWithdrawn;
+  // Its own centre, plus a fake OWNA that reports nobody for the others: the rebuild is a full per-centre
+  // replace, so it clears the batch 3 exit fixtures. Nothing after this test reads them.
+  db.prepare("INSERT INTO centres(owna_id,name,capacity,enrolled,opening) VALUES('px','Centre Privacy',60,40,0)").run();
+  const DOB='2021-04-05', day=(n)=>addDays(today,n);
+  const kids=[
+   {firstname:'Old',      surname:'Leaver',dob:DOB,room:'Room 1',activeFrom:day(-900), finishDate:day(-500)},  // inside an 800-day look-back, outside 365
+   {firstname:'Recent',   surname:'Leaver',dob:DOB,room:'Room 2',activeFrom:day(-385), finishDate:day(-20)},
+   {firstname:'Scheduled',surname:'Leaver',dob:DOB,room:'Room 2',activeFrom:day(-100), finishDate:day(40)},    // finish date already set
+   {firstname:'Ancient',  surname:'Leaver',dob:DOB,room:'Room 1',activeFrom:day(-1500),finishDate:day(-1200)}, // outside both look-backs
+   {firstname:'Staying',  surname:'Leaver',dob:DOB,room:'Room 2',activeFrom:day(-100), finishDate:null},       // not an exit at all
+  ];
+  owna.listChildren=async(id)=>(id==='px'?kids:[]);
+  lineleader.hasCreds=()=>true;
+  // LineLeader knows why the recent one left. The match is on name + date of birth, in memory, during the run.
+  lineleader.enrolmentsWithdrawn=async()=>[{child:{values:{name:'Recent Leaver',birthdate:DOB}},withdrawn:{reason:{values:{value:'Another Centre'}}}}];
+  try {
+   process.env.EXIT_LOOKBACK_DAYS='800';
+   const r1=await snapshot.runExitReport({log(){}});
+   assert.deepEqual([r1.total,r1.matched,r1.failed],[3,1,0]);
+   // (a) The name and DOB columns are gone from the table, not merely left empty.
+   const cols=db.prepare("PRAGMA table_info(child_exits)").all().map(c=>c.name);
+   assert.ok(!cols.includes('child_name')&&!cols.includes('dob'),'child_exits still has '+cols.join(','));
+   const rows=db.prepare("SELECT * FROM child_exits WHERE owna_id='px' ORDER BY finish_date").all();
+   assert.equal(rows.length,3);
+   const stored=JSON.stringify(rows);
+   for(const s of ['Old','Recent','Scheduled','Ancient','Staying','Leaver',DOB]) assert.ok(stored.indexOf(s)<0,'a stored exit row leaks "'+s+'"');
+   // child_key is an opaque salted hash: no name, and guessing the name cannot reproduce it.
+   assert.ok(rows.every(r=>/^[0-9a-f]{32}$/.test(r.child_key)));
+   const guess=require('crypto').createHash('sha256').update('recentleaver|'+DOB).digest('hex').slice(0,32);
+   assert.ok(rows.every(r=>r.child_key!==guess));
+   // (a) Matching still works: the departure LineLeader has a withdrawal for carries its reason.
+   const recent=rows.find(r=>r.finish_date===day(-20)), old=rows.find(r=>r.finish_date===day(-500)), sched=rows.find(r=>r.upcoming===1);
+   assert.deepEqual([recent.reason,recent.reason_source,recent.tenure_days,recent.room],['Another Centre','lineleader',365,'Room 2']);
+   assert.deepEqual([old.reason,old.reason_source,old.tenure_days],[null,null,400]);
+   assert.equal(sched.finish_date,day(40));
+   assert.ok(m.centreExits('px','past',10).every(r=>!('child_name' in r)&&!('dob' in r)));
+   // (b) The rebuild folded itself into the monthly aggregate.
+   assert.deepEqual(db.prepare("SELECT month,room,upcoming,departures,tenure_days_sum,tenure_n FROM exits_monthly WHERE owna_id='px' ORDER BY month").all(),[
+    {month:day(-500).slice(0,7),room:'Room 1',upcoming:0,departures:1,tenure_days_sum:400,tenure_n:1},
+    {month:day(-20).slice(0,7), room:'Room 2',upcoming:0,departures:1,tenure_days_sum:365,tenure_n:1},
+    {month:day(40).slice(0,7),  room:'Room 2',upcoming:1,departures:1,tenure_days_sum:140,tenure_n:1}]);
+   // (b) Slide the look-back back to its real 365 days: the old departure leaves the detail, the count stays.
+   process.env.EXIT_LOOKBACK_DAYS='365';
+   const r2=await snapshot.runExitReport({log(){}});
+   assert.equal(r2.total,2);
+   assert.deepEqual(db.prepare("SELECT finish_date FROM child_exits WHERE owna_id='px' ORDER BY finish_date").all().map(r=>r.finish_date),[day(-20),day(40)]);
+   const oldMonth=day(-500).slice(0,7);
+   assert.deepEqual(db.prepare("SELECT departures,tenure_days_sum,tenure_n FROM exits_monthly WHERE owna_id='px' AND month=? AND upcoming=0").get(oldMonth),
+    {departures:1,tenure_days_sum:400,tenure_n:1});
+   assert.equal(db.prepare("SELECT COUNT(*) n FROM child_exits WHERE finish_date < ?").get(day(-400)).n,0); // nothing that old is in the detail
+   // exitsByMonth and exitsByYear read that month from the aggregate; the detail window starts much later.
+   const by=m.exitsByMonth(24), px=by.rows.find(r=>r.owna_id==='px');
+   assert.equal(px.points[by.months.indexOf(oldMonth)],1);
+   assert.equal(px.points[by.months.indexOf(day(-20).slice(0,7))],1);
+   assert.equal(by.history_from,oldMonth+'-01');
+   assert.equal(by.captured_from,day(-20));
+   const cy=m.exitsByYear('cy');
+   assert.equal(cy.years[0].key,day(-500).slice(0,4));
+   assert.equal(cy.rows.find(r=>r.owna_id==='px').counts[day(-500).slice(0,4)],1);
+   assert.equal(cy.captured_from,oldMonth+'-01');
+   // (c) Nothing renders a name, and the footnote says where detail ends and the aggregate takes over.
+   const admin=await login('admin');
+   const html=await page('/exits',admin);
+   assert.doesNotMatch(html,/Leaver|Fixture Child/);
+   assert.match(html,/<strong>Detail covers the last 12 months; years build up from the monthly aggregate\.<\/strong>/);
+   assert.match(html,/no child’s name or date of birth is stored by this dashboard/);
+   assert.match(html,/Years are counted from the monthly aggregate, which outlives the 12-month detail window/);
+   const centre=await page('/centre/px',admin);
+   assert.doesNotMatch(centre,/Leaver|Fixture Child/);
+   assert.doesNotMatch(centre,/Child \(name hidden\)/);
+   assert.match(centre,/<thead><tr><th>Room<\/th><th>Started<\/th><th>Left<\/th>/); // the Child column is gone
+  } finally {
+   owna.listChildren=realChildren;lineleader.hasCreds=realCreds;lineleader.enrolmentsWithdrawn=realWithdrawn;
+   delete process.env.EXIT_LOOKBACK_DAYS;
+  }
  });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
