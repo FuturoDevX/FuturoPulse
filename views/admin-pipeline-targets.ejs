@@ -1,0 +1,27 @@
+<%- include('partials/header', { title: 'Pipeline Targets' }) %>
+<% const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim(); %>
+<div class="page-head"><div>
+  <p class="crumb"><a href="/pipeline">← Enrolment Pipeline</a></p>
+  <h1>Monthly lead &amp; tour targets</h1>
+  <p class="sub">Standing monthly target per centre, including centres that have not opened yet. Leads = new families joining the wait list in a month; tours = tours held in a month.</p>
+</div></div>
+<% if (saved) { %><div class="flash">Targets saved.</div><% } %>
+<div class="card">
+  <form method="POST" action="/admin/pipeline-targets">
+    <table>
+      <thead><tr><th>Centre</th><th class="num">Leads per month</th><th class="num">Tours per month</th></tr></thead>
+      <tbody>
+        <% centres.forEach(function(c){ var t = targets[c.owna_id] || {}; %>
+          <tr>
+            <td><%= shortName(c.name) %><% if (c.opening) { %> <span class="muted">(opening<%= c.opening_year ? ' ' + c.opening_year : '' %>)</span><% } %></td>
+            <td class="num"><input type="text" inputmode="numeric" name="leads_<%= c.owna_id %>" value="<%= t.leads != null ? t.leads : '' %>" style="width:100px;text-align:right;" placeholder="—"></td>
+            <td class="num"><input type="text" inputmode="numeric" name="tours_<%= c.owna_id %>" value="<%= t.tours != null ? t.tours : '' %>" style="width:100px;text-align:right;" placeholder="—"></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+    <button type="submit" style="margin-top:16px;">Save targets</button>
+  </form>
+</div>
+<p class="footnote">These apply to every month. Leave both fields blank to remove a centre's target; leave one blank to track only the other. Progress against them shows on the Enrolment Pipeline page.</p>
+<%- include('partials/footer') %>

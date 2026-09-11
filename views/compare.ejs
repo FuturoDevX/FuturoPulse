@@ -4,15 +4,11 @@
   const fmtWk = (d) => new Date(d+'T00:00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short'});
   const fmtMo = (m) => { const p=m.split('-'); return new Date(p[0],p[1]-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
   const labels = data.axis.map(a => data.cadence==='week' ? fmtWk(a) : fmtMo(a));
-  const fmtV = (v) => v==null ? '—' : (cfg.money ? '$'+Math.round(v).toLocaleString('en-AU') : (Math.round(v*10)/10)+(cfg.suf||''));
-  // latest ACTUAL value per centre (ignore projected months), for the ranked table
-  const rank = data.series.map(s => {
-    let latest;
-    if (data.dashFrom != null) latest = s.points[data.dashFrom];
-    else { const nn = s.points.filter(v=>v!=null); latest = nn.length?nn[nn.length-1]:null; }
-    return { name:s.name, latest: latest };
-  }).filter(r => r.latest!=null)
-    .sort((a,b) => cfg.better==='low' ? a.latest-b.latest : b.latest-a.latest);
+  const fmtV = (v) => v==null ? '—' : (cfg.money ? '$'+Math.round(v).toLocaleString('en-AU') : (Math.round(v*10)/10)+(cfg.suf||'')+(cfg.unit ? ' '+cfg.unit : ''));
+  // latest ACTUAL value per centre (ignoring projected months), ranked and toned by compareTrend so that
+  // "lower is better" metrics colour the right way round (best = good, worst = bad).
+  const rank = data.ranking || [];
+  const isPlaces = ['unused_places','utilisation'].includes(metric);
 %>
 <div class="page-head">
   <div>
@@ -38,12 +34,20 @@
     <thead><tr><th>#</th><th>Centre</th><th class="num"><%= cfg.label %></th></tr></thead>
     <tbody>
       <% rank.forEach(function(r,i){ %>
-        <tr><td class="num" style="width:30px;color:var(--muted);"><%= i+1 %></td><td><%= r.name %></td><td class="num" style="font-weight:600;"><%= fmtV(r.latest) %></td></tr>
+        <tr><td class="num" style="width:30px;color:var(--muted);"><%= i+1 %></td><td><%= r.name %></td><td class="num <%= r.tone ? r.tone + '-text' : '' %>" style="font-weight:600;"><%= fmtV(r.latest) %></td></tr>
       <% }); %>
     </tbody>
   </table>
-  <p class="footnote">Ranked by the most recent value (<%= cfg.better==='low' ? 'lower is better' : 'higher is better' %>). Weekly metrics use finalised Employment Hero pay weeks; occupancy &amp; P&amp;C are monthly. Lines skip periods with no data. Hover a point for its value.</p>
+  <p class="footnote">Ranked by the most recent value with data (<%= cfg.better==='low' ? 'lower is better' : 'higher is better' %>; best in green, worst in red). Weekly metrics use finalised Employment Hero pay weeks; occupancy, places &amp; P&amp;C are monthly. Lines skip periods with no data. Hover a point for its value.</p>
 </div>
+<% } %>
+<% if (isPlaces) { %>
+<p class="footnote">
+  Operating day = NSW weekday that is not a public holiday. <strong>Unused places</strong> = licensed places − average booked children per operating day in the month;
+  <strong>utilisation</strong> = booked child-days on operating days ÷ (licensed places × operating days in the month). Months with no booking rows are left as gaps, not zero;
+  an operating day inside a month with bookings counts as empty if nothing is booked on it. The current and next two months (dashed) hold only the bookings made so far,
+  so a month still filling up shows more unused places than it will finish with.
+</p>
 <% } %>
 
 <%- include('partials/footer') %>

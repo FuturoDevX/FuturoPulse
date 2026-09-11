@@ -196,6 +196,16 @@ CREATE TABLE IF NOT EXISTS labour_budget (
   PRIMARY KEY (eh_centre, week_ending)
 );
 
+-- Monthly lead & tour targets per centre (incl. pre-opening centres). month = 'default' is the standing monthly target;
+-- a YYYY-MM row overrides it for that month. Shown on the Enrolment Pipeline page against this month's activity.
+CREATE TABLE IF NOT EXISTS pipeline_targets (
+  owna_id  TEXT NOT NULL,
+  month    TEXT NOT NULL DEFAULT 'default',
+  leads    INTEGER,                  -- new families joining the wait list per month
+  tours    INTEGER,                  -- tours held per month
+  PRIMARY KEY (owna_id, month)
+);
+
 -- ===== People & Culture (manual entry, per centre per month) =====
 CREATE TABLE IF NOT EXISTS pc_metrics (
   owna_id           TEXT NOT NULL,

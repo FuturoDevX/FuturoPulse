@@ -50,6 +50,20 @@ router.post("/wage-budget", requireAdminOrOps, (req, res) => {
   res.redirect("/admin/wage-budget?saved=1");
 });
 
+// Monthly lead & tour targets per centre (standing 'default' month), one row per centre incl. pre-opening centres.
+router.get("/pipeline-targets", requireAdminOrOps, (req, res) => {
+  res.render("admin-pipeline-targets", { title: "Pipeline Targets", centres: m.centres(), targets: m.pipelineTargets(), saved: req.query.saved, lastRun: lastRun() });
+});
+router.post("/pipeline-targets", requireAdminOrOps, (req, res) => {
+  const int = (v) => { const n = parseInt(String(v == null ? "" : v).replace(/[^0-9]/g, ""), 10); return isNaN(n) ? null : n; };
+  for (const c of m.centres()) {
+    const leads = int(req.body["leads_" + c.owna_id]), tours = int(req.body["tours_" + c.owna_id]);
+    if (leads != null || tours != null) m.savePipelineTarget(c.owna_id, "default", { leads, tours });
+    else m.deletePipelineTarget(c.owna_id, "default"); // both blank = no target for this centre
+  }
+  res.redirect("/admin/pipeline-targets?saved=1");
+});
+
 
 // ===== User management (admin only) =====
 router.get("/users", requireAdmin, (req, res) => {

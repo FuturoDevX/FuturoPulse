@@ -422,6 +422,176 @@ function centrePipelineDetail(ownaId) {
 }
 
 
+// ===== Funnel conversions by centre (LineLeader) =====
+// Stage order for the conversion funnel; Waitlist (4) sits alongside rather than being a step.
+const CONVERSION_STAGES = [[1, "New Family"], [2, "Engaged"], [11, "Tour Scheduled"], [3, "Tour Completed"], [12, "Pre-Offered"], [5, "Offer Accepted"]];
+const WAITLIST_STATUS = 4;
+const ENROLLED_STATUS = 6; // LineLeader "Enrolled (Started)" — the only status that is a genuine start
+
+// YYYY-MM-DD `months` calendar months before `today` (JS Date month arithmetic, same convention as churnByRoom).
+function monthsBefore(today, months) {
+  const d = new Date(today + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() - months); return d.toISOString().slice(0, 10);
+}
+// Centres linked to LineLeader (operating first, then pre-opening) — the rows of every pipeline table.
+function llLinkedCentres() {
+  return db.prepare(`SELECT owna_id, name, ll_id, capacity, opening, opening_year, opening_month FROM centres
+    WHERE ll_id IS NOT NULL ORDER BY COALESCE(opening, 0), name`).all();
+}
+// A tour counts as HELD when LineLeader marks it complete, or its scheduled date has passed and it was not cancelled.
+// (Staff rarely tick "complete" in LineLeader, so the completed flag alone reads 0; both figures are returned.)
+const TOUR_HELD_SQL = `is_cancelled = 0 AND (is_completed = 1 OR substr(tour_date,1,10) < @today)`;
+const TOUR_COUNT_SQL = `COUNT(*) AS held, SUM(CASE WHEN is_completed = 1 THEN 1 ELSE 0 END) AS completed`;
+
+// Funnel per centre. Stage counts are a SNAPSHOT of who is in the pipeline now; the conversion strip is ACTIVITY over
+// the 12 months to `today` (leads joined → tours held → offers accepted → started). With `month` (YYYY-MM) both parts
+// are restricted to the cohort of families whose wait-list date falls in that month, i.e. where that month's leads are now.
+//   leads   = members who joined in the window + families who started in it (they have left the pipeline, so a floor)
+//   tours   = tours held in the window (see TOUR_HELD_SQL); cohort mode: tours the cohort's families held on or after
+//             they joined the wait list — an earlier tour belongs to an earlier enquiry, not to this cohort's journey
+//   offers  = members currently at Offer Accepted (LineLeader does not date the acceptance) + started in the window
+//   started = ll_enrolments at Enrolled (Started) with a start date in the window; LineLeader hands families to OWNA at
+//             enrolment so this is a floor. Not knowable for a cohort (started families keep no wait-list date) → null.
+function funnelByCentre(month = null, today = todayStr()) {
+  const cohort = /^\d{4}-\d{2}$/.test(month || "") ? month : null;
+  const from = monthsBefore(today, 12);
+  const stageRows = cohort
+    ? db.prepare(`SELECT owna_id, status_id, COUNT(*) n FROM ll_pipeline_members WHERE owna_id IS NOT NULL AND substr(wait_list_date,1,7) = ? GROUP BY owna_id, status_id`).all(cohort)
+    : db.prepare(`SELECT owna_id, status_id, COUNT(*) n FROM ll_pipeline_members WHERE owna_id IS NOT NULL GROUP BY owna_id, status_id`).all();
+  const stageMap = {}; stageRows.forEach((r) => { (stageMap[r.owna_id] = stageMap[r.owna_id] || {})[r.status_id] = r.n; });
+
+  const leadsMap = {}, toursMap = {}, startedMap = {};
+  if (cohort) {
+    db.prepare(`SELECT owna_id, COUNT(*) n FROM ll_pipeline_members WHERE owna_id IS NOT NULL AND substr(wait_list_date,1,7) = ? GROUP BY owna_id`)
+      .all(cohort).forEach((r) => { leadsMap[r.owna_id] = r.n; });
+    // Tours held by the cohort's families — matched on family within the centre, counted only (never listed), and only
+    // from the day the family joined: a tour before that wait-list date came from an earlier enquiry, not this cohort.
+    db.prepare(`SELECT owna_id, ${TOUR_COUNT_SQL} FROM ll_tours t WHERE owna_id IS NOT NULL AND ${TOUR_HELD_SQL}
+      AND EXISTS (SELECT 1 FROM ll_pipeline_members m WHERE m.owna_id = t.owna_id AND m.family_name = t.family_name
+        AND substr(m.wait_list_date,1,7) = @cohort AND substr(t.tour_date,1,10) >= substr(m.wait_list_date,1,10))
+      GROUP BY owna_id`).all({ today, cohort }).forEach((r) => { toursMap[r.owna_id] = r; });
+  } else {
+    db.prepare(`SELECT owna_id, COUNT(*) n FROM ll_pipeline_members WHERE owna_id IS NOT NULL AND wait_list_date > ? AND wait_list_date <= ? GROUP BY owna_id`)
+      .all(from, today).forEach((r) => { leadsMap[r.owna_id] = r.n; });
+    db.prepare(`SELECT owna_id, ${TOUR_COUNT_SQL} FROM ll_tours WHERE owna_id IS NOT NULL AND ${TOUR_HELD_SQL}
+      AND substr(tour_date,1,10) > @from AND substr(tour_date,1,10) <= @today GROUP BY owna_id`).all({ today, from }).forEach((r) => { toursMap[r.owna_id] = r; });
+    db.prepare(`SELECT c.owna_id, COUNT(*) n FROM ll_enrolments e JOIN centres c ON c.ll_id = e.ll_id
+      WHERE e.status_id = ? AND e.start_date > ? AND e.start_date <= ? GROUP BY c.owna_id`).all(ENROLLED_STATUS, from, today).forEach((r) => { startedMap[r.owna_id] = r.n; });
+  }
+
+  const rows = llLinkedCentres().map((c) => {
+    const sm = stageMap[c.owna_id] || {};
+    const total = Object.values(sm).reduce((s, n) => s + n, 0);
+    const stages = CONVERSION_STAGES.map(([id, name]) => ({ id, name, count: sm[id] || 0, share: pct(sm[id] || 0, total) }));
+    const waitlist = { id: WAITLIST_STATUS, name: "Waitlist", count: sm[WAITLIST_STATUS] || 0, share: pct(sm[WAITLIST_STATUS] || 0, total) };
+    const started = cohort ? null : (startedMap[c.owna_id] || 0);
+    const leadsJoined = leadsMap[c.owna_id] || 0;
+    const leads = leadsJoined + (started || 0);
+    const t = toursMap[c.owna_id] || { held: 0, completed: 0 };
+    const offersCurrent = sm[5] || 0;
+    const offers = offersCurrent + (started || 0);
+    const strip = {
+      leads, leads_joined: leadsJoined, tours_held: t.held || 0, tours_completed: t.completed || 0,
+      offers, offers_current: offersCurrent, started,
+      tour_pct: pct(t.held || 0, leads), offer_pct: pct(offers, leads), start_pct: started == null ? null : pct(started, leads),
+    };
+    return { owna_id: c.owna_id, name: c.name, opening: !!c.opening, total, stages, waitlist, strip };
+  });
+
+  const sum = (f) => rows.reduce((s, r) => s + (f(r) || 0), 0);
+  const gTotal = sum((r) => r.total);
+  const gLeads = sum((r) => r.strip.leads), gTours = sum((r) => r.strip.tours_held), gOffers = sum((r) => r.strip.offers);
+  const gStarted = cohort ? null : sum((r) => r.strip.started);
+  const group = {
+    total: gTotal,
+    stages: CONVERSION_STAGES.map(([id, name]) => { const n = sum((r) => (r.stages.find((s) => s.id === id) || {}).count); return { id, name, count: n, share: pct(n, gTotal) }; }),
+    waitlist: { id: WAITLIST_STATUS, name: "Waitlist", count: sum((r) => r.waitlist.count), share: pct(sum((r) => r.waitlist.count), gTotal) },
+    strip: {
+      leads: gLeads, leads_joined: sum((r) => r.strip.leads_joined), tours_held: gTours, tours_completed: sum((r) => r.strip.tours_completed),
+      offers: gOffers, offers_current: sum((r) => r.strip.offers_current), started: gStarted,
+      tour_pct: pct(gTours, gLeads), offer_pct: pct(gOffers, gLeads), start_pct: gStarted == null ? null : pct(gStarted, gLeads),
+    },
+  };
+  return { mode: cohort ? "cohort" : "window", month: cohort, from, to: today, stages: CONVERSION_STAGES, rows, group };
+}
+// Months (YYYY-MM, latest first) in which any current pipeline family joined the wait list — the cohort selector.
+// Read straight off the members table so no cohort ages out of the list; future wait-list dates are not offered.
+function funnelMonths(today = todayStr()) {
+  return db.prepare(`SELECT DISTINCT substr(wait_list_date,1,7) m FROM ll_pipeline_members
+    WHERE wait_list_date IS NOT NULL AND length(wait_list_date) >= 7 AND substr(wait_list_date,1,7) <= ?
+    ORDER BY m DESC`).all(today.slice(0, 7)).map((r) => r.m);
+}
+
+// ===== Lead & tour targets per centre (pipeline_targets; month-specific rows override the standing 'default') =====
+function pipelineTargets(month) {
+  const map = {};
+  db.prepare(`SELECT * FROM pipeline_targets WHERE month = 'default'`).all().forEach((t) => { map[t.owna_id] = t; });
+  if (month) db.prepare(`SELECT * FROM pipeline_targets WHERE month = ?`).all(month).forEach((t) => { map[t.owna_id] = t; });
+  return map;
+}
+function savePipelineTarget(ownaId, month, target) {
+  db.prepare(`
+    INSERT INTO pipeline_targets (owna_id, month, leads, tours) VALUES (?,?,?,?)
+    ON CONFLICT(owna_id, month) DO UPDATE SET leads=excluded.leads, tours=excluded.tours
+  `).run(ownaId, month || "default", target.leads == null ? null : target.leads, target.tours == null ? null : target.tours);
+}
+function deletePipelineTarget(ownaId, month) {
+  db.prepare(`DELETE FROM pipeline_targets WHERE owna_id = ? AND month = ?`).run(ownaId, month || "default");
+}
+// Green = monthly target already met, amber = on pace for the share of the month elapsed, red = behind pace.
+function targetRag(actual, target, elapsed) {
+  if (target == null || !(target > 0)) return null;
+  if (actual >= target) return "good";
+  return actual >= target * elapsed ? "warn" : "bad";
+}
+// This month so far, per LineLeader-linked centre: new leads (wait-list date this month) and tours held vs the targets.
+function pipelineTargetProgress(today = todayStr()) {
+  const month = today.slice(0, 7);
+  const [y, mo] = month.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+  const day = Number(today.slice(8, 10));
+  const elapsed = day / daysInMonth;
+  const targets = pipelineTargets(month);
+  const leads = {}; db.prepare(`SELECT owna_id, COUNT(*) n FROM ll_pipeline_members WHERE owna_id IS NOT NULL AND substr(wait_list_date,1,7) = ? GROUP BY owna_id`).all(month).forEach((r) => { leads[r.owna_id] = r.n; });
+  const tours = {}; db.prepare(`SELECT owna_id, ${TOUR_COUNT_SQL} FROM ll_tours WHERE owna_id IS NOT NULL AND ${TOUR_HELD_SQL} AND substr(tour_date,1,7) = @month GROUP BY owna_id`).all({ today, month }).forEach((r) => { tours[r.owna_id] = r; });
+  const rows = llLinkedCentres().map((c) => {
+    const t = targets[c.owna_id] || {};
+    const l = leads[c.owna_id] || 0, th = (tours[c.owna_id] || {}).held || 0, tc = (tours[c.owna_id] || {}).completed || 0;
+    const lt = t.leads == null ? null : t.leads, tt = t.tours == null ? null : t.tours;
+    return {
+      owna_id: c.owna_id, name: c.name, opening: !!c.opening,
+      leads: l, leads_target: lt, leads_delta: lt == null ? null : l - lt, leads_rag: targetRag(l, lt, elapsed),
+      tours_held: th, tours_completed: tc, tours_target: tt, tours_delta: tt == null ? null : th - tt, tours_rag: targetRag(th, tt, elapsed),
+    };
+  });
+  return { month, today, day, days_in_month: daysInMonth, elapsed: Math.round(elapsed * 100) / 100, rows, has_targets: rows.some((r) => r.leads_target != null || r.tours_target != null) };
+}
+
+// ===== Unused places / utilisation by month =====
+// Booked child-days on NSW operating days per calendar month for one centre → unused places (licensed places − average
+// booked per operating day) and utilisation (booked child-days ÷ places × operating days in the month). Months with no
+// booking rows are omitted, so callers see gaps rather than zeros.
+function placesByMonth(ownaId, capacity, fromMonth, toMonth) {
+  const rows = db.prepare(`SELECT metric_date, booked FROM daily_metrics WHERE owna_id = ? AND substr(metric_date,1,7) BETWEEN ? AND ?`).all(ownaId, fromMonth, toMonth);
+  const sums = new Map();
+  for (const r of rows) {
+    if (!cal.isOperatingDay(r.metric_date)) continue;
+    const mo = r.metric_date.slice(0, 7);
+    sums.set(mo, (sums.get(mo) || 0) + (r.booked || 0));
+  }
+  return [...sums.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, booked]) => {
+    const [y, mo] = month.split("-").map(Number);
+    const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    const opDays = cal.operatingDays(`${month}-01`, `${month}-${String(last).padStart(2, "0")}`);
+    const avg = opDays ? booked / opDays : null;
+    return {
+      month, booked, operating_days: opDays, places: capacity,
+      avg_booked: avg == null ? null : Math.round(avg * 10) / 10,
+      unused_places: avg == null ? null : Math.round((capacity - avg) * 10) / 10,
+      utilisation: pct(booked, capacity * opDays),
+    };
+  });
+}
+
 // Weekly labour budget targets per centre (week-specific overrides, else 'default').
 function labourBudgets(weekEnding) {
   const map = {};
@@ -1332,8 +1502,11 @@ function centreLabourLatest(ownaId) {
 }
 
 // Compare every operating centre on one metric over time (each centre = one line).
+// `source: "bookings"` metrics come from OWNA daily bookings and extend two months ahead (booked-ahead days, drawn dashed).
 const COMPARE_METRICS = {
-  occupancy:  { cadence: "month", label: "Occupancy", suf: "%", better: "high" },
+  occupancy:  { cadence: "month", label: "Occupancy", suf: "%", better: "high", source: "bookings" },
+  unused_places: { cadence: "month", label: "Unused places, avg per day", unit: "places", better: "low", source: "bookings" },
+  utilisation: { cadence: "month", label: "Utilisation", suf: "%", better: "high", source: "bookings" },
   wage_pct:   { cadence: "week",  label: "Educator wages % of revenue", suf: "%", better: "low" },
   margin_pct: { cadence: "week",  label: "Margin after wages", suf: "%", better: "high" },
   revenue:    { cadence: "week",  label: "Revenue", money: true, better: "high" },
@@ -1345,34 +1518,50 @@ function lastMonths(n) {
   const out = []; for (let i = n - 1; i >= 0; i--) out.push(new Date(Date.UTC(y, mo - 1 - i, 1)).toISOString().slice(0, 7));
   return out;
 }
+// Latest ACTUAL value per series (ignoring projected points past `dashFrom`; the most recent month that has data), then
+// a ranking that honours cfg.better so "lower is better" metrics colour correctly: best → tone "good", worst → "bad".
+function rankCompareSeries(series, cfg, dashFrom) {
+  series.forEach((s) => {
+    const upto = dashFrom == null ? s.points : s.points.slice(0, dashFrom + 1);
+    const nn = upto.filter((v) => v != null);
+    s.latest = nn.length ? nn[nn.length - 1] : null; s.tone = null;
+  });
+  const ranked = series.filter((s) => s.latest != null).sort((a, b) => (cfg.better === "low" ? a.latest - b.latest : b.latest - a.latest));
+  if (ranked.length > 1) { ranked[0].tone = "good"; ranked[ranked.length - 1].tone = "bad"; }
+  return ranked.map((s) => ({ owna_id: s.owna_id, name: s.name, latest: s.latest, tone: s.tone }));
+}
 function compareTrend(metric = "occupancy", n) {
   const cfg = COMPARE_METRICS[metric] || COMPARE_METRICS.occupancy;
-  const centres = db.prepare("SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+  const centres = db.prepare("SELECT owna_id, name, capacity FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
   if (cfg.cadence === "week") {
     const weeks = labourWeeks(n || 16).slice().reverse();
     const series = centres.map((ct) => {
       const map = {}; wagesTrend(ct.owna_id, n || 16).forEach((r) => { map[r.week] = r[metric]; });
       return { owna_id: ct.owna_id, name: ct.name.replace("Futuro Childcare & Education - ", ""), points: weeks.map((w) => (map[w] == null ? null : map[w])) };
     });
-    return { axis: weeks, cadence: "week", series, cfg, metric };
+    const ranking = rankCompareSeries(series, cfg, null);
+    return { axis: weeks, cadence: "week", series, cfg, metric, ranking };
   }
-  // Occupancy extends forward (projected from scheduled bookings, drawn dashed); manual P&C metrics are past-only.
-  const isOcc = metric === "occupancy";
+  // Booking-based metrics extend forward (projected from scheduled bookings, drawn dashed); manual P&C metrics are past-only.
+  const fromBookings = cfg.source === "bookings";
   const now = todayStr().slice(0, 7); const [yy, mm] = now.split("-").map(Number);
-  const pastN = n || 12, fwdN = isOcc ? 2 : 0;
+  const pastN = n || 12, fwdN = fromBookings ? 2 : 0;
   const axis = [];
   for (let i = pastN; i >= -fwdN; i--) axis.push(new Date(Date.UTC(yy, mm - 1 - i, 1)).toISOString().slice(0, 7));
   let dashFrom = null;
-  if (isOcc) { const fi = axis.findIndex((mo2) => mo2 >= now); dashFrom = fi > 0 ? fi - 1 : (fi === 0 ? 0 : null); }
+  if (fromBookings) { const fi = axis.findIndex((mo2) => mo2 >= now); dashFrom = fi > 0 ? fi - 1 : (fi === 0 ? 0 : null); }
   const series = centres.map((ct) => {
-    const map = {};
-    if (isOcc) {
+    const map = {}; // months absent from the map render as null (a gap), never zero
+    if (metric === "occupancy") {
       db.prepare("SELECT substr(metric_date,1,7) month, COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) days FROM daily_metrics WHERE owna_id=? GROUP BY month")
         .all(ct.owna_id).forEach((r) => { map[r.month] = pct(r.booked, r.cap * r.days); });
+    } else if (fromBookings) {
+      placesByMonth(ct.owna_id, ct.capacity, axis[0], axis[axis.length - 1]).forEach((r) => { map[r.month] = r[metric]; });
     } else { const pt = pcTrend(ct.owna_id, 24); pt.axis.forEach((mo2, i) => { map[mo2] = pt.series[metric] ? pt.series[metric][i] : null; }); }
     return { owna_id: ct.owna_id, name: ct.name.replace("Futuro Childcare & Education - ", ""), points: axis.map((mo2) => (map[mo2] == null ? null : map[mo2])) };
   });
-  return { axis, cadence: "month", series, cfg, metric, dashFrom };
+  const ranking = rankCompareSeries(series, cfg, dashFrom);
+  return { axis, cadence: "month", series, cfg, metric, dashFrom, ranking };
 }
 
 // How many new bookings of each day-pattern lift weekly occupancy by each target (pp).
@@ -1555,4 +1744,5 @@ module.exports = {
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
   yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months, wagesPerChildDay, ownaWeek,
+  funnelByCentre, funnelMonths, CONVERSION_STAGES, pipelineTargets, savePipelineTarget, deletePipelineTarget, pipelineTargetProgress, targetRag, placesByMonth,
 };

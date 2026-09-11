@@ -22,8 +22,9 @@
 
 <% if (!p.rows.length) { %>
   <div class="card"><p class="muted">No LineLeader data yet. Run a refresh (need LineLeader credentials in .env).</p></div>
-<% } else { %>
+<% } %>
 
+<% if (p.rows.length) { %>
 <div class="grid kpis">
   <div class="card stat"><div class="n"><%= (t[4]||0).toLocaleString('en-AU') %></div><div class="l">On waitlist</div></div>
   <div class="card stat"><div class="n"><%= (t[5]||0).toLocaleString('en-AU') %></div><div class="l">Offers accepted</div></div>
@@ -32,13 +33,114 @@
   <div class="card stat"><div class="n"><%= (t.withdrawn||0).toLocaleString('en-AU') %></div><div class="l">Withdrawn (120d)</div></div>
   <div class="card stat"><div class="n <%= (t.net||0) >= 0 ? 'good-text' : 'bad-text' %>"><%= (t.net||0) >= 0 ? '+' : '' %><%= (t.net||0).toLocaleString('en-AU') %></div><div class="l">Indicative net</div></div>
 </div>
+<% } %>
 
+<%
+  const mLong = (mo) => { const q = mo.split('-'); return new Date(q[0], q[1]-1, 1).toLocaleDateString('en-AU', {month:'long', year:'numeric'}); };
+  const mShort = (mo) => { const q = mo.split('-'); return new Date(q[0], q[1]-1, 1).toLocaleDateString('en-AU', {month:'short', year:'2-digit'}); };
+  const dLong = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', {day:'numeric', month:'short', year:'numeric'});
+  const canEditTargets = ['admin','ops_manager'].includes(user.role);
+  const f = funnel; const isCohort = f.mode === 'cohort';
+%>
+<% if (progress.rows.length) { %>
+<div class="card">
+  <div class="pc-head">
+    <h2 style="margin:0;">This month vs targets <span class="muted" style="font-weight:400;font-size:13px;">· <%= mLong(progress.month) %> · day <%= progress.day %> of <%= progress.days_in_month %></span></h2>
+    <% if (canEditTargets) { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/pipeline-targets">Set targets</a><% } %>
+  </div>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead><tr><th>Centre</th><th class="num">New leads so far</th><th class="num">Target</th><th class="num">Δ</th><th class="num">Tours held so far</th><th class="num">Target</th><th class="num">Δ</th></tr></thead>
+    <tbody>
+      <% progress.rows.forEach(function(r){ %>
+        <tr>
+          <td><%= shortName(r.name) %><% if (r.opening) { %> <span class="muted">(opening)</span><% } %></td>
+          <td class="num"><%= r.leads %></td>
+          <td class="num"><%= r.leads_target != null ? r.leads_target : '—' %></td>
+          <td class="num"><% if (r.leads_rag) { %><span class="badge <%= r.leads_rag %>"><%= r.leads_delta >= 0 ? '+' : '' %><%= r.leads_delta %></span><% } else { %>—<% } %></td>
+          <td class="num"><%= r.tours_held %><% if (r.tours_held !== r.tours_completed) { %> <span class="muted" title="Tours LineLeader marks complete">(<%= r.tours_completed %> marked complete)</span><% } %></td>
+          <td class="num"><%= r.tours_target != null ? r.tours_target : '—' %></td>
+          <td class="num"><% if (r.tours_rag) { %><span class="badge <%= r.tours_rag %>"><%= r.tours_delta >= 0 ? '+' : '' %><%= r.tours_delta %></span><% } else { %>—<% } %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  </div>
+  <p class="footnote">
+    Month to date. Δ = so far − monthly target: <span class="badge good">green</span> target already met, <span class="badge warn">amber</span> on pace with <%= Math.round(progress.elapsed*100) %>% of the month elapsed, <span class="badge bad">red</span> behind pace; “—” = no target set<% if (canEditTargets) { %> (use Set targets)<% } %>.
+    Leads = families whose LineLeader wait-list date falls in <%= mLong(progress.month) %>. A tour counts as held when LineLeader marks it complete, or its scheduled date has passed and it was not cancelled — tours are rarely ticked complete in LineLeader, so the completed count is shown alongside; no-shows that were not cancelled are counted as held.
+  </p>
+</div>
+<% } %>
+
+<div class="card">
+  <div class="pc-head">
+    <h2 style="margin:0;">Funnel conversions by centre <span class="muted" style="font-weight:400;font-size:13px;">· <%= isCohort ? 'families who joined the wait list in ' + mLong(f.month) : 'all pipeline families' %></span></h2>
+    <% if (funnelMonths.length) { %>
+    <form method="GET"><% if (trendOwna) { %><input type="hidden" name="owna" value="<%= trendOwna %>"><% } %>
+      <select name="month" onchange="this.form.submit()">
+        <option value="" <%= !funnelMonth ? 'selected' : '' %>>All leads</option>
+        <% funnelMonths.forEach(function(mo){ %><option value="<%= mo %>" <%= mo === funnelMonth ? 'selected' : '' %>>Joined <%= mShort(mo) %></option><% }); %>
+      </select>
+    </form>
+    <% } %>
+  </div>
+  <h3 style="margin:14px 0 6px;font-size:14px;">Where <%= isCohort ? 'that month’s leads' : 'families' %> are now <span class="muted" style="font-weight:400;font-size:12px;">· snapshot of the LineLeader pipeline today · count and % of the centre’s <%= isCohort ? 'cohort' : 'pipeline' %></span></h3>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead><tr><th>Centre</th><% f.stages.forEach(function(s){ %><th class="num"><%= s[1] %></th><% }); %><th class="num">Waitlist</th><th class="num">Total</th></tr></thead>
+    <tbody>
+      <% f.rows.forEach(function(r){ %>
+        <tr>
+          <td><%= shortName(r.name) %><% if (r.opening) { %> <span class="muted">(opening)</span><% } %></td>
+          <% r.stages.forEach(function(s){ %><td class="num"><%= s.count %><% if (r.total) { %> <span class="muted"><%= s.share %>%</span><% } %></td><% }); %>
+          <td class="num <%= r.waitlist.count > 0 ? 'hot' : '' %>"><%= r.waitlist.count %><% if (r.total) { %> <span class="muted"><%= r.waitlist.share %>%</span><% } %></td>
+          <td class="num"><%= r.total %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All centres</td>
+        <% f.group.stages.forEach(function(s){ %><td class="num"><%= s.count %><% if (f.group.total) { %> <span class="muted"><%= s.share %>%</span><% } %></td><% }); %>
+        <td class="num"><%= f.group.waitlist.count %><% if (f.group.total) { %> <span class="muted"><%= f.group.waitlist.share %>%</span><% } %></td>
+        <td class="num"><%= f.group.total %></td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+
+  <h3 style="margin:18px 0 6px;font-size:14px;"><%= isCohort ? 'How far ' + mLong(f.month) + '’s leads have got' : 'Conversion over the last 12 months' %> <span class="muted" style="font-weight:400;font-size:12px;">· <%= isCohort ? 'the cohort’s journey so far' : 'activity ' + dLong(f.from) + ' → ' + dLong(f.to) %> · each step also as % of leads</span></h3>
+  <div style="overflow-x:auto;">
+  <table>
+    <thead><tr><th>Centre</th><th class="num">Leads joined</th><th class="num">→ Tours held</th><th class="num">→ Offers accepted</th><th class="num">→ Started</th></tr></thead>
+    <tbody>
+      <% f.rows.concat([Object.assign({ name: 'All centres', total_row: true }, f.group)]).forEach(function(r){ var s = r.strip; %>
+        <tr class="<%= r.total_row ? 'total-row' : '' %>">
+          <td><%= r.total_row ? r.name : shortName(r.name) %><% if (r.opening) { %> <span class="muted">(opening)</span><% } %></td>
+          <td class="num"><%= s.leads %><% if (!isCohort && s.started) { %> <span class="muted" title="joined in the window + families who started (no longer in the pipeline)"><%= s.leads_joined %> + <%= s.started %></span><% } %></td>
+          <td class="num"><%= s.tours_held %> <span class="muted"><%= s.leads ? s.tour_pct + '%' : '' %><% if (s.tours_held !== s.tours_completed) { %> · <%= s.tours_completed %> marked complete<% } %></span></td>
+          <td class="num"><%= s.offers %> <span class="muted"><%= s.leads ? s.offer_pct + '%' : '' %></span></td>
+          <td class="num"><% if (s.started == null) { %>—<% } else { %><%= s.started %> <span class="muted"><%= s.leads ? s.start_pct + '%' : '' %></span><% } %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  </div>
+  <p class="footnote">
+    <strong>Stage counts are a snapshot</strong> of who is in the LineLeader pipeline right now (New Family → Engaged → Tour Scheduled → Tour Completed → Pre-Offered → Offer Accepted, with Waitlist alongside); <strong>the conversion strip is activity</strong><%= isCohort ? ' for that month’s cohort' : ' over the 12 months to ' + dLong(f.to) %>.
+    <% if (isCohort) { %>Cohort = families whose wait-list date falls in <%= mLong(f.month) %>; tours are those the cohort’s families held on or after the day they joined (an earlier tour belongs to an earlier enquiry). Families who have started leave the LineLeader pipeline and their wait-list date is not kept, so “Started” cannot be shown for a cohort (—) and a cohort can only shrink as it converts.<% } else { %>Leads = families who joined the wait list in the window plus families who started in it (they have left the pipeline, so starts are a floor for leads). LineLeader does not record when an offer was accepted, so “Offers accepted” = every family currently at Offer Accepted plus those who started. “Started” = LineLeader <em>Enrolled (Started)</em> records with a start date in the window — families are handed to OWNA at enrolment, so this understates real starts.<% } %>
+    A tour counts as held when marked complete in LineLeader or when its date has passed without cancellation (completed-only counts shown where they differ). Pre-opening centres are marked (opening) while they build a pipeline.
+  </p>
+</div>
+
+<% if (p.rows.length) { %>
 <% var jMax = Math.max(1, ...joins.map(function(j){return j.count;})); var jTotal = joins.reduce(function(s,j){return s+j.count;},0); var jPeak = joins.reduce(function(a,b){return b.count>a.count?b:a;}, joins[0]||{count:0}); %>
 <div class="card">
   <div class="pc-head">
     <h2 style="margin:0;">New families joining over time <span class="muted" style="font-weight:400;font-size:13px;">· <%= trendOwna ? shortName((trendCentres.find(function(c){return c.owna_id===trendOwna;})||{}).name) : 'all centres' %> · by waitlist join date</span></h2>
     <% if (trendCentres.length) { %>
-    <form method="GET"><select name="owna" onchange="this.form.submit()">
+    <form method="GET"><% if (funnelMonth) { %><input type="hidden" name="month" value="<%= funnelMonth %>"><% } %><select name="owna" onchange="this.form.submit()">
       <option value="" <%= !trendOwna?'selected':'' %>>All centres</option>
       <% trendCentres.forEach(function(c){ %><option value="<%= c.owna_id %>" <%= c.owna_id===trendOwna?'selected':'' %>><%= shortName(c.name) %></option><% }); %>
     </select></form>

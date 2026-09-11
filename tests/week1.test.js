@@ -32,6 +32,28 @@ lw.run('Futuro HQ','2026-06-14',null,3,80,5000,0,0,0,0,0,0,0,0);
 lw.run('Futuro Opening','2026-06-14','open',1,20,1000,0,0,0,0,0,0,0,0);
 const INC_FIX=[[monthShift(0),10,8,2,0,1],[monthShift(-3),20,15,5,1,2],[monthShift(-11),12,10,2,0,1],[monthShift(-12),30,20,10,2,5]];
 const incSum=(from,to)=>INC_FIX.filter(f=>f[0]>=from&&f[0]<=to).reduce((a,f)=>({total:a.total+f[1],injuries:a.injuries+f[2],illness:a.illness+f[3],serious:a.serious+f[4],reportable:a.reportable+f[5],months:a.months+1}),{total:0,injuries:0,illness:0,serious:0,reportable:0,months:0});
+// Batch 4 fixtures: LineLeader link + pipeline members, tours and enrolment records. Names are fixtures — no page may print them.
+for(const [ll,id] of [[1,'a'],[2,'b'],[3,'open']]) db.prepare('UPDATE centres SET ll_id=? WHERE owna_id=?').run(ll,id);
+const llp=db.prepare('INSERT INTO ll_pipeline(snapshot_date,ll_id,centre_name,status_id,status_name,count) VALUES(?,?,?,?,?,?)');
+llp.run(today,1,'Centre Alpha',4,'Waitlist',3);llp.run(today,1,'Centre Alpha',5,'Offer Accepted',1);llp.run(today,2,'Centre Beta',4,'Waitlist',1);
+const mem=db.prepare('INSERT INTO ll_pipeline_members(child_id,ll_id,owna_id,centre_name,child_name,family_name,status_id,status_name,wait_list_date,expected_start) VALUES(?,?,?,?,?,?,?,?,?,?)');
+// [child_id, ll_id, owna_id, status, wait_list_date, family]: Alpha joins this month (2), last month (2), six months back (3), 13 months back (1, outside the window), undated (1).
+for(const [cid,ll,owna,st,wl,fam] of [[1,1,'a',1,today,'One'],[2,1,'a',4,today,'Two'],[3,1,'a',5,monthShift(-1)+'-10','Three'],[4,1,'a',11,monthShift(-1)+'-12','Four'],
+  [5,1,'a',4,monthShift(-6)+'-03','Five'],[6,1,'a',12,monthShift(-6)+'-04','Six'],[7,1,'a',3,monthShift(-6)+'-05','Seven'],[8,1,'a',4,monthShift(-13)+'-15','Eight'],[9,1,'a',2,null,'Nine'],
+  [10,2,'b',4,monthShift(-2)+'-01','Ten'],[11,2,'b',5,monthShift(-2)+'-02','Eleven'],[12,3,'open',1,today,'Twelve'],[13,null,null,2,today,'Thirteen']])
+  mem.run(cid,ll,owna,owna?'Centre '+owna:null,'Fixture Child '+fam,'Fixture Family '+fam,st,String(st),wl,null);
+// Alpha tours: completed last month; held (date passed) 3 months back; cancelled; scheduled next week; completed today; completed 13 months back; held by a non-member family.
+const tour=db.prepare('INSERT INTO ll_tours(task_id,ll_id,owna_id,centre_name,family_name,type_name,tour_date,is_completed,is_cancelled) VALUES(?,?,?,?,?,?,?,?,?)');
+for(const [id,fam,d,done,canc] of [[1,'Three',monthShift(-1)+'-15',1,0],[2,'Five',monthShift(-3)+'-10',0,0],[3,'Six',monthShift(-3)+'-11',0,1],[4,'Seven',addDays(today,5),0,0],[5,'One',today,1,0],[6,'Two',monthShift(-13)+'-20',1,0],[7,'Zed',monthShift(-2)+'-05',0,0]])
+  tour.run(id,1,'a','Centre Alpha','Fixture Family '+fam,'Tour',d+'T00:30:00+00:00',done,canc);
+// Enrolment records carry the EXPECTED start for every status: only Enrolled (Started, 6) with a past date is a real start.
+const enr=db.prepare('INSERT INTO ll_enrolments(enrollment_id,ll_id,centre_name,child_id,status_id,start_date,withdrawn_date) VALUES(?,?,?,?,?,?,?)');
+enr.run(1,1,'Centre Alpha',101,6,monthShift(-2)+'-01',null);enr.run(2,1,'Centre Alpha',102,6,monthShift(-1)+'-01',null);
+enr.run(3,1,'Centre Alpha',5,4,monthShift(-1)+'-05',null); // waitlisted child whose expected start has passed — not a start
+enr.run(4,1,'Centre Alpha',103,6,addDays(today,30),null); // enrolled, starts next month — not yet
+enr.run(5,1,'Centre Alpha',104,6,monthShift(-13)+'-01',null); // outside the 12-month window
+enr.run(6,2,'Centre Beta',105,9,monthShift(-2)+'-01',null); // Lost Opportunity — not a start
+enr.run(7,1,'Centre Alpha',106,8,null,monthShift(-1)+'-01'); // withdrawn
 const app=require('../server');
 let server,base;
 async function login(role){const r=await fetch(base+'/login',{method:'POST',body:new URLSearchParams({email:role+'@example.test',password:pass}),redirect:'manual'});assert.equal(r.status,302);return r.headers.get('set-cookie').split(';')[0];}
@@ -354,6 +376,124 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(await page('/exits',await login('exec')),/COE leaver signal/);
   assert.equal((await request('/exits',await login('viewer'))).status,403); // aggregates-only login stays out
   assert.equal((await request('/exits',await login('centre'))).status,403); // centre-scoped login stays out
+ });
+ // ---- Batch 4: funnel conversions, cohort filter, lead & tour targets, unused places / utilisation ----
+ await t.test('funnelByCentre: snapshot stage shares, 12-month conversion strip, cohort filter, no names',()=>{
+  const f=m.funnelByCentre();
+  assert.equal(f.mode,'window');assert.equal(f.to,today);
+  const fr=new Date(today+'T00:00:00Z');fr.setUTCMonth(fr.getUTCMonth()-12);assert.equal(f.from,fr.toISOString().slice(0,10));
+  assert.deepEqual(f.stages.map(s=>s[0]),[1,2,11,3,12,5]);
+  assert.deepEqual(f.rows.map(r=>[r.owna_id,r.opening,r.total]),[['a',false,9],['b',false,2],['open',true,1]]); // LineLeader-linked centres, operating first
+  const a=f.rows[0];
+  assert.deepEqual(a.stages.map(s=>[s.id,s.count,s.share]),[[1,1,11.1],[2,1,11.1],[11,1,11.1],[3,1,11.1],[12,1,11.1],[5,1,11.1]]);
+  assert.deepEqual(a.waitlist,{id:4,name:'Waitlist',count:3,share:33.3});
+  // leads 7 joined + 2 started; tours: completed last month, held 3 months back, completed today, non-member held (cancelled, future and 13-month-old excluded)
+  assert.deepEqual(a.strip,{leads:9,leads_joined:7,tours_held:4,tours_completed:2,offers:3,offers_current:1,started:2,tour_pct:44.4,offer_pct:33.3,start_pct:22.2});
+  assert.deepEqual(f.rows[1].strip,{leads:2,leads_joined:2,tours_held:0,tours_completed:0,offers:1,offers_current:1,started:0,tour_pct:0,offer_pct:50,start_pct:0}); // Lost Opportunity is not a start
+  assert.deepEqual(f.rows[2].stages.map(s=>s.count),[1,0,0,0,0,0]);assert.equal(f.rows[2].strip.leads,1);
+  assert.equal(f.group.total,12);assert.deepEqual(f.group.waitlist,{id:4,name:'Waitlist',count:4,share:33.3});
+  assert.deepEqual(f.group.stages.map(s=>s.count),[2,1,1,1,1,2]);
+  assert.deepEqual(f.group.strip,{leads:12,leads_joined:10,tours_held:4,tours_completed:2,offers:4,offers_current:2,started:2,tour_pct:33.3,offer_pct:33.3,start_pct:16.7});
+  assert.ok(JSON.stringify(f).indexOf('Fixture')<0);
+  const c=m.funnelByCentre(monthShift(-6));
+  assert.equal(c.mode,'cohort');assert.equal(c.month,monthShift(-6));
+  assert.deepEqual(c.rows[0].stages.map(s=>[s.id,s.count,s.share]),[[1,0,0],[2,0,0],[11,0,0],[3,1,33.3],[12,1,33.3],[5,0,0]]);
+  assert.equal(c.rows[0].waitlist.count,1);assert.equal(c.rows[0].total,3);
+  assert.deepEqual(c.rows[0].strip,{leads:3,leads_joined:3,tours_held:1,tours_completed:0,offers:0,offers_current:0,started:null,tour_pct:33.3,offer_pct:0,start_pct:null}); // the cohort's cancelled + future tours excluded
+  assert.deepEqual(c.rows.slice(1).map(r=>r.total),[0,0]);assert.equal(c.group.strip.started,null);assert.equal(c.group.strip.leads,3);assert.equal(c.group.strip.tours_held,1);
+  const n=m.funnelByCentre(monthShift(0));
+  assert.deepEqual(n.rows.map(r=>[r.owna_id,r.total,r.strip.leads,r.strip.tours_held,r.strip.tours_completed]),[['a',2,2,1,1],['b',0,0,0,0],['open',1,1,0,0]]);
+  assert.equal(m.funnelByCentre('nonsense').mode,'window');
+  assert.deepEqual(m.funnelMonths(),[monthShift(0),monthShift(-1),monthShift(-2),monthShift(-6),monthShift(-13)]); // latest first, months with joiners only
+ });
+ await t.test('pipeline targets: admin/ops form saves standing monthly targets; pipeline page shows month-to-date deltas',async()=>{
+  assert.equal(m.targetRag(10,10,0.5),'good');assert.equal(m.targetRag(5,10,0.5),'warn');assert.equal(m.targetRag(4,10,0.5),'bad');assert.equal(m.targetRag(0,null,0.5),null);assert.equal(m.targetRag(0,0,0.5),null);
+  const pr0=m.pipelineTargetProgress();
+  assert.equal(pr0.month,today.slice(0,7));assert.equal(pr0.has_targets,false);
+  assert.deepEqual(pr0.rows.map(r=>[r.owna_id,r.leads,r.tours_held,r.tours_completed,r.leads_target,r.leads_rag,r.tours_delta]),[['a',2,1,1,null,null,null],['b',0,0,0,null,null,null],['open',1,0,0,null,null,null]]);
+  const admin=await login('admin'), exec=await login('exec'), viewer=await login('viewer'), centre=await login('centre');
+  let html=await page('/pipeline',admin);
+  assert.match(html,/This month vs targets <span[^>]*>· \w+ \d{4} · day \d+ of \d+/);
+  assert.match(html,/href="\/admin\/pipeline-targets">Set targets<\/a>/);assert.match(html,/<td class="num">—<\/td>/);
+  assert.match(html,/href="\/admin\/pipeline-targets"[^>]*>Pipeline targets<\/a>/); // admin nav
+  assert.doesNotMatch(await page('/pipeline',exec),/Pipeline targets<\/a>/);
+  for(const c of [exec,viewer,centre]) assert.equal((await request('/admin/pipeline-targets',c)).status,403);
+  const post=(cookie,body)=>fetch(base+'/admin/pipeline-targets',{method:'POST',headers:{cookie,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body),redirect:'manual'});
+  assert.equal((await post(exec,{leads_a:'99'})).status,403);assert.deepEqual(m.pipelineTargets(),{});
+  html=await page('/admin/pipeline-targets',admin);
+  assert.match(html,/name="leads_a"/);assert.match(html,/name="tours_open"/);assert.match(html,/Centre Opening <span class="muted">\(opening\)<\/span>/);
+  let r=await post(admin,{leads_a:'10',tours_a:'4',leads_b:'',tours_b:'',leads_open:'2',tours_open:''});
+  assert.equal(r.status,302);assert.equal(r.headers.get('location'),'/admin/pipeline-targets?saved=1');
+  assert.deepEqual(Object.entries(m.pipelineTargets()).map(([k,v])=>[k,v.month,v.leads,v.tours]).sort(),[['a','default',10,4],['open','default',2,null]]);
+  m.savePipelineTarget('b','2099-01',{leads:7,tours:null});assert.equal(m.pipelineTargets('2099-01').b.leads,7);assert.equal(m.pipelineTargets().b,undefined); // month override only for that month
+  const pr=m.pipelineTargetProgress();
+  const [yy,mm]=pr.month.split('-').map(Number);const dim=new Date(Date.UTC(yy,mm,0)).getUTCDate();const el=Number(today.slice(8,10))/dim;
+  assert.equal(pr.days_in_month,dim);assert.equal(pr.day,Number(today.slice(8,10)));assert.equal(pr.has_targets,true);
+  const a=pr.rows[0];
+  assert.deepEqual([a.leads,a.leads_target,a.leads_delta,a.leads_rag,a.tours_held,a.tours_target,a.tours_delta,a.tours_rag],[2,10,-8,m.targetRag(2,10,el),1,4,-3,m.targetRag(1,4,el)]);
+  assert.ok(['warn','bad'].includes(a.leads_rag));
+  assert.deepEqual([pr.rows[1].leads_target,pr.rows[1].leads_rag],[null,null]);
+  assert.deepEqual([pr.rows[2].leads_delta,pr.rows[2].leads_rag,pr.rows[2].tours_target,pr.rows[2].tours_rag],[-1,m.targetRag(1,2,el),null,null]);
+  html=await page('/pipeline',admin);
+  assert.match(html,new RegExp('<span class="badge '+a.leads_rag+'">-8</span>'));assert.match(html,new RegExp('<span class="badge '+a.tours_rag+'">-3</span>'));
+  assert.match(html,new RegExp('<td>Centre Alpha</td>\\s*<td class="num">2</td>\\s*<td class="num">10</td>\\s*<td class="num"><span class="badge '+a.leads_rag+'">-8</span></td>\\s*<td class="num">1</td>\\s*<td class="num">4</td>'));
+  assert.match(html,/<td>Centre Beta<\/td>\s*<td class="num">0<\/td>\s*<td class="num">—<\/td>\s*<td class="num">—<\/td>/); // no target → dashes
+  html=await page('/admin/pipeline-targets?saved=1',admin);assert.match(html,/Targets saved\./);assert.match(html,/name="leads_a" value="10"/);assert.match(html,/name="tours_open" value=""/);
+  r=await post(admin,{leads_a:'',tours_a:'',leads_open:'2',tours_open:'abc'});assert.equal(r.status,302);
+  assert.deepEqual(Object.entries(m.pipelineTargets()).map(([k,v])=>[k,v.leads,v.tours]),[['open',2,null]]); // both blank removes Alpha's target; non-numeric = blank
+  db.prepare('INSERT INTO users(email,name,password_hash,role) VALUES(?,?,?,?)').run('ops_manager@example.test','ops',bcrypt.hashSync(pass,4),'ops_manager');
+  const ops=await login('ops_manager');assert.equal((await request('/admin/pipeline-targets',ops)).status,200);assert.match(await page('/pipeline',ops),/Set targets/);
+ });
+ await t.test('Enrolment Pipeline shows the funnel snapshot, 12-month strip and cohort filter — counts only, never names',async()=>{
+  const admin=await login('admin');
+  let html=await page('/pipeline',admin);
+  assert.match(html,/Funnel conversions by centre <span[^>]*>· all pipeline families/);
+  assert.match(html,/Stage counts are a snapshot<\/strong>/);assert.match(html,/the conversion strip is activity<\/strong> over the 12 months to /);
+  assert.match(html,/<td>Centre Alpha<\/td>\s*<td class="num">1 <span class="muted">11\.1%<\/span><\/td>(\s*<td class="num">1 <span class="muted">11\.1%<\/span><\/td>){5}\s*<td class="num hot">3 <span class="muted">33\.3%<\/span><\/td>\s*<td class="num">9<\/td>/);
+  assert.match(html,/<td>Centre Alpha<\/td>\s*<td class="num">9 <span class="muted"[^>]*>7 \+ 2<\/span><\/td>\s*<td class="num">4 <span class="muted">44\.4% · 2 marked complete<\/span><\/td>\s*<td class="num">3 <span class="muted">33\.3%<\/span><\/td>\s*<td class="num">2 <span class="muted">22\.2%<\/span><\/td>/);
+  assert.match(html,/<td>All centres<\/td>\s*<td class="num">12 <span class="muted"[^>]*>10 \+ 2<\/span><\/td>/);
+  assert.match(html,/<td>Centre Opening <span class="muted">\(opening\)<\/span><\/td>/);
+  assert.match(html,new RegExp('<option value="'+monthShift(-6)+'" >Joined '));assert.match(html,/<option value="" selected>All leads<\/option>/);
+  assert.doesNotMatch(html,/Fixture/);
+  const co=await page('/pipeline?month='+monthShift(-6),admin);
+  assert.match(co,/families who joined the wait list in /);assert.match(co,new RegExp('<option value="'+monthShift(-6)+'" selected>'));
+  assert.match(co,/<td>Centre Alpha<\/td>\s*<td class="num">3<\/td>\s*<td class="num">1 <span class="muted">33\.3% · 0 marked complete<\/span><\/td>\s*<td class="num">0 <span class="muted">0%<\/span><\/td>\s*<td class="num">—<\/td>/);
+  assert.match(co,/cannot be shown for a cohort/);assert.match(co,new RegExp('<input type="hidden" name="month" value="'+monthShift(-6)+'">')); // centre selector keeps the cohort
+  assert.doesNotMatch(co,/Fixture/);
+  assert.match(await page('/pipeline?month=2099-13',admin),/all pipeline families/); // unknown month → all leads
+  const v=await page('/pipeline',await login('viewer'));assert.doesNotMatch(v,/Fixture/);assert.doesNotMatch(v,/Set targets/);assert.match(v,/Funnel conversions by centre/);
+  assert.doesNotMatch(await page('/pipeline',await login('exec')),/Set targets/);
+  assert.equal((await request('/pipeline',await login('centre'))).status,403);
+ });
+ await t.test('compare: unused places & utilisation per operating day, gaps for months without data, lower-is-better ranking',async()=>{
+  assert.deepEqual(m.placesByMonth('a',100,'2026-06','2026-06'),[{month:'2026-06',booked:120,operating_days:21,places:100,avg_booked:5.7,unused_places:94.3,utilisation:5.7}]); // King's Birthday row excluded
+  assert.deepEqual(m.placesByMonth('b',100,'2026-01','2026-05'),[]);
+  assert.equal(m.COMPARE_METRICS.unused_places.better,'low');assert.equal(m.COMPARE_METRICS.utilisation.better,'high');assert.equal(m.COMPARE_METRICS.utilisation.suf,'%');
+  const u=m.compareTrend('unused_places');
+  assert.equal(u.cadence,'month');assert.equal(u.axis.length,15);assert.equal(u.axis[12],today.slice(0,7));assert.equal(u.dashFrom,11);
+  assert.deepEqual(u.series.map(s=>s.name),['Centre Alpha','Centre Beta','Centre Gamma']); // every operating centre incl. Gamma (added by the exits batch); pre-opening centre excluded
+  const ji=u.axis.indexOf('2026-06');
+  if(ji>=0){
+   assert.equal(u.series[0].points[ji],94.3);assert.equal(u.series[1].points[ji],98.1);
+   const withData=new Set(['2026-06',today.slice(0,7),addDays(today,7).slice(0,7)]);
+   u.axis.forEach((mo,i)=>{if(!withData.has(mo))assert.equal(u.series[0].points[i],null,mo);if(mo!=='2026-06')assert.equal(u.series[1].points[i],null,mo);}); // gaps, not zeros
+   assert.deepEqual(u.series[2].points,u.axis.map(()=>null)); // Gamma has places but no booking rows at all — every month a gap, never 0 unused places
+   if(ji<=u.dashFrom){
+    assert.deepEqual(u.ranking.map(r=>[r.name,r.latest,r.tone]),[['Centre Alpha',94.3,'good'],['Centre Beta',98.1,'bad']]); // lower is better
+    const ut=m.compareTrend('utilisation');assert.equal(ut.series[0].points[ji],5.7);
+    assert.deepEqual(ut.ranking.map(r=>[r.name,r.latest,r.tone]),[['Centre Alpha',5.7,'good'],['Centre Beta',1.9,'bad']]); // higher is better
+   }
+  }
+  const occ=m.compareTrend('occupancy');assert.equal(occ.dashFrom,11);assert.equal(occ.axis.length,15);assert.ok(Array.isArray(occ.ranking));
+  const wk=m.compareTrend('wage_pct');assert.equal(wk.cadence,'week');assert.ok(Array.isArray(wk.ranking));
+  const admin=await login('admin');
+  const html=await page('/compare?metric=unused_places',admin);
+  assert.match(html,/Unused places, avg per day/);assert.match(html,/<strong>Unused places<\/strong> = licensed places/);assert.match(html,/left as gaps, not zero/);
+  if(ji>=0&&ji<=u.dashFrom){assert.match(html,/<td class="num good-text" style="font-weight:600;">94\.3 places<\/td>/);assert.match(html,/<td class="num bad-text" style="font-weight:600;">98\.1 places<\/td>/);}
+  assert.match(await page('/compare?metric=utilisation',admin),/best in green, worst in red/);
+  assert.doesNotMatch(await page('/compare?metric=occupancy',admin),/<strong>Unused places<\/strong>/);
+  assert.equal((await request('/compare?metric=unused_places',await login('centre'))).status,403);
+  assert.equal((await request('/compare?metric=unused_places',await login('viewer'))).status,200);
  });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

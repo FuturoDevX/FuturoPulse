@@ -152,13 +152,17 @@ router.post("/ai/briefing", requireAdminOrOps, async (req, res) => {
   }
 });
 
-// Enrolment pipeline / waitlist (LineLeader).
+// Enrolment pipeline / waitlist (LineLeader). ?month=YYYY-MM restricts the funnel to the cohort of families who joined
+// the wait list that month (default: all leads); ?owna picks the centre for the joins chart.
 router.get("/pipeline", blockScoped, (req, res) => {
   const p = m.llPipeline();
   const trendCentres = m.pipelineCentres();
   const owna = trendCentres.find((c) => c.owna_id === req.query.owna) ? req.query.owna : null; // null = all centres
+  const funnelMonths = m.funnelMonths();
+  const funnelMonth = funnelMonths.includes(req.query.month) ? req.query.month : null; // null = all leads
   res.render("pipeline", { title: "Enrolment Pipeline", pipeline: p,
-    trendCentres, trendOwna: owna, trend: m.pipelineTrend(owna), joins: m.waitlistJoins(owna, 12), lastRun: lastRun() });
+    trendCentres, trendOwna: owna, trend: m.pipelineTrend(owna), joins: m.waitlistJoins(owna, 12),
+    funnel: m.funnelByCentre(funnelMonth), funnelMonth, funnelMonths, progress: m.pipelineTargetProgress(), lastRun: lastRun() });
 });
 
 // Per-centre enrolment pipeline drill-down (stages, members, tours, waitlist trend).
