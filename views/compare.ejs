@@ -43,10 +43,10 @@
 <% } %>
 <% if (isPlaces) { %>
 <p class="footnote">
-  Operating day = NSW weekday that is not a public holiday. <strong>Unused places</strong> = licensed places − average booked children per operating day in the month;
-  <strong>utilisation</strong> = booked child-days on operating days ÷ (licensed places × operating days in the month). Months with no booking rows are left as gaps, not zero;
-  an operating day inside a month with bookings counts as empty if nothing is booked on it. The current and next two months (dashed) hold only the bookings made so far,
-  so a month still filling up shows more unused places than it will finish with.
+  Operating day = NSW weekday that is not a public holiday. <strong>Unused places</strong> = licensed places − average booked children per operating day with booking data;
+  <strong>utilisation</strong> = booked child-days on operating days ÷ (licensed places × those days). Months with no booking rows are left as gaps, not zero;
+  where a month's snapshot is incomplete it is measured over the operating days it does have, because a day with no booking row is a day the nightly pull did not return,
+  not a day with nothing booked. The current and next two months (dashed) hold only the bookings made so far, so a month still filling up shows more unused places than it will finish with.
 </p>
 <% } %>
 

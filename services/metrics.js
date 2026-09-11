@@ -579,26 +579,32 @@ function pipelineTargetProgress(today = todayStr()) {
 
 // ===== Unused places / utilisation by month =====
 // Booked child-days on NSW operating days per calendar month for one centre → unused places (licensed places − average
-// booked per operating day) and utilisation (booked child-days ÷ places × operating days in the month). Months with no
-// booking rows are omitted, so callers see gaps rather than zeros.
+// booked per operating day with data) and utilisation (booked child-days ÷ places × those days). Months with no booking
+// rows are omitted, so callers see gaps rather than zeros. The average is taken over the operating days that actually
+// carry a daily_metrics row (`days_with_rows`), not over every operating day in the month: the nightly pull writes only
+// the days OWNA returned attendance records for, so a missing day is missing snapshot coverage, never a zero-booked day.
+// Dividing by the whole month would count a pull gap as fully empty places. `days_with_rows` < `operating_days` marks a
+// month whose coverage is incomplete, so callers can flag or drop it.
 function placesByMonth(ownaId, capacity, fromMonth, toMonth) {
   const rows = db.prepare(`SELECT metric_date, booked FROM daily_metrics WHERE owna_id = ? AND substr(metric_date,1,7) BETWEEN ? AND ?`).all(ownaId, fromMonth, toMonth);
   const sums = new Map();
   for (const r of rows) {
     if (!cal.isOperatingDay(r.metric_date)) continue;
     const mo = r.metric_date.slice(0, 7);
-    sums.set(mo, (sums.get(mo) || 0) + (r.booked || 0));
+    const s = sums.get(mo) || { booked: 0, days: 0 };
+    s.booked += r.booked || 0; s.days += 1; // one row per centre-day (daily_metrics PK)
+    sums.set(mo, s);
   }
-  return [...sums.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, booked]) => {
+  return [...sums.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, s]) => {
     const [y, mo] = month.split("-").map(Number);
     const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
     const opDays = cal.operatingDays(`${month}-01`, `${month}-${String(last).padStart(2, "0")}`);
-    const avg = opDays ? booked / opDays : null;
+    const avg = s.days ? s.booked / s.days : null;
     return {
-      month, booked, operating_days: opDays, places: capacity,
+      month, booked: s.booked, operating_days: opDays, days_with_rows: s.days, places: capacity,
       avg_booked: avg == null ? null : Math.round(avg * 10) / 10,
       unused_places: avg == null ? null : Math.round((capacity - avg) * 10) / 10,
-      utilisation: pct(booked, capacity * opDays),
+      utilisation: pct(s.booked, capacity * s.days),
     };
   });
 }

@@ -523,30 +523,37 @@ test('Week 1 batch 1',async(t)=>{
   assert.equal((await request('/pipeline',await login('centre'))).status,403);
  });
  await t.test('compare: unused places & utilisation per operating day, gaps for months without data, lower-is-better ranking',async()=>{
-  assert.deepEqual(m.placesByMonth('a',100,'2026-06','2026-06'),[{month:'2026-06',booked:120,operating_days:21,places:100,avg_booked:5.7,unused_places:94.3,utilisation:5.7}]); // King's Birthday row excluded
+  // Averaged over the operating days that carry a booking row (2 of June's 21 — the King's Birthday row is excluded),
+  // never over the whole month: a day with no row is a day the pull did not return, not a day with nothing booked.
+  assert.deepEqual(m.placesByMonth('a',100,'2026-06','2026-06'),[{month:'2026-06',booked:120,operating_days:21,days_with_rows:2,places:100,avg_booked:60,unused_places:40,utilisation:60}]);
   assert.deepEqual(m.placesByMonth('b',100,'2026-01','2026-05'),[]);
+  // A month full on every day it has, with the rest of the month missing from the snapshot (Thu 1 – Wed 7 May 2025 at
+  // 100 of 100 places, then a 17-day pull gap): the days present are at capacity, so no phantom empty places.
+  for(const d of ['2025-05-01','2025-05-02','2025-05-05','2025-05-06','2025-05-07']) dm.run('b',d,100,100,0,0,2000);
+  assert.equal(cal.operatingDays('2025-05-01','2025-05-31'),22);
+  assert.deepEqual(m.placesByMonth('b',100,'2025-05','2025-05'),[{month:'2025-05',booked:500,operating_days:22,days_with_rows:5,places:100,avg_booked:100,unused_places:0,utilisation:100}]); // not 22.7 booked / 77.3 unused / 22.7%
   assert.equal(m.COMPARE_METRICS.unused_places.better,'low');assert.equal(m.COMPARE_METRICS.utilisation.better,'high');assert.equal(m.COMPARE_METRICS.utilisation.suf,'%');
   const u=m.compareTrend('unused_places');
   assert.equal(u.cadence,'month');assert.equal(u.axis.length,15);assert.equal(u.axis[12],today.slice(0,7));assert.equal(u.dashFrom,11);
   assert.deepEqual(u.series.map(s=>s.name),['Centre Alpha','Centre Beta','Centre Gamma']); // every operating centre incl. Gamma (added by the exits batch); pre-opening centre excluded
   const ji=u.axis.indexOf('2026-06');
   if(ji>=0){
-   assert.equal(u.series[0].points[ji],94.3);assert.equal(u.series[1].points[ji],98.1);
+   assert.equal(u.series[0].points[ji],40);assert.equal(u.series[1].points[ji],60);
    const withData=new Set(['2026-06',today.slice(0,7),addDays(today,7).slice(0,7)]);
    u.axis.forEach((mo,i)=>{if(!withData.has(mo))assert.equal(u.series[0].points[i],null,mo);if(mo!=='2026-06')assert.equal(u.series[1].points[i],null,mo);}); // gaps, not zeros
    assert.deepEqual(u.series[2].points,u.axis.map(()=>null)); // Gamma has places but no booking rows at all — every month a gap, never 0 unused places
    if(ji<=u.dashFrom){
-    assert.deepEqual(u.ranking.map(r=>[r.name,r.latest,r.tone]),[['Centre Alpha',94.3,'good'],['Centre Beta',98.1,'bad']]); // lower is better
-    const ut=m.compareTrend('utilisation');assert.equal(ut.series[0].points[ji],5.7);
-    assert.deepEqual(ut.ranking.map(r=>[r.name,r.latest,r.tone]),[['Centre Alpha',5.7,'good'],['Centre Beta',1.9,'bad']]); // higher is better
+    assert.deepEqual(u.ranking.map(r=>[r.name,r.latest,r.tone]),[['Centre Alpha',40,'good'],['Centre Beta',60,'bad']]); // lower is better
+    const ut=m.compareTrend('utilisation');assert.equal(ut.series[0].points[ji],60);
+    assert.deepEqual(ut.ranking.map(r=>[r.name,r.latest,r.tone]),[['Centre Alpha',60,'good'],['Centre Beta',40,'bad']]); // higher is better
    }
   }
   const occ=m.compareTrend('occupancy');assert.equal(occ.dashFrom,11);assert.equal(occ.axis.length,15);assert.ok(Array.isArray(occ.ranking));
   const wk=m.compareTrend('wage_pct');assert.equal(wk.cadence,'week');assert.ok(Array.isArray(wk.ranking));
   const admin=await login('admin');
   const html=await page('/compare?metric=unused_places',admin);
-  assert.match(html,/Unused places, avg per day/);assert.match(html,/<strong>Unused places<\/strong> = licensed places/);assert.match(html,/left as gaps, not zero/);
-  if(ji>=0&&ji<=u.dashFrom){assert.match(html,/<td class="num good-text" style="font-weight:600;">94\.3 places<\/td>/);assert.match(html,/<td class="num bad-text" style="font-weight:600;">98\.1 places<\/td>/);}
+  assert.match(html,/Unused places, avg per day/);assert.match(html,/<strong>Unused places<\/strong> = licensed places/);assert.match(html,/left as gaps, not zero/);assert.match(html,/measured over the operating days it does have/);
+  if(ji>=0&&ji<=u.dashFrom){assert.match(html,/<td class="num good-text" style="font-weight:600;">40 places<\/td>/);assert.match(html,/<td class="num bad-text" style="font-weight:600;">60 places<\/td>/);}
   assert.match(await page('/compare?metric=utilisation',admin),/best in green, worst in red/);
   assert.doesNotMatch(await page('/compare?metric=occupancy',admin),/<strong>Unused places<\/strong>/);
   assert.equal((await request('/compare?metric=unused_places',await login('centre'))).status,403);
