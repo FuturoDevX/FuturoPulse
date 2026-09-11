@@ -7,7 +7,7 @@
 require("dotenv").config();
 
 const BASE = (process.env.OWNA_BASE_URL || "https://api.owna.com.au").replace(/\/$/, "");
-const KEY = process.env.OWNA_API_KEY || "";
+const KEY = (process.env.OWNA_API_KEY || "").trim();
 const PAGE = 500; // rows per page when walking a list endpoint
 
 if (!KEY) {

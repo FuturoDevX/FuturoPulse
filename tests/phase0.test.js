@@ -36,6 +36,11 @@ test('Phase 0 regression suite',async(t)=>{
   assert.equal(errSummary(new Error('x'.repeat(500))).length,240);
   assert.equal(errSummary(new TypeError('bad')),'TypeError: bad');
   assert.equal(errSummary(null),'null');
+  process.env.TEST_FIXTURE_API_KEY='sk_live_abc123\ndef456';
+  assert.doesNotMatch(errSummary(new TypeError('Headers.append: "sk_live_abc123\ndef456" is an invalid header value.')),/abc123|def456/);
+  assert.doesNotMatch(errSummary(new Error('OWNA 401 /x with sk_live_abc123 def456 inside')),/abc123|def456/);
+  assert.doesNotMatch(errSummary(new TypeError('Headers.append: "zzz-unknown-value" is an invalid header value.')),/zzz-unknown/);
+  assert.equal(errSummary(new Error('OWNA 500 /api/centres')),'OWNA 500 /api/centres');
   // No network: every upstream the snapshot touches is stubbed (the repo .env may hold real credentials).
   lineleader.hasCreds=()=>false;owna.listCentres=async()=>[];owna.listChildren=async()=>[];owna.weeklyRoster=async()=>null;owna.childIncidents=async()=>[];
   eh.hasCreds=()=>true;eh.allEmployees=async()=>[];eh.payRuns=async()=>{throw new Error('EH 502 /api/v2/business/1/payrun');};
@@ -49,6 +54,7 @@ test('Phase 0 regression suite',async(t)=>{
   const c=await login('admin');let html=await (await request('/wages',c)).text();assert.match(html,/Payroll import failed/);assert.match(html,/EH 502/);assert.match(html,/No wages have been imported yet/);
   html=await (await request('/admin/wage-budget',c)).text();assert.match(html,/Payroll import failed/);
   html=await (await request('/',c)).text();assert.match(html,/partial — EH payroll import failed/);
+  const cc=await login('centre');html=await (await request('/',cc)).text();assert.match(html,/\(partial\)/);assert.doesNotMatch(html,/EH payroll import failed/);
   // A finalised run that reconciles → status ok, metadata kept.
   eh.locations=async()=>[{id:10,name:'Organisation'},{id:11,parentId:10,name:'Centre Alpha'}];
   eh.payRuns=async()=>[{id:5,isFinalised:true,datePaid:'2026-09-08',payPeriodEnding:'2026-09-06'}];
@@ -57,11 +63,24 @@ test('Phase 0 regression suite',async(t)=>{
   const r2=await runSnapshot({log:()=>{}});assert.equal(r2.status,'ok');
   const p2=sourceSyncFor('eh_labour');assert.equal(p2.status,'ok');assert.ok(p2.last_success);assert.equal(p2.meta.latest_period,'2026-09-06');assert.equal(p2.meta.runs,1);
   html=await (await request('/wages',c)).text();assert.match(html,/Payroll imported/);assert.match(html,/pay periods to 6 Sept? 2026/);
+  // An empty payroll response is an anomaly, not a fresh import: last-good metadata stays, run is partial.
+  eh.payRuns=async()=>[];const r2b=await runSnapshot({log:()=>{}});assert.equal(r2b.status,'partial');
+  const p2b=sourceSyncFor('eh_labour');assert.equal(p2b.status,'error');assert.match(p2b.detail,/no finalised pay runs/);assert.equal(p2b.meta.latest_period,'2026-09-06');assert.equal(p2b.last_success,p2.last_success);
+  html=await (await request('/wages',c)).text();assert.match(html,/Payroll import failed/);assert.match(html,/no finalised pay runs/);assert.match(html,/pay periods to 6 Sept? 2026/);
   // A later failure keeps the last-good metadata and says which data is on screen.
   eh.payRuns=async()=>{throw new Error('EH 401 /api/v2/business/1/payrun');};
   await runSnapshot({log:()=>{}});const p3=sourceSyncFor('eh_labour');assert.equal(p3.status,'error');assert.equal(p3.last_success,p2.last_success);assert.equal(p3.meta.latest_period,'2026-09-06');
   html=await (await request('/wages',c)).text();assert.match(html,/Payroll import failed/);assert.match(html,/last successful import/);assert.match(html,/pay periods to 6 Sept? 2026/);
   const st=await request('/admin/status',c);assert.equal(st.status,200);const js=await st.json();assert.ok(js.sources.some(s=>s.source==='eh_labour'&&s.status==='error'));
+  // Per-centre loops: a total OWNA outage on roster/incidents is an error, a partial one is noted, exits stay ok.
+  owna.listCentres=async()=>[{id:'a',name:'Centre Alpha'},{id:'b',name:'Centre Beta'}];owna.listRooms=async()=>[];owna.attendance=async()=>[];owna.ccsPayments=async()=>[];
+  owna.weeklyRoster=async()=>{throw new Error('OWNA 403 /api/roster');};owna.childIncidents=async(id)=>{if(id==='a')throw new Error('OWNA 500 /api/children/incident');return [];};
+  eh.hasCreds=()=>false;
+  const r4=await runSnapshot({log:()=>{}});assert.equal(r4.status,'partial');
+  const ro=sourceSyncFor('roster');assert.equal(ro.status,'error');assert.match(ro.detail,/every OWNA roster call failed: OWNA 403 \/api\/roster/);
+  const inc=sourceSyncFor('incidents');assert.equal(inc.status,'ok');assert.match(inc.detail,/1 of 2 centres failed: OWNA 500/);
+  assert.equal(sourceSyncFor('exits').status,'ok');assert.equal(sourceSyncFor('eh_labour').status,'skipped');
+  assert.match(db.prepare('SELECT note FROM snapshot_runs ORDER BY id DESC LIMIT 1').get().note,/roster: every OWNA roster call failed/);
  });
  await t.test('templates all compile',()=>{const ejs=require('ejs');function walk(d){for(const x of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,x.name);if(x.isDirectory())walk(p);else if(p.endsWith('.ejs'))ejs.compile(fs.readFileSync(p,'utf8'),{filename:p});}}walk(path.join(__dirname,'../views'));});
  } finally {global.fetch=originalFetch;await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}

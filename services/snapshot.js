@@ -67,10 +67,27 @@ const upsertCcs = db.prepare(`
 // ----- Error summaries & per-source sync health -----
 // The upstream clients (owna / eh / lineleader) throw "<source> <status> <path>" and never include a
 // response body, so an error's name + message is safe to log and store. Keep it one line and bounded.
+// Two exceptions the clients cannot control: undici echoes the offending header VALUE in its
+// header-validation TypeError (a credential with a stray newline), and any library may quote an
+// input. So every configured secret is redacted from the text, and header errors lose their quotes.
+const SECRET_NAME = /KEY|SECRET|PASSWORD|PASSPHRASE|TOKEN|USERNAME/i;
+function secretValues() {
+  const out = [];
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!SECRET_NAME.test(k) || !v) continue;
+    const whole = String(v).replace(/\s+/g, " ").trim();
+    if (whole.length >= 6) out.push(whole);
+    for (const part of whole.split(" ")) if (part.length >= 6) out.push(part);
+  }
+  return [...new Set(out)].sort((a, b) => b.length - a.length);
+}
 function errSummary(e) {
   const msg = e && e.message != null ? String(e.message) : String(e);
   const name = e && e.name && e.name !== "Error" ? e.name + ": " : "";
-  return (name + msg).replace(/\s+/g, " ").trim().slice(0, 240) || "unknown error";
+  let text = (name + msg).replace(/\s+/g, " ").trim();
+  if (/invalid header (value|name)|Headers\.(append|set)/i.test(text)) text = text.replace(/"[^"]*"/g, '"[redacted]"');
+  for (const v of secretValues()) text = text.split(v).join("[redacted]");
+  return text.slice(0, 240) || "unknown error";
 }
 
 // One row per upstream source. A failed run keeps the rows/meta of the last successful one so a
@@ -178,6 +195,12 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
         const r = await fn();
         if (r && r.skipped) { recordSync(source, "skipped", r.reason || "not configured"); return r; }
         const sm = (summarise && r) ? summarise(r) : {};
+        if (sm.problem) { // resolved, but not a usable result: keep last-good data, flag the run
+          recordSync(source, "error", sm.problem);
+          problems.push(`${label}: ${sm.problem}`);
+          log(`[snapshot] ${label}: ${sm.problem}`);
+          return r;
+        }
         recordSync(source, "ok", sm.detail || null, { rows: sm.rows ?? null, meta: sm.meta || null });
         return r;
       } catch (e) {
@@ -189,30 +212,43 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
       }
     };
 
+    // Per-centre loops swallow individual failures so one bad centre cannot sink the rest; these
+    // turn "every call failed" into a problem and "some failed" into a visible note.
+    const coverage = (r, unit) => (r.failed ? ` (${r.failed} of ${r.attempts} ${unit} failed: ${r.firstError})` : "");
+    const outage = (r, what) => (r.attempts && r.failed === r.attempts ? `every OWNA ${what} call failed: ${r.firstError}` : null);
+
     // LineLeader pipeline.
-    await step("lineleader", "LineLeader pull", () => runLineLeaderSnapshot({ windowDays, forwardDays, log }),
-      (r) => ({ rows: r.cells ?? null, detail: r.cells != null ? `${r.cells} pipeline cells, ${r.started} starts, ${r.withdrawn} withdrawals` : "nothing pulled" }));
+    await step("lineleader", "LineLeader pull", () => runLineLeaderSnapshot({ windowDays, forwardDays, log }), (r) => ({
+      problem: r.failures && r.failures.length ? `LineLeader ${r.failures.join("; ")}` : null,
+      rows: r.cells ?? null,
+      detail: r.cells != null ? `${r.cells} pipeline cells, ${r.started} starts, ${r.withdrawn} withdrawals` : "nothing pulled",
+    }));
 
     // Employment Hero payroll → weekly wages per centre.
     await step("eh_labour", "EH payroll import", () => runLabourSnapshot({ log }), (r) => {
       const periods = (r.reconciliation || []).map((x) => x.period_ending).filter(Boolean).sort();
       const latest = periods[periods.length - 1] || null;
+      if (!r.weeks) return { problem: "Employment Hero returned no finalised pay runs; wages left as previously imported" };
       return {
         rows: r.rows ?? null,
-        detail: r.weeks ? `${r.runs} finalised pay runs over ${r.weeks} pay periods to ${latest}` : "no finalised pay runs in window",
+        detail: `${r.runs} finalised pay runs over ${r.weeks} pay periods to ${latest}`,
         meta: { weeks: r.weeks || 0, runs: r.runs || 0, latest_period: latest, total_wages: r.total_wages ?? null },
       };
     });
 
     // Exit report (OWNA departures + LineLeader reasons).
-    await step("exits", "exit report", () => runExitReport({ log }),
-      (r) => ({ rows: r.total ?? null, detail: r.total != null ? `${r.total} departures, ${r.matched} with a LineLeader reason` : "exit report rebuilt" }));
+    await step("exits", "exit report", () => runExitReport({ log }), (r) => ({
+      problem: outage(r, "children"), rows: r.total ?? null,
+      detail: r.total != null ? `${r.total} departures, ${r.matched} with a LineLeader reason${coverage(r, "centres")}` : "exit report rebuilt",
+    }));
 
     // Child incidents (safety).
-    await step("incidents", "incidents", () => runIncidents({ windowDays, log }), (r) => ({ rows: r.rows ?? null, detail: `${r.rows} centre-months` }));
+    await step("incidents", "incidents", () => runIncidents({ windowDays, log }),
+      (r) => ({ problem: outage(r, "incident"), rows: r.rows ?? null, detail: `${r.rows} centre-months${coverage(r, "centres")}` }));
 
     // Weekly staff roster.
-    await step("roster", "roster", () => runRoster({ log }), (r) => ({ rows: r.rows ?? null, detail: `${r.rows} centre-weeks` }));
+    await step("roster", "roster", () => runRoster({ log }),
+      (r) => ({ problem: outage(r, "roster"), rows: r.rows ?? null, detail: `${r.rows} centre-weeks${coverage(r, "centre-weeks")}` }));
 
     const status = problems.length ? "partial" : "ok";
     db.prepare(
@@ -247,10 +283,10 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
   // those two booleans. `serious` = emergency services attended; `reportable` = serious incident (either flag).
   const ILLNESS  = /temperature|fever|rash|vomit|diarrh|nausea|illness|infectious|respiratory|hand.?foot|unwell|\bsick\b|cough/;
   const NONINJURY = /behaviour|behavior|meltdown|recount of events|no injury|no mark|no visible|no sign|monitor/;
-  let rows = 0;
+  let rows = 0, failed = 0, firstError = null;
   for (const c of centres) {
     let inc;
-    try { inc = await owna.childIncidents(c.id, from, to); } catch (e) { log(`[incidents] ${c.name}: ${errSummary(e)}`); continue; }
+    try { inc = await owna.childIncidents(c.id, from, to); } catch (e) { failed += 1; firstError = firstError || errSummary(e); log(`[incidents] ${c.name}: ${errSummary(e)}`); continue; }
     const byMonth = new Map();
     for (const r of inc) {
       const month = (r.incidentDate || "").slice(0, 7);
@@ -270,8 +306,8 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
     const write = db.transaction((entries) => { for (const [month, m] of entries) { upsert.run({ owna_id: c.id, month, ...m }); rows += 1; } });
     write([...byMonth.entries()]);
   }
-  log(`[incidents] ${rows} centre-months written`);
-  return { ok: true, rows };
+  log(`[incidents] ${rows} centre-months written${failed ? `, ${failed} of ${centres.length} centres failed` : ""}`);
+  return { ok: true, rows, attempts: centres.length, failed, firstError };
 }
 
 // ===== Weekly staff roster -> per-centre per-week rostered hours + hours/booking =====
@@ -290,11 +326,17 @@ async function runRoster({ weeks = 14, log = console.log } = {}) {
   const upsert = db.prepare(`INSERT INTO roster_weekly (owna_id, week_starting, total_hours, days_json, leave_json, updated_at)
     VALUES (@owna_id,@week_starting,@total_hours,@days_json,@leave_json,datetime('now'))
     ON CONFLICT(owna_id, week_starting) DO UPDATE SET total_hours=@total_hours, days_json=@days_json, leave_json=@leave_json, updated_at=datetime('now')`);
-  let rows = 0;
+  let rows = 0, attempts = 0, failed = 0, firstError = null;
+  const loggedCentre = new Set();
   for (const c of centres) {
     for (const wk of mondays) {
       let r;
-      try { r = await owna.weeklyRoster(c.id, wk); } catch (e) { continue; }
+      attempts += 1;
+      try { r = await owna.weeklyRoster(c.id, wk); } catch (e) {
+        failed += 1; firstError = firstError || errSummary(e);
+        if (!loggedCentre.has(c.id)) { loggedCentre.add(c.id); log(`[roster] ${c.name} ${wk}: ${errSummary(e)} (further weeks for this centre not logged)`); }
+        continue;
+      }
       if (!r) continue;
       // rosteredhours is an array of single-day objects each carrying that day's hours + hoursperbooking.
       const rh = {};
@@ -311,8 +353,8 @@ async function runRoster({ weeks = 14, log = console.log } = {}) {
       rows += 1;
     }
   }
-  log(`[roster] ${rows} centre-weeks written`);
-  return { ok: true, rows };
+  log(`[roster] ${rows} centre-weeks written${failed ? `, ${failed} of ${attempts} calls failed` : ""}`);
+  return { ok: true, rows, attempts, failed, firstError };
 }
 
 function lastRun() {
@@ -424,12 +466,12 @@ async function runExitReport({ log = console.log } = {}) {
   }
 
   // 2) OWNA children with a finishDate → the authoritative exit list.
-  let total = 0, matched = 0;
+  let total = 0, matched = 0, failed = 0, firstError = null;
   // Operating centres only — pre-opening centres are LineLeader-only and have no OWNA children yet.
   const centres = db.prepare(`SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0)`).all();
   for (const c of centres) {
     let kids;
-    try { kids = await owna.listChildren(c.owna_id); } catch (e) { log(`[exits] ${c.name}: children pull failed: ${errSummary(e)}`); continue; }
+    try { kids = await owna.listChildren(c.owna_id); } catch (e) { failed += 1; firstError = firstError || errSummary(e); log(`[exits] ${c.name}: children pull failed: ${errSummary(e)}`); continue; }
     const write = db.transaction((list) => {
       db.prepare(`DELETE FROM child_exits WHERE owna_id = ?`).run(c.owna_id); // full rebuild per centre
       for (const k of list) {
@@ -460,7 +502,7 @@ async function runExitReport({ log = console.log } = {}) {
     write(kids);
   }
   log(`[exits] ${total} exits (within ${EXIT_LOOKBACK_DAYS}d), ${matched} matched to a LineLeader reason`);
-  return { ok: true, total, matched };
+  return { ok: true, total, matched, attempts: centres.length, failed, firstError };
 }
 
 // ===== LineLeader pipeline snapshot =====
@@ -507,7 +549,8 @@ const upsertPipelineStart = db.prepare(`
 const linkCentreLl = db.prepare(`UPDATE centres SET ll_id = ? WHERE owna_id = ?`);
 
 async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAYS, log = console.log } = {}) {
-  if (!lineleader.hasCreds()) { log("[LineLeader] no credentials — skipping"); return { skipped: true }; }
+  if (!lineleader.hasCreds()) { log("[LineLeader] no credentials — skipping"); return { skipped: true, reason: "no LineLeader credentials configured" }; }
+  const failures = []; // best-effort parts that failed; reported to the run as a problem
   const today = new Date().toISOString().slice(0, 10);
   // LineLeader rejects millisecond precision — use whole-second ISO (…Z).
   const isoSec = (d) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -567,7 +610,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   // Make sure pre-opening LineLeader-only centres (ll-<id> rows) exist BEFORE we map pipeline rows to
   // centres — otherwise Cobbitty/Oran Park rows are written with owna_id NULL and vanish from every
   // per-centre view until the next successful run.
-  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: ${errSummary(e)}`); }
+  try { ensureOpeningCentres({ log }); } catch (e) { failures.push("opening-centres failed: " + errSummary(e)); log(`[LineLeader] opening-centres failed: ${errSummary(e)}`); }
   const llToOwna = new Map(db.prepare(`SELECT ll_id, owna_id FROM centres WHERE ll_id IS NOT NULL`).all().map((r) => [r.ll_id, r.owna_id]));
   const today2 = new Date().toISOString().slice(0, 10);
   const writePs = db.transaction((rows) => {
@@ -626,7 +669,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
     });
     const mN = writeMembers([...byChild.values()]);
     log(`[LineLeader] pipeline members=${mN}`);
-  } catch (e) { log(`[LineLeader] members pull failed: ${errSummary(e)}`); }
+  } catch (e) { failures.push("members pull failed: " + errSummary(e)); log(`[LineLeader] members pull failed: ${errSummary(e)}`); }
 
   // Scheduled TOURS (and orientation days) for the drill-down.
   try {
@@ -655,10 +698,10 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
     });
     const tN = writeTours(allTours);
     log(`[LineLeader] tours=${tN}`);
-  } catch (e) { log(`[LineLeader] tours pull failed: ${errSummary(e)}`); }
+  } catch (e) { failures.push("tours pull failed: " + errSummary(e)); log(`[LineLeader] tours pull failed: ${errSummary(e)}`); }
 
   log(`[LineLeader] pipeline cells=${cells}, started=${started.length}, withdrawn=${withdrawn.length}, projection starts=${psN}`);
-  return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length };
+  return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length, failures };
 }
 
 // Create/refresh "pre-opening" centre records for LineLeader centres that have a real pipeline
