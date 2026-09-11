@@ -48,6 +48,14 @@ function initSchema(db) {
     console.log("[init] rebuilt ai_briefings for per-range caching");
   }
 
+  // source_sync arrived after payroll had already been imported: seed its eh_labour row from the
+  // existing labour_weekly data so the Wages page does not claim payroll was never imported.
+  if (!db.prepare("SELECT 1 FROM source_sync WHERE source = 'eh_labour'").get()) {
+    const lw = db.prepare("SELECT COUNT(*) n, COUNT(DISTINCT week_ending) weeks, MAX(week_ending) latest, MAX(updated_at) at FROM labour_weekly").get();
+    if (lw && lw.n) db.prepare("INSERT INTO source_sync (source, last_attempt, last_success, status, detail, rows, meta_json) VALUES ('eh_labour', ?, ?, 'ok', 'imported before per-source tracking was added', ?, ?)")
+      .run(lw.at, lw.at, lw.n, JSON.stringify({ weeks: lw.weeks, runs: null, latest_period: lw.latest, total_wages: null }));
+  }
+
   // Seed the default admin if it doesn't exist yet.
   const isProd = process.env.NODE_ENV === "production";
   const email = process.env.ADMIN_EMAIL || "admin@example.com";

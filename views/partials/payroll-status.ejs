@@ -1,0 +1,20 @@
+<%
+  // Employment Hero payroll import health (source_sync.eh_labour). Shown on the Wages page and the
+  // wage-budget admin page so a failed or stalled import is visible where the numbers are read.
+  const ps = locals.payroll || null;
+  const psMeta = (ps && ps.meta) || {};
+  const psTs = (s) => s ? new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  const psDay = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+%>
+<% if (!ps) { %>
+  <div class="flash warn">Payroll has not been imported yet. Wages appear after the first nightly sync with Employment Hero.</div>
+<% } else if (ps.status === 'error') { %>
+  <div class="flash bad">
+    <strong>Payroll import failed</strong> at <%= psTs(ps.last_attempt) %>: <%= ps.detail %>.
+    <% if (ps.last_success) { %>Wages shown are from the last successful import on <%= psTs(ps.last_success) %><% if (psMeta.latest_period) { %>, pay periods to <%= psDay(psMeta.latest_period) %><% } %>.<% } else { %>No wages have been imported yet.<% } %>
+  </div>
+<% } else if (ps.status === 'skipped') { %>
+  <div class="flash warn">Payroll import is switched off: <%= ps.detail %>.</div>
+<% } else { %>
+  <p class="muted payroll-ok">Payroll imported <%= psTs(ps.last_success) %><% if (psMeta.latest_period) { %> · <%= psMeta.weeks %> pay periods to <%= psDay(psMeta.latest_period) %><% } %><% if (psMeta.runs) { %> · <%= psMeta.runs %> finalised pay runs reconciled<% } %>.</p>
+<% } %>

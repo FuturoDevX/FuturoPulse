@@ -6,7 +6,7 @@ const { importAuditBuffer } = require("../services/qc-import");
 const { importPcWorkbook } = require("../services/pc-import");
 const fb = require("../services/feedback");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
-const { runSnapshot, lastRun } = require("../services/snapshot");
+const { runSnapshot, lastRun, errSummary, sourceSync, sourceSyncFor } = require("../services/snapshot");
 const { owna } = require("../services/owna");
 const router = express.Router();
 
@@ -19,13 +19,13 @@ router.post("/refresh", requireAdminOrOps, async (req, res) => {
   refreshing = true;
   // Kick off in the background; the page shows progress via lastRun status.
   runSnapshot()
-    .catch((e) => console.error("[refresh] failed"))
+    .catch((e) => console.error("[refresh] failed:", errSummary(e)))
     .finally(() => { refreshing = false; });
   res.redirect("/?msg=" + encodeURIComponent("Refresh started — reload in a moment to see updated figures."));
 });
 
 router.get("/status", requireAdminOrOps, (req, res) => {
-  res.json({ refreshing, lastRun: lastRun() });
+  res.json({ refreshing, lastRun: lastRun(), sources: sourceSync() });
 });
 
 
@@ -35,7 +35,7 @@ const m = require("../services/metrics");
 // Weekly labour budget entry (per centre standing targets).
 router.get("/wage-budget", requireAdminOrOps, (req, res) => {
   const centres = db.prepare(`SELECT DISTINCT eh_centre FROM labour_weekly ORDER BY eh_centre`).all().map((r) => r.eh_centre);
-  res.render("admin-labour-budget", { title: "Wage Budgets", centres, budgets: m.labourBudgets(), saved: req.query.saved });
+  res.render("admin-labour-budget", { title: "Wage Budgets", centres, budgets: m.labourBudgets(), saved: req.query.saved, payroll: sourceSyncFor("eh_labour") });
 });
 router.post("/wage-budget", requireAdminOrOps, (req, res) => {
   const centres = db.prepare(`SELECT DISTINCT eh_centre FROM labour_weekly`).all().map((r) => r.eh_centre);

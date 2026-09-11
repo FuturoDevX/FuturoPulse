@@ -299,3 +299,14 @@ CREATE TABLE IF NOT EXISTS ai_briefings (
   model       TEXT,                    -- model id used
   created_at  TEXT
 );
+
+-- ===== Per-source sync health: what the nightly snapshot last did for each upstream =====
+CREATE TABLE IF NOT EXISTS source_sync (
+  source       TEXT PRIMARY KEY,    -- owna | lineleader | eh_labour | exits | incidents | roster
+  last_attempt TEXT,
+  last_success TEXT,
+  status       TEXT,                -- ok | error | skipped
+  detail       TEXT,                -- one-line summary (error name + message); never an upstream response body
+  rows         INTEGER,             -- rows written by the last SUCCESSFUL run
+  meta_json    TEXT                 -- small JSON kept from the last SUCCESSFUL run, e.g. {"weeks":16,"latest_period":"2026-09-06"}
+);

@@ -6,6 +6,7 @@
   <p class="sub">Standing weekly target per centre. Educator wages/hours = worked+leave (excl. support); support wages = kitchen+cleaning. Occupancy in %.</p>
 </div></div>
 <% if (saved) { %><div class="flash">Budgets saved.</div><% } %>
+<%- include('partials/payroll-status', { payroll: locals.payroll }) %>
 <div class="card">
   <form method="POST" action="/admin/wage-budget">
     <table>

@@ -180,7 +180,7 @@
 
 <p class="footnote">
   Occupancy = booked child-days ÷ (places × days). Fees billed = sum of session fees (gross, before CCS subsidy).
-  <% if (lastRun) { %>· Data as at <%= lastRun.finished_at || lastRun.started_at %> (<%= lastRun.status %>)<% } else { %>· No snapshot yet — click “Refresh from OWNA”.<% } %>
+  <% if (lastRun) { %>· Data as at <%= lastRun.finished_at || lastRun.started_at %> (<%= lastRun.status %><% if (lastRun.note) { %> — <%= lastRun.note %><% } %>)<% } else { %>· No snapshot yet — click “Refresh from OWNA”.<% } %>
 </p>
 
 <%- include('partials/footer') %>

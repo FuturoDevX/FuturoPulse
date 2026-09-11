@@ -64,6 +64,35 @@ const upsertCcs = db.prepare(`
   ON CONFLICT(owna_id, week_starting) DO UPDATE SET amount=@amount
 `);
 
+// ----- Error summaries & per-source sync health -----
+// The upstream clients (owna / eh / lineleader) throw "<source> <status> <path>" and never include a
+// response body, so an error's name + message is safe to log and store. Keep it one line and bounded.
+function errSummary(e) {
+  const msg = e && e.message != null ? String(e.message) : String(e);
+  const name = e && e.name && e.name !== "Error" ? e.name + ": " : "";
+  return (name + msg).replace(/\s+/g, " ").trim().slice(0, 240) || "unknown error";
+}
+
+// One row per upstream source. A failed run keeps the rows/meta of the last successful one so a
+// page can say "showing pay periods to X from the import on Y" while flagging today's failure.
+const upsertSync = db.prepare(`
+  INSERT INTO source_sync (source, last_attempt, last_success, status, detail, rows, meta_json)
+  VALUES (@source, datetime('now'), CASE WHEN @status = 'ok' THEN datetime('now') END, @status, @detail, @rows, @meta_json)
+  ON CONFLICT(source) DO UPDATE SET
+    last_attempt = datetime('now'),
+    last_success = CASE WHEN excluded.status = 'ok' THEN datetime('now') ELSE source_sync.last_success END,
+    status       = excluded.status,
+    detail       = excluded.detail,
+    rows         = CASE WHEN excluded.status = 'ok' THEN excluded.rows      ELSE source_sync.rows      END,
+    meta_json    = CASE WHEN excluded.status = 'ok' THEN excluded.meta_json ELSE source_sync.meta_json END
+`);
+function recordSync(source, status, detail = null, { rows = null, meta = null } = {}) {
+  upsertSync.run({ source, status, detail: detail == null ? null : String(detail).slice(0, 240), rows, meta_json: meta ? JSON.stringify(meta) : null });
+}
+const withMeta = (r) => (r ? { ...r, meta: r.meta_json ? JSON.parse(r.meta_json) : null } : null);
+function sourceSync() { return db.prepare(`SELECT * FROM source_sync ORDER BY source`).all().map(withMeta); }
+function sourceSyncFor(source) { return withMeta(db.prepare(`SELECT * FROM source_sync WHERE source = ?`).get(source)); }
+
 async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAYS, log = console.log } = {}) {
   const from = daysAgo(windowDays);
   const to = daysAhead(forwardDays); // include future scheduled bookings
@@ -133,45 +162,71 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
         });
         writeCcs([...byWeek.entries()]);
       } catch (e) {
-        log(`[snapshot] CCS pull failed for ${c.name}: [details withheld]`);
+        log(`[snapshot] CCS pull failed for ${c.name}: ${errSummary(e)}`);
       }
 
       log(`[snapshot] ${c.name}: ${att.length} bookings, ${byDay.size} days, capacity ${capacity}`);
     }
 
-    // LineLeader pipeline (best-effort — never fail the OWNA snapshot over it).
-    try {
-      await runLineLeaderSnapshot({ windowDays, forwardDays, log });
-    } catch (e) {
-      log(`[snapshot] LineLeader pull failed: [details withheld]`);
-    }
+    recordSync("owna", "ok", `${centres.length} centres, ${rowsWritten} day-rows`, { rows: rowsWritten, meta: { from, to, centres: centres.length } });
 
-    // Employment Hero labour (best-effort).
-    try { await runLabourSnapshot({ log }); } catch (e) { log(`[snapshot] EH labour failed: [details withheld]`); }
+    // Best-effort sub-steps. A failure never fails the OWNA snapshot, but it IS recorded — per source
+    // in source_sync, in this run's note, and in the log — so a stalled feed is visible, not silent.
+    const problems = [];
+    const step = async (source, label, fn, summarise) => {
+      try {
+        const r = await fn();
+        if (r && r.skipped) { recordSync(source, "skipped", r.reason || "not configured"); return r; }
+        const sm = (summarise && r) ? summarise(r) : {};
+        recordSync(source, "ok", sm.detail || null, { rows: sm.rows ?? null, meta: sm.meta || null });
+        return r;
+      } catch (e) {
+        const why = errSummary(e);
+        recordSync(source, "error", why);
+        problems.push(`${label} failed: ${why}`);
+        log(`[snapshot] ${label} failed: ${why}`);
+        return null;
+      }
+    };
 
-    // Exit report (OWNA departures + LineLeader reasons) — best-effort.
-    try {
-      await runExitReport({ log });
-    } catch (e) {
-      log(`[snapshot] exit report failed: [details withheld]`);
-    }
+    // LineLeader pipeline.
+    await step("lineleader", "LineLeader pull", () => runLineLeaderSnapshot({ windowDays, forwardDays, log }),
+      (r) => ({ rows: r.cells ?? null, detail: r.cells != null ? `${r.cells} pipeline cells, ${r.started} starts, ${r.withdrawn} withdrawals` : "nothing pulled" }));
 
-    // Child incidents (safety) — best-effort.
-    try { await runIncidents({ windowDays, log }); } catch (e) { log(`[snapshot] incidents failed: [details withheld]`); }
+    // Employment Hero payroll → weekly wages per centre.
+    await step("eh_labour", "EH payroll import", () => runLabourSnapshot({ log }), (r) => {
+      const periods = (r.reconciliation || []).map((x) => x.period_ending).filter(Boolean).sort();
+      const latest = periods[periods.length - 1] || null;
+      return {
+        rows: r.rows ?? null,
+        detail: r.weeks ? `${r.runs} finalised pay runs over ${r.weeks} pay periods to ${latest}` : "no finalised pay runs in window",
+        meta: { weeks: r.weeks || 0, runs: r.runs || 0, latest_period: latest, total_wages: r.total_wages ?? null },
+      };
+    });
 
-    // Weekly staff roster — best-effort.
-    try { await runRoster({ log }); } catch (e) { log(`[snapshot] roster failed: [details withheld]`); }
+    // Exit report (OWNA departures + LineLeader reasons).
+    await step("exits", "exit report", () => runExitReport({ log }),
+      (r) => ({ rows: r.total ?? null, detail: r.total != null ? `${r.total} departures, ${r.matched} with a LineLeader reason` : "exit report rebuilt" }));
 
+    // Child incidents (safety).
+    await step("incidents", "incidents", () => runIncidents({ windowDays, log }), (r) => ({ rows: r.rows ?? null, detail: `${r.rows} centre-months` }));
+
+    // Weekly staff roster.
+    await step("roster", "roster", () => runRoster({ log }), (r) => ({ rows: r.rows ?? null, detail: `${r.rows} centre-weeks` }));
+
+    const status = problems.length ? "partial" : "ok";
     db.prepare(
-      `UPDATE snapshot_runs SET finished_at=datetime('now'), status='ok', rows_written=? WHERE id=?`
-    ).run(rowsWritten, runId);
-    log(`[snapshot] done — ${rowsWritten} day-rows written`);
-    return { ok: true, rowsWritten, from, to };
+      `UPDATE snapshot_runs SET finished_at=datetime('now'), status=?, rows_written=?, note=? WHERE id=?`
+    ).run(status, rowsWritten, problems.length ? problems.join("; ").slice(0, 1000) : null, runId);
+    log(`[snapshot] done (${status}) — ${rowsWritten} day-rows written${problems.length ? `; ${problems.length} source(s) failed` : ""}`);
+    return { ok: true, status, rowsWritten, from, to, problems };
   } catch (e) {
+    const why = errSummary(e);
+    recordSync("owna", "error", why);
     db.prepare(
       `UPDATE snapshot_runs SET finished_at=datetime('now'), status='error', note=? WHERE id=?`
-    ).run("Snapshot failed; source details withheld", runId);
-    log(`[snapshot] ERROR: [details withheld]`);
+    ).run(why, runId);
+    log(`[snapshot] ERROR: ${why}`);
     throw e;
   }
 }
@@ -195,7 +250,7 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
   let rows = 0;
   for (const c of centres) {
     let inc;
-    try { inc = await owna.childIncidents(c.id, from, to); } catch (e) { log(`[incidents] ${c.name}: [details withheld]`); continue; }
+    try { inc = await owna.childIncidents(c.id, from, to); } catch (e) { log(`[incidents] ${c.name}: ${errSummary(e)}`); continue; }
     const byMonth = new Map();
     for (const r of inc) {
       const month = (r.incidentDate || "").slice(0, 7);
@@ -303,7 +358,7 @@ async function runOwnaBackfill({ backDays = 730, log = console.log } = {}) {
           }
         });
         write([...byDay.entries()]);
-      } catch (e) { log(`[backfill] ${c.name} ${from}: [details withheld]`); }
+      } catch (e) { log(`[backfill] ${c.name} ${from}: ${errSummary(e)}`); }
       cur = next;
     }
     log(`[backfill] ${c.name} done`);
@@ -364,7 +419,7 @@ async function runExitReport({ log = console.log } = {}) {
       }
       log(`[exits] LineLeader withdrawal reasons: ${reasonMap.size}`);
     } catch (e) {
-      log(`[exits] LineLeader reason map failed: [details withheld]`);
+      log(`[exits] LineLeader reason map failed: ${errSummary(e)}`);
     }
   }
 
@@ -374,7 +429,7 @@ async function runExitReport({ log = console.log } = {}) {
   const centres = db.prepare(`SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0)`).all();
   for (const c of centres) {
     let kids;
-    try { kids = await owna.listChildren(c.owna_id); } catch (e) { log(`[exits] ${c.name}: children pull failed: [details withheld]`); continue; }
+    try { kids = await owna.listChildren(c.owna_id); } catch (e) { log(`[exits] ${c.name}: children pull failed: ${errSummary(e)}`); continue; }
     const write = db.transaction((list) => {
       db.prepare(`DELETE FROM child_exits WHERE owna_id = ?`).run(c.owna_id); // full rebuild per centre
       for (const k of list) {
@@ -512,7 +567,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   // Make sure pre-opening LineLeader-only centres (ll-<id> rows) exist BEFORE we map pipeline rows to
   // centres — otherwise Cobbitty/Oran Park rows are written with owna_id NULL and vanish from every
   // per-centre view until the next successful run.
-  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: [details withheld]`); }
+  try { ensureOpeningCentres({ log }); } catch (e) { log(`[LineLeader] opening-centres failed: ${errSummary(e)}`); }
   const llToOwna = new Map(db.prepare(`SELECT ll_id, owna_id FROM centres WHERE ll_id IS NOT NULL`).all().map((r) => [r.ll_id, r.owna_id]));
   const today2 = new Date().toISOString().slice(0, 10);
   const writePs = db.transaction((rows) => {
@@ -571,7 +626,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
     });
     const mN = writeMembers([...byChild.values()]);
     log(`[LineLeader] pipeline members=${mN}`);
-  } catch (e) { log(`[LineLeader] members pull failed: [details withheld]`); }
+  } catch (e) { log(`[LineLeader] members pull failed: ${errSummary(e)}`); }
 
   // Scheduled TOURS (and orientation days) for the drill-down.
   try {
@@ -600,7 +655,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
     });
     const tN = writeTours(allTours);
     log(`[LineLeader] tours=${tN}`);
-  } catch (e) { log(`[LineLeader] tours pull failed: [details withheld]`); }
+  } catch (e) { log(`[LineLeader] tours pull failed: ${errSummary(e)}`); }
 
   log(`[LineLeader] pipeline cells=${cells}, started=${started.length}, withdrawn=${withdrawn.length}, projection starts=${psN}`);
   return { ok: true, centres: centres.length, cells, started: started.length, withdrawn: withdrawn.length };
@@ -633,4 +688,4 @@ function ensureOpeningCentres({ minPipeline = 1, log = console.log } = {}) {
   return { ok: true, n };
 }
 
-module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, ensureOpeningCentres, lastRun };
+module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor };

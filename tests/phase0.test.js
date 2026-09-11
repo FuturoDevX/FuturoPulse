@@ -29,6 +29,40 @@ test('Phase 0 regression suite',async(t)=>{
  await t.test('AI budget and cross-origin write protection',async()=>{const c=await login('admin');for(let i=0;i<20;i++)assert.equal((await request('/ask',c,{question:'occupancy'})).status,200);assert.equal((await request('/ask',c,{question:'occupancy'})).status,429);const r=await originalFetch(base+'/feedback',{method:'POST',headers:{cookie:c,origin:'https://untrusted.example','content-type':'application/x-www-form-urlencoded'},body:'message=test',redirect:'manual'});assert.equal(r.status,403);assert.equal((await request('/',c)).headers.get('cache-control'),'no-store');});
  await t.test('employee half-cent rounding reconciles without hiding missing earnings',()=>{const {normaliseRun}=require('../services/eh-labour');const run={id:9,payPeriodEnding:'2026-09-06'};const detail={payRunId:9,earningsLines:{1:[{id:1,locationName:'Alpha',payCategoryName:'Ordinary',earnings:12.345,units:1}]}};const totals={payRunId:9,payRunTotals:{1:{grossEarnings:12.35}}};assert.equal(normaliseRun(run,detail,totals).rows[0].amount,12.35);totals.payRunTotals[1].grossEarnings=12.36;assert.throws(()=>normaliseRun(run,detail,totals),/reconcile/);});
  await t.test('fresh production seed rejects default password and runtime schema survives reopen',()=>{const {spawnSync}=require('child_process');const r=spawnSync(process.execPath,['-e',"require('./db/db')"],{cwd:path.join(__dirname,'..'),env:{...process.env,DB_PATH:':memory:',NODE_ENV:'production',ADMIN_DEFAULT_PASSWORD:'ChangeMe123!'},encoding:'utf8'});assert.equal(r.status,1);const D=require('better-sqlite3');const file=path.join(dir,'restart.db');let d=new D(file);require('../db/init-schema').initSchema(d);d.prepare('INSERT INTO centres(owna_id,name) VALUES(?,?)').run('persist','Persistence fixture');d.close();d=new D(file);require('../db/init-schema').initSchema(d);assert.equal(d.prepare('SELECT COUNT(*) n FROM centres').get().n,1);d.close();});
+ await t.test('snapshot records per-source health and surfaces payroll import failures',async()=>{
+  const {runSnapshot,errSummary,sourceSyncFor}=require('../services/snapshot');
+  const {owna}=require('../services/owna');const {eh}=require('../services/eh');const {lineleader}=require('../services/lineleader');
+  assert.equal(errSummary(new Error('EH 500  /api/v2/x\n\n more')),'EH 500 /api/v2/x more');
+  assert.equal(errSummary(new Error('x'.repeat(500))).length,240);
+  assert.equal(errSummary(new TypeError('bad')),'TypeError: bad');
+  assert.equal(errSummary(null),'null');
+  // No network: every upstream the snapshot touches is stubbed (the repo .env may hold real credentials).
+  lineleader.hasCreds=()=>false;owna.listCentres=async()=>[];owna.listChildren=async()=>[];owna.weeklyRoster=async()=>null;owna.childIncidents=async()=>[];
+  eh.hasCreds=()=>true;eh.allEmployees=async()=>[];eh.payRuns=async()=>{throw new Error('EH 502 /api/v2/business/1/payrun');};
+  const logs=[];const r1=await runSnapshot({log:(m)=>logs.push(m)});
+  assert.equal(r1.status,'partial');
+  const run1=db.prepare('SELECT status,note FROM snapshot_runs ORDER BY id DESC LIMIT 1').get();
+  assert.equal(run1.status,'partial');assert.match(run1.note,/EH payroll import failed: EH 502 \/api\/v2\/business\/1\/payrun/);
+  assert.ok(logs.some(l=>l.includes('EH payroll import failed: EH 502')),'failure reason is logged');
+  const p1=sourceSyncFor('eh_labour');assert.equal(p1.status,'error');assert.equal(p1.last_success,null);assert.match(p1.detail,/EH 502/);
+  assert.equal(sourceSyncFor('owna').status,'ok');assert.equal(sourceSyncFor('lineleader').status,'skipped');
+  const c=await login('admin');let html=await (await request('/wages',c)).text();assert.match(html,/Payroll import failed/);assert.match(html,/EH 502/);assert.match(html,/No wages have been imported yet/);
+  html=await (await request('/admin/wage-budget',c)).text();assert.match(html,/Payroll import failed/);
+  html=await (await request('/',c)).text();assert.match(html,/partial — EH payroll import failed/);
+  // A finalised run that reconciles → status ok, metadata kept.
+  eh.locations=async()=>[{id:10,name:'Organisation'},{id:11,parentId:10,name:'Centre Alpha'}];
+  eh.payRuns=async()=>[{id:5,isFinalised:true,datePaid:'2026-09-08',payPeriodEnding:'2026-09-06'}];
+  eh.earnings=async id=>({payRunId:id,earningsLines:{1:[{id:1,locationId:11,locationName:'Centre Alpha',payCategoryName:'Ordinary',units:8,earnings:300,super:30}]}});
+  eh.runTotals=async id=>({payRunId:id,payRunTotals:{1:{grossEarnings:300}}});
+  const r2=await runSnapshot({log:()=>{}});assert.equal(r2.status,'ok');
+  const p2=sourceSyncFor('eh_labour');assert.equal(p2.status,'ok');assert.ok(p2.last_success);assert.equal(p2.meta.latest_period,'2026-09-06');assert.equal(p2.meta.runs,1);
+  html=await (await request('/wages',c)).text();assert.match(html,/Payroll imported/);assert.match(html,/pay periods to 6 Sept? 2026/);
+  // A later failure keeps the last-good metadata and says which data is on screen.
+  eh.payRuns=async()=>{throw new Error('EH 401 /api/v2/business/1/payrun');};
+  await runSnapshot({log:()=>{}});const p3=sourceSyncFor('eh_labour');assert.equal(p3.status,'error');assert.equal(p3.last_success,p2.last_success);assert.equal(p3.meta.latest_period,'2026-09-06');
+  html=await (await request('/wages',c)).text();assert.match(html,/Payroll import failed/);assert.match(html,/last successful import/);assert.match(html,/pay periods to 6 Sept? 2026/);
+  const st=await request('/admin/status',c);assert.equal(st.status,200);const js=await st.json();assert.ok(js.sources.some(s=>s.source==='eh_labour'&&s.status==='error'));
+ });
  await t.test('templates all compile',()=>{const ejs=require('ejs');function walk(d){for(const x of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,x.name);if(x.isDirectory())walk(p);else if(p.endsWith('.ejs'))ejs.compile(fs.readFileSync(p,'utf8'),{filename:p});}}walk(path.join(__dirname,'../views'));});
  } finally {global.fetch=originalFetch;await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

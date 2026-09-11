@@ -6,7 +6,7 @@ const brief = require("../services/ai-briefing");
 const fb = require("../services/feedback");
 const askAI = require("../services/ai-ask");
 const { blockScoped, scopedOwnaId, requireAdminOrOps, requireIdentified, canSeeIdentified } = require("../middleware/auth");
-const { lastRun } = require("../services/snapshot");
+const { lastRun, sourceSyncFor } = require("../services/snapshot");
 const router = express.Router();
 
 // Simple in-memory limits for the AI endpoints: per-user per-hour, plus a daily cap for the whole team.
@@ -272,6 +272,7 @@ router.get("/wages", blockScoped, (req, res) => {
     rows: week ? m.labourForWeek(week) : [],
     trend: m.labourTrend(null, 16),
     wagesTrend: m.wagesTrend(null, 16),
+    payroll: sourceSyncFor("eh_labour"),
     lastRun: lastRun(),
   });
 });

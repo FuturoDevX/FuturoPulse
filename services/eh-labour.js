@@ -26,7 +26,7 @@ function classify(payCategory) {
 }
 
 async function runLabourSnapshot({ weeks = WEEKS, log = console.log, dryRun = false } = {}) {
-  if (!eh.hasCreds()) { log("[EH] no payroll credentials — skipping"); return { skipped: true }; }
+  if (!eh.hasCreds()) { log("[EH] no payroll credentials — skipping"); return { skipped: true, reason: "no Employment Hero credentials configured" }; }
 
   // 1) Employee map: id -> { isKitchen, isCasual }.
   const emps = await eh.allEmployees();

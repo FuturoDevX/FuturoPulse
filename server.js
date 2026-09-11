@@ -5,7 +5,7 @@ const session = require("express-session");
 const cron = require("node-cron");
 
 const { requireLogin } = require("./middleware/auth");
-const { runSnapshot } = require("./services/snapshot");
+const { runSnapshot, errSummary } = require("./services/snapshot");
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -77,7 +77,7 @@ const cronExpr = process.env.SNAPSHOT_CRON || "15 2 * * *";
 if (require.main === module && cron.validate(cronExpr)) {
   cron.schedule(cronExpr, () => {
     console.log("[cron] nightly OWNA snapshot starting");
-    runSnapshot().catch((e) => console.error("[cron] snapshot failed"));
+    runSnapshot().catch((e) => console.error("[cron] snapshot failed:", errSummary(e)));
   });
   console.log(`[cron] nightly snapshot scheduled: ${cronExpr}`);
 } else if (require.main === module) {

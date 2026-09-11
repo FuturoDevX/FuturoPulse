@@ -31,6 +31,8 @@
   </div>
 </div>
 
+<%- include('partials/payroll-status', { payroll: locals.payroll }) %>
+
 <div class="grid kpis">
   <div class="card stat"><div class="n"><%= money(t.rev) %></div><div class="l">Revenue</div></div>
   <div class="card stat"><div class="n"><%= money(t.cw) %></div><div class="l">Educator wages</div></div>
