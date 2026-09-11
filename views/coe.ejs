@@ -112,7 +112,7 @@
     </thead>
     <tbody>
       <% coe.group.months.forEach(function(x){ %>
-        <tr<%= x.month === am.month ? ' style="background:#f6f8fc;"' : '' %>>
+        <tr class="<%= x.month === am.month ? 'coe-anchor' : '' %>">
           <td><%= mLong(x.month) %><%= x.month === am.month ? ' — anchor' : (x.month === '2027-01' ? ' — crossover' : '') %></td>
           <td class="num"><%= x.operating_days %></td>
           <td class="num"><%= fmt(x.available_days) %></td>

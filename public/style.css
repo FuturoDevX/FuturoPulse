@@ -372,6 +372,7 @@ td.coe-pct { font-weight: 700; font-variant-numeric: tabular-nums; }
 td.coe-pct.good { background: #e6f4ea; color: var(--good); }
 td.coe-pct.warn { background: #fdf3d9; color: #8a6d0b; }
 td.coe-pct.bad { background: #fbe4e4; color: var(--bad); }
+tr.coe-anchor td { background: #f6f8fc; }
 .coe-mix { display: flex; align-items: flex-end; gap: 6px; height: 56px; }
 .coe-mix div { flex: 1; min-height: 2px; background: var(--navy); border-radius: 3px 3px 0 0; }
 .coe-mix-x { display: flex; gap: 6px; margin-top: 5px; }

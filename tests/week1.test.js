@@ -643,6 +643,9 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(html,/Leaver days are estimated from each centre's average booking pattern, not each leaver's own days\.<\/strong>/);
   assert.match(html,/Nov 2026 – Apr 2027/);
   assert.match(html,/Feb 2027, the anchor month/);
+  // The anchor row carries its highlight as a class, not an escaped inline style attribute.
+  assert.match(html,/<tr class="coe-anchor">\s*<td>Feb 2027 — anchor<\/td>/);
+  assert.doesNotMatch(html,/style=&#34;/);
   assert.match(html,/target 95% is a placeholder/);
   assert.match(html,/<strong>placeholder<\/strong> only/);
   assert.match(html,/% once licensed places are confirmed/);                    // opening centres get no percentage
