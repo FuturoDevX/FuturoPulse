@@ -466,6 +466,20 @@ const upsertExitsMonthly = db.prepare(`
     tenure_n = MAX(tenure_n, @tenure_n),
     updated_at = datetime('now')
 `);
+// Read the aggregate back out of the detail rows this rebuild actually wrote, rather than counting loop
+// iterations: two OWNA records can collapse onto one row (upsertExit's ON CONFLICT — e.g. two children
+// with the same name and no usable date of birth, or a record repeated across owna.listChildren's pages),
+// and because the aggregate outlives the detail and only ever grows (MAX above), a count taken from the
+// loop would overstate that month for good. Same GROUP BY the init-schema seed uses, so the seed and the
+// nightly fold cannot drift apart.
+const selectExitsFold = db.prepare(`
+  SELECT substr(finish_date, 1, 7) AS month, COALESCE(room, '') AS room, COALESCE(upcoming, 0) AS upcoming,
+         COUNT(*) AS departures,
+         COALESCE(SUM(CASE WHEN tenure_days > 0 THEN tenure_days END), 0) AS tenure_days_sum,
+         SUM(CASE WHEN tenure_days > 0 THEN 1 ELSE 0 END) AS tenure_n
+  FROM child_exits WHERE owna_id = ? AND finish_date IS NOT NULL
+  GROUP BY 1, 2, 3
+`);
 
 async function runExitReport({ log = console.log } = {}) {
   const today = new Date().toISOString().slice(0, 10);
@@ -503,7 +517,6 @@ async function runExitReport({ log = console.log } = {}) {
     try { kids = await owna.listChildren(c.owna_id); } catch (e) { failed += 1; firstError = firstError || errSummary(e); log(`[exits] ${c.name}: children pull failed: ${errSummary(e)}`); continue; }
     const write = db.transaction((list) => {
       db.prepare(`DELETE FROM child_exits WHERE owna_id = ?`).run(c.owna_id); // full rebuild per centre
-      const monthly = new Map(); // month|room|upcoming -> counts, folded in as we go
       for (const k of list) {
         const finish = localDate(k.finishDate);
         if (!finish || finish < cutoff) continue; // only exits within look-back (past or upcoming)
@@ -529,17 +542,13 @@ async function runExitReport({ log = console.log } = {}) {
           reason: reason || (hasReason ? "Unknown" : null),
           reason_source: hasReason ? "lineleader" : null,
         });
-        const mk = `${finish.slice(0, 7)}|${room || ""}|${upcoming}`;
-        const agg = monthly.get(mk) || { owna_id: c.owna_id, month: finish.slice(0, 7), room: room || "", upcoming, departures: 0, tenure_days_sum: 0, tenure_n: 0 };
-        agg.departures += 1;
-        if (tenure > 0) { agg.tenure_days_sum += tenure; agg.tenure_n += 1; }
-        monthly.set(mk, agg);
         total += 1;
       }
-      // Fold this rebuild into the aggregate while the rows are still here. Months the window covers in
-      // full are replaced outright; the boundary month keeps the greater of stored and new (see upsert).
+      // Fold this rebuild into the aggregate while the rows are still here, derived from the stored rows so
+      // the count cannot exceed the detail it came from. Months the window covers in full are replaced
+      // outright; the boundary month keeps the greater of stored and new (see upsert).
       clearExitsMonthly.run(c.owna_id, cutoffMonth);
-      for (const agg of monthly.values()) upsertExitsMonthly.run(agg);
+      for (const agg of selectExitsFold.all(c.owna_id)) upsertExitsMonthly.run({ ...agg, owna_id: c.owna_id });
     });
     write(kids);
   }

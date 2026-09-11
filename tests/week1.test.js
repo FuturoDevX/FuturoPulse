@@ -747,6 +747,42 @@ test('Week 1 batch 1',async(t)=>{
    delete process.env.EXIT_LOOKBACK_DAYS;
   }
  });
+ // The aggregate outlives the detail and only ever grows, so it has to be counted from the rows that were
+ // actually stored: two OWNA records that share a child_key collapse onto one row, and a count taken from
+ // the pull would overstate that month permanently.
+ await t.test('exits_monthly counts the stored departures, not the OWNA records that collapsed onto one row',async()=>{
+  const snapshot=require('../services/snapshot');
+  const {owna}=require('../services/owna'), {lineleader}=require('../services/lineleader');
+  const realChildren=owna.listChildren, realCreds=lineleader.hasCreds;
+  db.prepare("INSERT INTO centres(owna_id,name,capacity,enrolled,opening) VALUES('pxc','Centre Collision',60,40,0)").run();
+  const day=(n)=>addDays(today,n), FIN=day(-30);
+  // OWNA's placeholder dates of birth (0001-…, 2000-01-01) mean "not recorded", so both of these key on the
+  // name alone and land on one stored row — two records in the pull, one departure. The third is distinct.
+  const kids=[
+   {firstname:'Sam',  surname:'Smith',dob:'2000-01-01',room:'Room 1',activeFrom:day(-400),finishDate:FIN},
+   {firstname:'SAM',  surname:'smith',dob:'0001-01-01',room:'Room 1',activeFrom:day(-200),finishDate:FIN},
+   {firstname:'Other',surname:'Child',dob:'2021-04-05',room:'Room 2',activeFrom:day(-300),finishDate:FIN},
+  ];
+  owna.listChildren=async(id)=>(id==='pxc'?kids:[]);
+  lineleader.hasCreds=()=>false;
+  try {
+   const r=await snapshot.runExitReport({log(){}});
+   assert.equal(r.total,3); // three OWNA records considered...
+   const rows=db.prepare("SELECT room,tenure_days FROM child_exits WHERE owna_id='pxc' ORDER BY room").all();
+   assert.equal(rows.length,2,'the two same-named records with no date of birth should share one row'); // ...two stored
+   assert.equal(rows.find(x=>x.room==='Room 1').tenure_days,170); // the later record overwrote the earlier one
+   const agg=db.prepare("SELECT room,upcoming,departures,tenure_days_sum,tenure_n FROM exits_monthly WHERE owna_id='pxc' ORDER BY room").all();
+   assert.deepEqual(agg.map(a=>a.departures),[1,1]); // not [2,1]: the collapsed pair is one departure
+   assert.equal(agg.reduce((s,a)=>s+a.departures,0),rows.length);
+   // The footnote promises tenure can be extended over more history from the aggregate, so it has to match too.
+   assert.deepEqual(agg.map(a=>[a.tenure_days_sum,a.tenure_n]),rows.map(x=>[x.tenure_days,1]));
+   // The month table is built from the aggregate and the "Departures (last 12m)" KPI from the detail:
+   // one page, one number.
+   const by=m.exitsByMonth(24), px=by.rows.find(x=>x.owna_id==='pxc');
+   assert.equal(px.points[by.months.indexOf(FIN.slice(0,7))],2);
+   assert.equal(px.total,m.exitsSummary().find(x=>x.owna_id==='pxc').past);
+  } finally { owna.listChildren=realChildren;lineleader.hasCreds=realCreds; }
+ });
  // The de-identification is only real if the names leave the FILE: dropping/clearing a column rewrites the
  // rows but leaves the old bytes on freed pages and in the WAL, where `strings` still reads them.
  await t.test('the de-identifying boot leaves no recoverable name or DOB in the database file or its WAL',async()=>{
