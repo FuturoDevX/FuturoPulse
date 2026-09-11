@@ -116,6 +116,35 @@ test('Week 1 batch 1',async(t)=>{
   assert.equal(t0.attendance_rate,80);assert.equal(t0.fee_future,0);assert.equal(t0.future_days,0);assert.equal(t0.booked,50);
   assert.equal(m.totals([]).attendance_rate,0);
  });
+ await t.test('overview occupancy counts operating days only, so it agrees with the seats tile',async()=>{
+  // Mon 8 Jun 2026 is King's Birthday: OWNA keeps a booking row (30 booked, nobody attends) while the centre is shut.
+  const rows=m.overview('2026-06-08','2026-06-12');
+  const a=rows.find(r=>r.owna_id==='a');
+  assert.equal(a.days,3);assert.equal(a.booked,150);          // raw child-days still include the holiday row
+  assert.equal(a.avg_daily_booked,50);                        // Avg/day still divides by days with data
+  assert.equal(a.op_days,2);assert.equal(a.op_booked,120);
+  assert.equal(a.occupancy,60);                               // 120 ÷ (100 places × 2 operating days), not 150 ÷ 300 = 50
+  const seats=m.seatsFilled('2026-06-08','2026-06-12');
+  assert.equal(seats.byOwna.a.seats,60);
+  assert.equal(m.pct(seats.byOwna.a.seats,a.capacity),a.occupancy); // the two tiles can no longer disagree
+  const tot=m.totals(rows);
+  assert.equal(tot.booked,190);assert.equal(tot.capacity_days,400); // child-day totals unchanged
+  assert.equal(tot.op_days,2);assert.equal(tot.op_booked,160);assert.equal(tot.op_capacity_days,300);
+  assert.equal(tot.occupancy,m.pct(160,300));                 // not 190 ÷ 400 = 47.5
+  // A range with no operating day at all: no fabricated 0% — op_days is 0 and the page shows an em dash.
+  const holOnly=m.totals(m.overview('2026-06-08','2026-06-08'));
+  assert.equal(holOnly.op_days,0);assert.equal(holOnly.booked,30);assert.equal(holOnly.occupancy,0);
+  const c=await login('admin');
+  const kb=await page('/?from=2026-06-08&to=2026-06-12',c);
+  assert.match(kb,/Occupancy = booked child-days ÷ \(places × operating days\)/);
+  assert.match(kb,/are ignored by occupancy, seats and utilisation alike/);
+  assert.match(kb,/Avg occupancy<span class="cap">2 operating days<\/span>/);
+  assert.match(kb,/120 booked child-days over 2 operating days/);
+  assert.match(kb,/bar-val">60%/);assert.doesNotMatch(kb,/bar-val">50%/);
+  const hol=await page('/?from=2026-06-08&to=2026-06-08',c);
+  assert.match(hol,/Avg occupancy<span class="cap">no operating days in range<\/span>/);
+  assert.doesNotMatch(hol,/bar-val">/); // every occupancy bar is suppressed, not drawn at 0%
+ });
  await t.test('reg12Last12Months sums reportable incidents over the 12 months to now',()=>{
   const r=m.reg12Last12Months('a');
   assert.equal(r.reportable,4);assert.equal(r.months,3);assert.equal(r.from_month,monthShift(-11));assert.equal(r.to_month,monthShift(0));

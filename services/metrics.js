@@ -36,14 +36,20 @@ function centres() {
 // Ranges may run past today (booked-ahead days). Attendance is only known for past days — future rows
 // carry OWNA's default "attending" flag — so attended/absent/attendance_rate are past days only, and
 // fees are split into fee_past (billed to date) and fee_future (booked ahead).
+// Occupancy counts operating days only (op_days/op_booked): OWNA keeps booking rows on public holidays
+// when the centre is closed and nobody attends, so counting them would understate occupancy and
+// contradict the seats and utilisation tiles beside it. booked/days stay raw for the child-day totals.
 function overview(from, to) {
   const today = todayStr();
+  const opDays = JSON.stringify(cal.operatingDayList(from, to));
   const rows = db.prepare(`
     SELECT c.owna_id, c.name, c.alias, c.suburb, c.capacity, c.enrolled,
            COUNT(DISTINCT d.metric_date)      AS days,
            COALESCE(SUM(d.booked),0)          AS booked,
            COALESCE(SUM(d.casual),0)          AS casual,
            COALESCE(SUM(d.fee_total),0)       AS fee_total,
+           COUNT(DISTINCT CASE WHEN d.metric_date IN (SELECT value FROM json_each(@opDays)) THEN d.metric_date END) AS op_days,
+           COALESCE(SUM(CASE WHEN d.metric_date IN (SELECT value FROM json_each(@opDays)) THEN d.booked END),0) AS op_booked,
            COUNT(DISTINCT CASE WHEN d.metric_date <= @today THEN d.metric_date END) AS past_days,
            COALESCE(SUM(CASE WHEN d.metric_date <= @today THEN d.booked    END),0) AS past_booked,
            COALESCE(SUM(CASE WHEN d.metric_date <= @today THEN d.attended  END),0) AS attended,
@@ -57,17 +63,17 @@ function overview(from, to) {
     WHERE c.opening IS NULL OR c.opening = 0
     GROUP BY c.owna_id
     ORDER BY c.name
-  `).all({ from, to, today });
+  `).all({ from, to, today, opDays });
 
   return rows.map((r) => {
-    const denom = r.capacity * r.days; // capacity-days available in the range
+    const denom = r.capacity * r.op_days; // capacity-days available on operating days in the range
     return {
       ...r,
       fee_total: round(r.fee_total),
       fee_past: round(r.fee_past),
       fee_future: round(r.fee_future),
       future_days: r.days - r.past_days,
-      occupancy: pct(r.booked, denom),          // booked child-days / capacity-days (incl. booked ahead)
+      occupancy: pct(r.op_booked, denom),       // booked child-days / capacity-days, operating days only (incl. booked ahead)
       attendance_rate: pct(r.attended, r.past_booked), // past days only
       avg_daily_booked: r.days ? Math.round(r.booked / r.days) : 0,
     };
@@ -81,6 +87,10 @@ function totals(rows) {
     a.casual += r.casual; a.fee_total += r.fee_total;
     a.capacity_days += r.capacity * r.days;
     a.days = Math.max(a.days, r.days);
+    // Occupancy ratio: operating days only (see overview) — booked/days/capacity_days stay raw for the child-day tiles.
+    a.op_booked += r.op_booked || 0;
+    a.op_capacity_days += r.capacity * (r.op_days || 0);
+    a.op_days = Math.max(a.op_days, r.op_days || 0);
     // Past/future split (see overview): attendance is judged on past days only.
     a.past_booked += r.past_booked || 0; a.future_booked += r.future_booked || 0;
     a.fee_past += r.fee_past || 0; a.fee_future += r.fee_future || 0;
@@ -88,13 +98,14 @@ function totals(rows) {
     a.future_days = Math.max(a.future_days, r.future_days || 0);
     return a;
   }, { capacity: 0, enrolled: 0, booked: 0, attended: 0, absent: 0, casual: 0, fee_total: 0, capacity_days: 0, days: 0,
+       op_booked: 0, op_capacity_days: 0, op_days: 0,
        past_booked: 0, future_booked: 0, fee_past: 0, fee_future: 0, past_days: 0, future_days: 0 });
   return {
     ...t,
     fee_total: round(t.fee_total),
     fee_past: round(t.fee_past),
     fee_future: round(t.fee_future),
-    occupancy: pct(t.booked, t.capacity_days),
+    occupancy: pct(t.op_booked, t.op_capacity_days),
     attendance_rate: pct(t.attended, t.past_booked),
   };
 }
