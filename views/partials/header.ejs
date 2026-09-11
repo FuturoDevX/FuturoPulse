@@ -26,6 +26,7 @@
       <a href="/feedback" class="<%= currentPath === '/feedback' ? 'active' : '' %>">💬 Share feedback</a>
       <% if (!locals.scopedOwnaId) { %>
         <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
+        <a href="/coe" class="<%= currentPath === '/coe' ? 'active' : '' %>">Continuation of Enrolment</a>
         <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>">Enrolment Projection</a>
         <% if (locals.canSeeIdentified) { %><a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a><% } %>
         <a href="/wages" class="<%= currentPath === '/wages' ? 'active' : '' %>">Wages &amp; Margin</a>

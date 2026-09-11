@@ -1730,6 +1730,160 @@ function rosterCentre(ownaId, weeksBack = 12) {
     leave: JSON.parse(headRow.leave_json || "[]"), trend };
 }
 
+// ===== Continuation of Enrolment (COE): the 2027 campaign outlook, Nov 2026 – Apr 2027 =====
+// Counts only, one method per number, so the page can state beside every figure how it was derived:
+//   available child-days = licensed places × operating days in the month (NSW calendar)
+//   run rate             = child-days booked in the last complete Mon–Fri week, scaled to the month
+//   leaver days          = OWNA finish dates already set, valued at the centre's average booked days per child
+//   backfill days        = LineLeader expected starts, valued at the weekdays the family asked for
+//   projected filled     = run rate − leaver days + firm backfill
+// Three limits are deliberate and are printed in the page lede: the run rate assumes every family without a
+// finish date continues (so it is a ceiling), January overlaps leavers still present with starters already added,
+// and leaver days use the centre's average booking pattern rather than each leaver's own days.
+const COE_FIRST_MONTH = "2026-11";
+const COE_MONTH_COUNT = 6;                       // Nov 2026 → Apr 2027
+const COE_FIRM_STATUSES = [5, 12];               // LineLeader: Offer Accepted, Pre-Offered
+const COE_TARGET_PCT = 95;                       // PLACEHOLDER — the CEO replaces this with a per-centre target
+const COE_WEEKDAYS = ["mo", "tu", "we", "th", "fr"];
+
+const coeDaysInMonth = (ym) => { const [y, mo] = ym.split("-").map(Number); return new Date(Date.UTC(y, mo, 0)).getUTCDate(); };
+const coeMonthEnd = (ym) => `${ym}-${String(coeDaysInMonth(ym)).padStart(2, "0")}`;
+const d1 = (n) => Math.round(n * 10) / 10;
+function coeMonthKeys(first = COE_FIRST_MONTH, count = COE_MONTH_COUNT) {
+  const [y, mo] = first.split("-").map(Number);
+  return Array.from({ length: count }, (_, i) => new Date(Date.UTC(y, mo - 1 + i, 1)).toISOString().slice(0, 7));
+}
+// Days per week a family has asked for, from LineLeader's days_csv ("mo,tu,we"). Unknown tokens are ignored.
+function coeDaysPerWeek(csv) {
+  return String(csv || "").split(",").map((s) => s.trim().slice(0, 2).toLowerCase()).filter((s) => COE_WEEKDAYS.includes(s)).length;
+}
+// The last Mon–Fri week that had fully ended before today. Steps back over weeks with no booking rows at
+// all (a stale snapshot) so the run rate is never silently zero. The same week is used for every centre.
+function coeRunWeek(today = todayStr()) {
+  const d = new Date(today + "T00:00:00Z");
+  do { d.setUTCDate(d.getUTCDate() - 1); } while (d.getUTCDay() !== 5);
+  const any = db.prepare("SELECT 1 FROM daily_metrics WHERE metric_date BETWEEN ? AND ? LIMIT 1");
+  let firstTry = null;
+  for (let i = 0; i < 8; i++) {
+    const to = d.toISOString().slice(0, 10);
+    const mon = new Date(d); mon.setUTCDate(mon.getUTCDate() - 4);
+    const week = { from: mon.toISOString().slice(0, 10), to };
+    if (!firstTry) firstTry = week;
+    if (any.get(week.from, week.to)) return week;
+    d.setUTCDate(d.getUTCDate() - 7);
+  }
+  return firstTry;
+}
+
+function coeOutlook() {
+  const today = todayStr();
+  const keys = coeMonthKeys();
+  const lastEnd = coeMonthEnd(keys[keys.length - 1]);
+  const runWeek = coeRunWeek(today);
+  const pipelineFrom = today.slice(0, 7) + "-01";   // starts are counted from the first of the current month
+  const months = keys.map((k) => ({ month: k, operating_days: cal.operatingDays(k + "-01", coeMonthEnd(k)), days_in_month: coeDaysInMonth(k) }));
+
+  const runRow = db.prepare("SELECT COALESCE(SUM(booked),0) AS booked FROM daily_metrics WHERE owna_id=? AND metric_date BETWEEN ? AND ?");
+  const exitRows = db.prepare("SELECT owna_id, finish_date FROM child_exits WHERE upcoming=1 AND finish_date>=? AND finish_date<=? ORDER BY finish_date").all(today, lastEnd);
+  const startRows = db.prepare("SELECT owna_id, status_id, expected_start, days_csv FROM ll_pipeline_starts WHERE expected_start>=? AND expected_start<=? ORDER BY expected_start").all(pipelineFrom, lastEnd);
+  const byOwna = (rows) => rows.reduce((a, r) => { (a[r.owna_id] = a[r.owna_id] || []).push(r); return a; }, {});
+  const exitsBy = byOwna(exitRows), startsBy = byOwna(startRows);
+
+  // Backfill child-days for one centre in one month: a start counts from its expected start date, prorated
+  // across the month's calendar days, valued at the weekdays asked for scaled to the month's operating days.
+  const backfill = (rows, mo) => {
+    const start = mo.month + "-01", end = coeMonthEnd(mo.month);
+    const out = { firm_children: 0, firm_days: 0, all_children: 0, all_days: 0 };
+    for (const s of rows) {
+      if (!s.expected_start || s.expected_start > end) continue;
+      const dpw = coeDaysPerWeek(s.days_csv);
+      if (!dpw) continue;                              // no requested days recorded → no child-days to claim
+      const frac = s.expected_start <= start ? 1 : (mo.days_in_month - Number(s.expected_start.slice(8, 10)) + 1) / mo.days_in_month;
+      const days = dpw * (mo.operating_days / 5) * frac;
+      out.all_children += 1; out.all_days += days;
+      if (COE_FIRM_STATUSES.includes(s.status_id)) { out.firm_children += 1; out.firm_days += days; }
+    }
+    return out;
+  };
+
+  const operating = db.prepare("SELECT owna_id, name, capacity, enrolled FROM centres WHERE (opening IS NULL OR opening=0) AND capacity>0 ORDER BY name").all();
+  const centres = operating.map((c) => {
+    const runDays = runRow.get(c.owna_id, runWeek.from, runWeek.to).booked;
+    const avgDays = c.enrolled ? runDays / c.enrolled : 0;   // average booked days per child per week
+    const exits = exitsBy[c.owna_id] || [], starts = startsBy[c.owna_id] || [];
+    const rows = months.map((mo) => {
+      const start = mo.month + "-01", end = coeMonthEnd(mo.month);
+      const available = c.capacity * mo.operating_days;
+      const runRate = runDays * (mo.operating_days / 5);
+      // Leavers are cumulative: a child who finished in an earlier month is gone for the whole of this one.
+      let leaverDays = 0, toDate = 0, inMonth = 0;
+      for (const e of exits) {
+        if (e.finish_date > end) continue;
+        toDate += 1;
+        if (e.finish_date >= start) inMonth += 1;
+        const frac = e.finish_date < start ? 1 : (mo.days_in_month - Number(e.finish_date.slice(8, 10))) / mo.days_in_month;
+        leaverDays += avgDays * (mo.operating_days / 5) * frac;
+      }
+      const bf = backfill(starts, mo);
+      const projected = runRate - leaverDays + bf.firm_days;
+      return {
+        month: mo.month, operating_days: mo.operating_days,
+        available_days: available, run_rate_days: d1(runRate),
+        leavers_in_month: inMonth, leavers_to_date: toDate, leaver_days: d1(leaverDays),
+        firm_children: bf.firm_children, firm_days: d1(bf.firm_days),
+        all_children: bf.all_children, all_days: d1(bf.all_days),
+        projected_days: d1(projected), pct: pct(projected, available),
+        gap_days: d1(Math.max(0, available * COE_TARGET_PCT / 100 - projected)),
+        _raw: { available, runRate, leaverDays, firm: bf.firm_days, all: bf.all_days, projected, leavers: toDate, inMonth, firmKids: bf.firm_children },
+      };
+    });
+    return { owna_id: c.owna_id, name: c.name, places: c.capacity, enrolled: c.enrolled,
+      run_week_days: runDays, avg_days_per_child: Math.round(avgDays * 100) / 100, months: rows };
+  });
+
+  const group = {
+    places: centres.reduce((a, c) => a + c.places, 0),
+    enrolled: centres.reduce((a, c) => a + c.enrolled, 0),
+    run_week_days: centres.reduce((a, c) => a + c.run_week_days, 0),
+    months: months.map((mo, i) => {
+      const t = centres.reduce((a, c) => {
+        const r = c.months[i]._raw;
+        a.available += r.available; a.runRate += r.runRate; a.leaverDays += r.leaverDays; a.firm += r.firm; a.all += r.all;
+        a.projected += r.projected; a.leavers += r.leavers; a.inMonth += r.inMonth; a.firmKids += r.firmKids;
+        return a;
+      }, { available: 0, runRate: 0, leaverDays: 0, firm: 0, all: 0, projected: 0, leavers: 0, inMonth: 0, firmKids: 0 });
+      return { month: mo.month, operating_days: mo.operating_days, available_days: t.available,
+        run_rate_days: d1(t.runRate), leavers_in_month: t.inMonth, leavers_to_date: t.leavers, leaver_days: d1(t.leaverDays),
+        firm_children: t.firmKids, firm_days: d1(t.firm), all_days: d1(t.all),
+        projected_days: d1(t.projected), pct: pct(t.projected, t.available),
+        gap_days: d1(Math.max(0, t.available * COE_TARGET_PCT / 100 - t.projected)) };
+    }),
+  };
+  centres.forEach((c) => c.months.forEach((r) => { delete r._raw; }));
+
+  // Pre-opening centres that open inside the window: no run rate and no licensed places, so no percentage.
+  const lastIdx = Number(keys[keys.length - 1].slice(0, 4)) * 12 + Number(keys[keys.length - 1].slice(5, 7));
+  const opening = db.prepare("SELECT owna_id, name, capacity, opening_year, opening_month FROM centres WHERE opening=1 AND opening_year IS NOT NULL AND opening_month IS NOT NULL ORDER BY opening_year, opening_month, name")
+    .all().filter((c) => c.opening_year * 12 + c.opening_month <= lastIdx).map((c) => {
+      const starts = startsBy[c.owna_id] || [];
+      const mix = {}; COE_WEEKDAYS.forEach((w) => { mix[w] = 0; });
+      let mixFamilies = 0;
+      for (const s of starts) {
+        const days = String(s.days_csv || "").split(",").map((x) => x.trim().slice(0, 2).toLowerCase()).filter((x) => COE_WEEKDAYS.includes(x));
+        if (days.length) mixFamilies += 1;
+        days.forEach((x) => { mix[x] += 1; });
+      }
+      return { owna_id: c.owna_id, name: c.name, places: c.capacity, opening_year: c.opening_year, opening_month: c.opening_month,
+        months: months.map((mo) => { const bf = backfill(starts, mo);
+          return { month: mo.month, operating_days: mo.operating_days, firm_children: bf.firm_children, firm_days: d1(bf.firm_days), all_children: bf.all_children, all_days: d1(bf.all_days) }; }),
+        mix, mix_families: mixFamilies };
+    });
+
+  return { months, window: { first: keys[0], last: keys[keys.length - 1] }, as_at: today,
+    run_week: runWeek, pipeline_from: pipelineFrom, target_pct: COE_TARGET_PCT,
+    centres, group, opening, unknown_holiday_years: cal.unknownHolidayYears(keys[0] + "-01", lastEnd) };
+}
+
 module.exports = {
   defaultRange, forwardRange, centres, overview, totals,
   centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
@@ -1745,4 +1899,5 @@ module.exports = {
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
   yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months, wagesPerChildDay, ownaWeek,
   funnelByCentre, funnelMonths, CONVERSION_STAGES, pipelineTargets, savePipelineTarget, deletePipelineTarget, pipelineTargetProgress, targetRag, placesByMonth,
+  coeOutlook, coeRunWeek, coeMonthKeys, COE_TARGET_PCT, COE_FIRM_STATUSES,
 };

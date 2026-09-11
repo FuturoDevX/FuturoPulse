@@ -305,6 +305,12 @@ router.get("/projection", blockScoped, (req, res) => {
   res.render("projection", { title: "Enrolment Projection", proj: m.projection(scope, days), lastRun: lastRun() });
 });
 
+// Continuation of Enrolment: the 2027 campaign outlook, Nov 2026 – Apr 2027 (counts only, no names —
+// a viewer may open it, so it is deliberately NOT behind requireIdentified).
+router.get("/coe", blockScoped, (req, res) => {
+  res.render("coe", { title: "Continuation of Enrolment", coe: m.coeOutlook(), lastRun: lastRun() });
+});
+
 // Exit report (OWNA departures + LineLeader reasons), group-wide. ?year=fy|cy picks the reporting year
 // for the departures-by-year table (default: financial year from 1 July).
 router.get("/exits", blockScoped, requireIdentified, (req, res) => {

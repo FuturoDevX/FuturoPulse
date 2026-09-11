@@ -495,5 +495,96 @@ test('Week 1 batch 1',async(t)=>{
   assert.equal((await request('/compare?metric=unused_places',await login('centre'))).status,403);
   assert.equal((await request('/compare?metric=unused_places',await login('viewer'))).status,200);
  });
+ // ===== Batch 5 (Day 5): Continuation of Enrolment — the 2027 campaign outlook, Nov 2026 – Apr 2027 =====
+ await t.test('coeOutlook builds the Nov 2026 – Apr 2027 outlook from run rate, leavers and firm backfill',()=>{
+  // Fixtures are inserted here, last, so no earlier batch is affected. The window is fixed (it is the 2027
+  // campaign), but the run-rate week follows today, so booking rows go into whichever Mon–Fri week is picked.
+  db.prepare("UPDATE centres SET enrolled=40 WHERE owna_id='a'").run();          // avg booked days per child = 100 ÷ 40 = 2.5
+  db.prepare("UPDATE centres SET opening_year=2026,opening_month=11 WHERE owna_id='open'").run();
+  db.prepare("INSERT INTO centres(owna_id,name,capacity,enrolled,opening,opening_year,opening_month) VALUES('far','Centre Far',0,0,1,2028,1)").run();
+  const rw=m.coeRunWeek();
+  assert.equal(new Date(rw.to+'T00:00:00Z').getUTCDay(),5);assert.equal(new Date(rw.from+'T00:00:00Z').getUTCDay(),1);assert.ok(rw.to<today);
+  for(let i=0;i<5;i++) dm.run('a',addDays(rw.from,i),20,20,0,0,400);              // 5 × 20 = 100 booked child-days in the run week
+  const ex5=db.prepare("INSERT INTO child_exits(owna_id,child_key,child_name,dob,room,start_date,finish_date,tenure_days,upcoming,reason,reason_source,updated_at) VALUES(?,?,?,'2023-01-01','Room 2',NULL,?,NULL,1,NULL,NULL,datetime('now'))");
+  ex5.run('a','a8','Fixture Child A8','2026-11-20');                              // finishes 20 Nov: 10 of November's 30 days lost
+  ex5.run('b','b4','Fixture Child B4','2026-11-10');                              // Beta has no enrolled headcount → no day estimate
+  const st=db.prepare("INSERT INTO ll_pipeline_starts(enrollment_id,ll_id,owna_id,centre_name,child_name,status_id,expected_start,days_csv,updated_at) VALUES(?,1,?,?,?,?,?,?,datetime('now'))");
+  const mkStart=(id,owna,status,start,days)=>st.run(id,owna,'Centre '+owna,'Fixture Child S'+id,status,start,days);
+  mkStart(901,'a',5,'2026-11-01','mo,tu,we');        // firm, whole of November: 3 days/wk
+  mkStart(902,'a',12,'2026-11-16','mo,tu,we,th,fr'); // firm, from 16 Nov: 5 days/wk × 15 of 30 days
+  mkStart(903,'a',4,'2026-11-01','mo,tu');           // waitlist — all-pipeline only, never in the projection
+  mkStart(904,'a',5,'2026-12-05','');                // firm but no requested days recorded → no child-days claimed
+  mkStart(905,'a',5,'2027-05-03','mo,tu,we,th,fr');  // starts after the window → out of scope
+  mkStart(906,'b',12,'2027-02-10','th,fr');          // Beta's only committed days, from 10 Feb
+  mkStart(907,'open',5,'2026-11-02','mo,tu,we,th,fr');
+  mkStart(908,'open',4,'2026-12-01','mo,tu');
+  const o=m.coeOutlook();
+  assert.deepEqual(o.months.map(x=>x.month),['2026-11','2026-12','2027-01','2027-02','2027-03','2027-04']);
+  assert.deepEqual(o.months.map(x=>x.operating_days),[21,21,19,20,21,22]); // NSW calendar: Christmas/Boxing Day, New Year + Australia Day, Easter
+  assert.deepEqual(o.months.map(x=>x.operating_days),o.months.map(x=>cal.operatingDays(x.month+'-01',x.month+'-'+x.days_in_month)));
+  assert.deepEqual(o.window,{first:'2026-11',last:'2027-04'});assert.equal(o.as_at,today);assert.deepEqual(o.run_week,rw);
+  assert.equal(o.pipeline_from,today.slice(0,7)+'-01');assert.equal(o.target_pct,95);assert.deepEqual(o.unknown_holiday_years,[]);
+  assert.deepEqual(o.centres.map(c=>c.owna_id),['a','b','c']); // operating centres with licensed places; the pre-opening ones are not here
+  const a=o.centres[0];
+  assert.equal(a.places,100);assert.equal(a.enrolled,40);assert.equal(a.run_week_days,100);assert.equal(a.avg_days_per_child,2.5);
+  const nov=a.months[0];
+  assert.equal(nov.available_days,2100);                       // 100 places × 21 operating days
+  assert.equal(nov.run_rate_days,420);                         // 100 booked × 21/5
+  assert.equal(nov.leavers_in_month,1);assert.equal(nov.leavers_to_date,2); // a6 (already gone by November) + a8
+  assert.equal(nov.leaver_days,14);                            // 2.5 × 21/5 × (1 + 10/30)
+  assert.equal(nov.firm_children,2);assert.equal(nov.firm_days,23.1);       // 3 × 4.2 + 5 × 4.2 × 15/30
+  assert.equal(nov.all_children,3);assert.equal(nov.all_days,31.5);         // + the waitlist family's 2 days/wk
+  assert.equal(nov.projected_days,429.1);assert.equal(nov.pct,20.4);assert.equal(nov.gap_days,1565.9); // 2100 × 95% − 429.1
+  const dec=a.months[1];
+  assert.equal(dec.leavers_to_date,3);assert.equal(dec.leavers_in_month,1);  // a7 finishes 15 Dec
+  assert.equal(dec.leaver_days,26.4);                          // 10.5 + 10.5 + 10.5 × 16/31
+  assert.equal(dec.firm_children,2);assert.equal(dec.firm_days,33.6);        // both now count for the whole month; the blank days_csv start adds nothing
+  assert.equal(dec.projected_days,427.2);
+  assert.deepEqual(a.months.map(x=>x.leavers_to_date),[2,3,3,3,3,3]);        // leavers stay deducted from every later month
+  const b=o.centres[1];
+  assert.equal(b.run_week_days,0);assert.equal(b.avg_days_per_child,0);
+  assert.deepEqual(b.months.map(x=>x.leaver_days),[0,0,0,0,0,0]);            // a leaver with no enrolled headcount to average over removes no estimated days
+  assert.equal(b.months[0].leavers_to_date,1);
+  assert.equal(b.months[3].firm_days,5.4);assert.equal(b.months[3].projected_days,5.4);assert.equal(b.months[3].pct,0.3); // 2 × 20/5 × 19/28
+  assert.equal(b.months[2].firm_days,0);                                     // February's start is not counted in January
+  assert.deepEqual(o.centres[2].months.map(x=>x.pct),[0,0,0,0,0,0]);         // Gamma has places but no bookings and no pipeline
+  assert.equal(o.group.places,280);assert.equal(o.group.run_week_days,100);
+  const gn=o.group.months[0];
+  assert.equal(gn.available_days,100*21+100*21+80*21);assert.equal(gn.run_rate_days,420);
+  assert.equal(gn.leavers_to_date,3);assert.equal(gn.leaver_days,14);assert.equal(gn.firm_days,23.1);
+  assert.equal(gn.projected_days,429.1);assert.equal(gn.pct,m.pct(429.1,5880));
+  // Pre-opening centres: the one opening inside the window, with firm vs all-pipeline days and the requested weekday mix.
+  assert.deepEqual(o.opening.map(c=>c.owna_id),['open']);                     // Centre Far (2028) is beyond the window
+  const op=o.opening[0];
+  assert.equal(op.places,0);assert.equal(op.opening_year,2026);assert.equal(op.opening_month,11);
+  assert.deepEqual(op.mix,{mo:2,tu:2,we:1,th:1,fr:1});assert.equal(op.mix_families,2);
+  assert.equal(op.months[0].firm_days,20.3);assert.equal(op.months[0].all_days,20.3);assert.equal(op.months[0].firm_children,1); // 5 × 4.2 × 29/30
+  assert.equal(op.months[1].firm_days,21);assert.equal(op.months[1].all_days,29.4);assert.equal(op.months[1].all_children,2);
+  assert.deepEqual(m.coeMonthKeys('2026-11',3),['2026-11','2026-12','2027-01']);
+ });
+ await t.test('the Continuation of Enrolment page states its three limits, is open to viewers and never names a family',async()=>{
+  const admin=await login('admin');
+  const html=await page('/coe',admin);
+  assert.match(html,/First release — continuing count and booking mix follow/);
+  assert.match(html,/The run rate assumes every family without a finish date continues, so it is a ceiling\.<\/strong>/);
+  assert.match(html,/January reads high because leavers are still present until late January while starters are added from their start dates\.<\/strong>/);
+  assert.match(html,/Leaver days are estimated from each centre's average booking pattern, not each leaver's own days\.<\/strong>/);
+  assert.match(html,/Nov 2026 – Apr 2027/);
+  assert.match(html,/Feb 2027, the anchor month/);
+  assert.match(html,/target 95% is a placeholder/);
+  assert.match(html,/<strong>placeholder<\/strong> only/);
+  assert.match(html,/% once licensed places are confirmed/);                    // opening centres get no percentage
+  assert.match(html,/title="429 of 2,100 days">20\.4%<\/td>/);                  // Alpha, November: 429 of 2,100 available child-days
+  assert.match(html,/<td class="num">5,880<\/td>/);                             // group available child-days in November (280 places × 21 days)
+  assert.match(html,/Centre Far/);                                              // only in the sidebar's "Opening soon" list
+  assert.doesNotMatch(html.split('<main>')[1],/Centre Far/);                     // not in the outlook itself
+  assert.doesNotMatch(html,/Fixture Child/);assert.doesNotMatch(html,/Fixture Family/);
+  const viewer=await page('/coe',await login('viewer'));
+  assert.match(viewer,/Continuation of Enrolment/);assert.doesNotMatch(viewer,/Fixture/);
+  assert.match(viewer,/href="\/coe"/);                                          // nav link, in the Enrolment group
+  assert.match(viewer,/href="\/pipeline"[^>]*>Enrolment Pipeline<\/a>\s*<a href="\/coe"[^>]*>Continuation of Enrolment<\/a>\s*<a href="\/projection"/);
+  assert.equal((await request('/coe',await login('exec'))).status,200);
+  assert.equal((await request('/coe',await login('centre'))).status,403);        // blockScoped: centre-scoped users stay on their own centre
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

@@ -349,3 +349,33 @@ tr:hover td.hot { background: #ffedcc; }
 .year-toggle a { color: var(--navy); }
 .year-toggle a.on { font-weight: 700; text-decoration: none; }
 .ytd-total { color: var(--warn); font-weight: 700; }
+
+/* Continuation of Enrolment (views/coe.ejs): stacked projection bars, % grid cells, weekday mix */
+.coe-limits { margin: 0; padding-left: 20px; font-size: 13.5px; line-height: 1.6; }
+.coe-limits li { margin-bottom: 8px; }
+.coe-limits li:last-child { margin-bottom: 0; }
+.coe-bar-row { display: grid; grid-template-columns: 210px 1fr 130px; gap: 16px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line); }
+.coe-bar-name { font-size: 14px; font-weight: 600; color: var(--navy); }
+.coe-bar-name span { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.coe-track { position: relative; display: flex; height: 22px; background: #eef0f4; border-radius: 5px; overflow: hidden; }
+.coe-seg { height: 100%; flex: 0 0 auto; }
+.coe-seg.keep { background: var(--navy); }
+.coe-seg.firm { background: #4caf7d; }
+.coe-seg.lost { background: repeating-linear-gradient(135deg, var(--berry) 0 5px, transparent 5px 9px); opacity: .7; }
+.coe-target { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warn); }
+.coe-bar-val { text-align: right; font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.coe-bar-val span { display: block; font-size: 11.5px; font-weight: 400; color: var(--muted); margin-top: 3px; }
+.coe-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+.coe-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.coe-legend i { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+td.coe-pct { font-weight: 700; font-variant-numeric: tabular-nums; }
+td.coe-pct.good { background: #e6f4ea; color: var(--good); }
+td.coe-pct.warn { background: #fdf3d9; color: #8a6d0b; }
+td.coe-pct.bad { background: #fbe4e4; color: var(--bad); }
+.coe-mix { display: flex; align-items: flex-end; gap: 6px; height: 56px; }
+.coe-mix div { flex: 1; min-height: 2px; background: var(--navy); border-radius: 3px 3px 0 0; }
+.coe-mix-x { display: flex; gap: 6px; margin-top: 5px; }
+.coe-mix-x span { flex: 1; text-align: center; font-size: 10px; color: var(--muted); line-height: 1.4; }
+.coe-method { columns: 2; column-gap: 30px; font-size: 13px; }
+.coe-method p { break-inside: avoid; margin: 0 0 10px; }
+@media (max-width: 860px) { .coe-bar-row { grid-template-columns: 1fr; gap: 6px; } .coe-bar-val { text-align: left; } .coe-method { columns: 1; } }

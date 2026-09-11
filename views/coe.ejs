@@ -1,0 +1,243 @@
+<%- include('partials/header', { title: 'Continuation of Enrolment' }) %>
+<%
+  // Continuation of Enrolment — the 2027 campaign view (Nov 2026 → Apr 2027). Counts only, no names:
+  // a viewer may open this page. Every figure states its method beside it.
+  const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mLong  = (mo) => MN[Number(mo.slice(5,7))-1] + ' ' + mo.slice(0,4);
+  const mShort = (mo) => MN[Number(mo.slice(5,7))-1] + ' ' + mo.slice(2,4);
+  const dLong  = (d) => d ? new Date(d+'T00:00:00Z').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : '';
+  const fmt  = (n) => Math.round(Number(n)||0).toLocaleString('en-AU');
+  const sgn  = (n) => (Number(n)||0) > 0 ? '−' + fmt(n) : fmt(n);
+  const TGT  = coe.target_pct;
+  const tone = (p) => p >= TGT ? 'good' : (p >= TGT - 10 ? 'warn' : 'bad');
+  const W    = (v, avail) => avail > 0 ? Math.max(0, Math.min(100, v / avail * 100)).toFixed(1) : '0';
+  // Anchor month: February 2027, the first full month after the school-year transition.
+  let ai = coe.months.findIndex((x) => x.month === '2027-02');
+  if (ai < 0) ai = Math.min(3, coe.months.length - 1);
+  const am = coe.months[ai], ga = coe.group.months[ai];
+  const openMonth = (c) => c.opening_month ? MN[c.opening_month-1] + ' ' + c.opening_year : (c.opening_year || 'soon');
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Continuation of Enrolment <span class="badge warn">First release — continuing count and booking mix follow</span></h1>
+    <p class="sub">The 2027 campaign view · <%= mLong(coe.window.first) %> – <%= mLong(coe.window.last) %> · child-days booked against child-days available, per centre · counts only, no child, family or staff names</p>
+  </div>
+</div>
+
+<div class="card" style="border-left:3px solid var(--warn);">
+  <h2 style="margin-top:0;">Read these three limits before you read the numbers</h2>
+  <ol class="coe-limits">
+    <li><strong>The run rate assumes every family without a finish date continues, so it is a ceiling.</strong> Nobody has told us they are staying — we have only counted who has not told us they are leaving. The per-child continuing count arrives in the next build; until then treat every percentage as the best case.</li>
+    <li><strong>January reads high because leavers are still present until late January while starters are added from their start dates.</strong> The two groups overlap inside the month, so <%= mLong('2027-01') %> is the crossover, not a genuine peak. February is the first clean month.</li>
+    <li><strong>Leaver days are estimated from each centre's average booking pattern, not each leaver's own days.</strong> The count of leavers is exact — it comes from finish dates set in OWNA — but the child-days they remove use the centre average (<%= coe.centres.map((c) => shortName(c.name) + ' ' + c.avg_days_per_child.toFixed(1)).join(', ') %> days per child per week). A centre losing mostly five-day families will lose more than shown; mostly two-day families, less.</li>
+  </ol>
+  <p class="footnote" style="margin-bottom:0;">Built from the snapshot as at <%= dLong(coe.as_at) %>. Run-rate week <%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %> (the last complete Mon–Fri week, the same week for every centre). Pipeline starts counted from <%= dLong(coe.pipeline_from) %>. Operating days exclude weekends and NSW public holidays<%= coe.unknown_holiday_years.length ? ' (no gazetted list yet for ' + coe.unknown_holiday_years.join(', ') + ' — weekdays only)' : '' %>.</p>
+</div>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> licensed places × <%= am.operating_days %> operating days</span></div></div>
+  <div class="card stat"><div class="n <%= tone(ga.pct) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · target <%= TGT %>% is a placeholder</span></div></div>
+  <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>, at each centre's average booking pattern</span></div></div>
+  <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date</span></div></div>
+  <div class="card stat"><div class="n"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></div><div class="l">Gap to the <%= TGT %>% placeholder target<span class="cap">child-days in <%= mLong(am.month) %><%= ga.gap_days > 0 && am.operating_days ? ' · about ' + Math.round(ga.gap_days / (am.operating_days / 5) / 3) + ' children at 3 days a week' : ' · the projection is at or above the placeholder' %></span></div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;"><%= mLong(am.month) %>, the anchor month <span class="muted" style="font-weight:400;font-size:13px;">· each bar is that centre's available child-days</span></h2>
+  <% coe.centres.forEach(function(c){ var x = c.months[ai]; var keep = Math.max(0, x.run_rate_days - x.leaver_days); %>
+    <div class="coe-bar-row">
+      <div class="coe-bar-name"><%= shortName(c.name) %><span><%= c.places %> places · <%= am.operating_days %> days · <%= fmt(x.available_days) %> days available</span></div>
+      <div class="coe-track">
+        <div class="coe-seg keep" style="width:<%= W(keep, x.available_days) %>%;" title="Run rate less leavers: <%= fmt(keep) %> days"></div>
+        <div class="coe-seg firm" style="width:<%= W(x.firm_days, x.available_days) %>%;" title="Firm backfill: <%= fmt(x.firm_days) %> days"></div>
+        <div class="coe-seg lost" style="width:<%= W(x.leaver_days, x.available_days) %>%;" title="Days falling away: <%= fmt(x.leaver_days) %> days"></div>
+        <div class="coe-target" style="left:<%= TGT %>%;" title="Placeholder target <%= TGT %>%"></div>
+      </div>
+      <div class="coe-bar-val <%= tone(x.pct) + '-text' %>"><%= x.pct %>%<span><%= fmt(x.projected_days) %> days projected</span></div>
+    </div>
+  <% }); %>
+  <div class="coe-legend">
+    <span><i style="background:var(--navy);"></i>Run rate, less the children with finish dates</span>
+    <span><i style="background:#4caf7d;"></i>Firm backfill (Offer Accepted / Pre-Offered)</span>
+    <span><i class="coe-seg lost" style="width:14px;height:10px;"></i>Days falling away (shown beyond the fill, not inside it)</span>
+    <span><i style="background:var(--warn);width:3px;"></i>Placeholder target <%= TGT %>%</span>
+  </div>
+  <p class="footnote">The track is clipped at 100%: a centre above target fills it and the figure beside the bar carries the real number.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Month by month <span class="muted" style="font-weight:400;font-size:13px;">· projected child-days filled as a share of child-days available</span></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead>
+      <tr>
+        <th>Centre</th><th class="num">Places</th><th class="num">Run rate / week</th><th class="num">Leaving by <%= mShort(coe.window.last) %></th>
+        <% coe.months.forEach(function(x){ %><th class="num"><%= mShort(x.month) %><br><span style="font-weight:400;text-transform:none;letter-spacing:0;"><%= x.operating_days %> days</span></th><% }); %>
+      </tr>
+    </thead>
+    <tbody>
+      <% coe.centres.forEach(function(c){ %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a><br><span class="muted" style="font-size:11.5px;"><%= c.enrolled %> enrolled · <%= c.avg_days_per_child.toFixed(1) %> days per child</span></td>
+          <td class="num"><%= c.places %></td>
+          <td class="num"><%= fmt(c.run_week_days) %></td>
+          <td class="num bad-text"><%= c.months[coe.months.length-1].leavers_to_date %></td>
+          <% c.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days"><%= x.pct %>%</td><% }); %>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All operating centres</td>
+        <td class="num"><%= coe.group.places %></td>
+        <td class="num"><%= fmt(coe.group.run_week_days) %></td>
+        <td class="num"><%= coe.group.months[coe.months.length-1].leavers_to_date %></td>
+        <% coe.group.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days"><%= x.pct %>%</td><% }); %>
+      </tr>
+    </tfoot>
+  </table></div>
+  <p class="footnote" style="margin-bottom:0;">Green is at or above the <%= TGT %>% placeholder target, amber within ten points of it, red below. <strong>Leaving by <%= mShort(coe.window.last) %></strong> counts every child whose finish date falls between <%= dLong(coe.as_at) %> and <%= mLong(coe.window.last) %> — the same children are deducted from every later month. The pre-opening centres are not in this table or in the group row: they have no run rate and no licensed places recorded.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">The working, group total by month</h2>
+  <div style="overflow-x:auto;"><table>
+    <thead>
+      <tr>
+        <th>Month</th><th class="num">Operating days</th><th class="num">Available</th><th class="num">Run rate</th>
+        <th class="num">Leavers</th><th class="num">Leaver days</th><th class="num">Firm starters</th><th class="num">Firm days</th>
+        <th class="num">All-pipeline days</th><th class="num">Projected</th><th class="num">% filled</th><th class="num">Gap to <%= TGT %>%</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% coe.group.months.forEach(function(x){ %>
+        <tr<%= x.month === am.month ? ' style="background:#f6f8fc;"' : '' %>>
+          <td><%= mLong(x.month) %><%= x.month === am.month ? ' — anchor' : (x.month === '2027-01' ? ' — crossover' : '') %></td>
+          <td class="num"><%= x.operating_days %></td>
+          <td class="num"><%= fmt(x.available_days) %></td>
+          <td class="num"><%= fmt(x.run_rate_days) %></td>
+          <td class="num"><%= x.leavers_to_date %><% if (x.leavers_in_month) { %><span class="muted"> (<%= x.leavers_in_month %> this month)</span><% } %></td>
+          <td class="num bad-text"><%= sgn(x.leaver_days) %></td>
+          <td class="num"><%= x.firm_children %></td>
+          <td class="num good-text">+<%= fmt(x.firm_days) %></td>
+          <td class="num muted"><%= fmt(x.all_days) %></td>
+          <td class="num"><strong><%= fmt(x.projected_days) %></strong></td>
+          <td class="num coe-pct <%= tone(x.pct) %>"><%= x.pct %>%</td>
+          <td class="num"><%= x.gap_days > 0 ? fmt(x.gap_days) : '—' %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="footnote" style="margin-bottom:0;">Every column is child-days unless it says otherwise. <strong>Available</strong> = licensed places × operating days. <strong>Run rate</strong> = the last complete week's booked child-days × (operating days ÷ 5). <strong>Leavers</strong> is a headcount; <strong>leaver days</strong> values them at the centre average from the day after each finish date. <strong>Firm days</strong> counts Offer Accepted and Pre-Offered only; <strong>all-pipeline days</strong> adds every other status (waitlist, tours, new families) and is shown for context — it is <em>not</em> in the projection. <strong>Projected</strong> = run rate − leaver days + firm days.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;"><%= mLong(am.month) %> in full <span class="muted" style="font-weight:400;font-size:13px;">· the same working, centre by centre</span></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead>
+      <tr>
+        <th>Centre</th><th class="num">Places</th><th class="num">Available</th><th class="num">Run rate</th>
+        <th class="num">Leavers</th><th class="num">Leaver days</th><th class="num">Firm starters</th><th class="num">Firm days</th>
+        <th class="num">All-pipeline days</th><th class="num">Projected</th><th class="num">% filled</th><th class="num">Gap to <%= TGT %>%</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% coe.centres.forEach(function(c){ var x = c.months[ai]; %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a></td>
+          <td class="num"><%= c.places %></td>
+          <td class="num"><%= fmt(x.available_days) %></td>
+          <td class="num"><%= fmt(x.run_rate_days) %></td>
+          <td class="num"><%= x.leavers_to_date %></td>
+          <td class="num bad-text"><%= sgn(x.leaver_days) %></td>
+          <td class="num"><%= x.firm_children %></td>
+          <td class="num good-text">+<%= fmt(x.firm_days) %></td>
+          <td class="num muted"><%= fmt(x.all_days) %></td>
+          <td class="num"><strong><%= fmt(x.projected_days) %></strong></td>
+          <td class="num coe-pct <%= tone(x.pct) %>"><%= x.pct %>%</td>
+          <td class="num"><%= x.gap_days > 0 ? fmt(x.gap_days) : '—' %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All operating centres</td>
+        <td class="num"><%= coe.group.places %></td>
+        <td class="num"><%= fmt(ga.available_days) %></td>
+        <td class="num"><%= fmt(ga.run_rate_days) %></td>
+        <td class="num"><%= ga.leavers_to_date %></td>
+        <td class="num"><%= sgn(ga.leaver_days) %></td>
+        <td class="num"><%= ga.firm_children %></td>
+        <td class="num">+<%= fmt(ga.firm_days) %></td>
+        <td class="num"><%= fmt(ga.all_days) %></td>
+        <td class="num"><%= fmt(ga.projected_days) %></td>
+        <td class="num coe-pct <%= tone(ga.pct) %>"><%= ga.pct %>%</td>
+        <td class="num"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></td>
+      </tr>
+    </tfoot>
+  </table></div>
+</div>
+
+<% if (coe.opening.length) { %>
+<div class="card pipeline-card">
+  <h2 style="margin-top:0;">Opening centres, first fill <span class="muted" style="font-weight:400;font-size:13px;">· <%= coe.opening.map(function(c){ return shortName(c.name) + ' ' + openMonth(c); }).join(' · ') %></span></h2>
+  <p class="sub" style="margin-bottom:14px;">No families to continue, only new ones — so there is no run rate. Licensed places are not recorded for these centres yet, so <strong>% once licensed places are confirmed</strong>; until then the honest figure is child-days committed.</p>
+  <div style="overflow-x:auto;"><table>
+    <thead>
+      <tr><th>Centre</th><th>Opens</th><th></th><% coe.months.forEach(function(x){ %><th class="num"><%= mShort(x.month) %><br><span style="font-weight:400;text-transform:none;letter-spacing:0;"><%= x.operating_days %> days</span></th><% }); %></tr>
+    </thead>
+    <tbody>
+      <% coe.opening.forEach(function(c){ %>
+        <tr>
+          <td rowspan="2"><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a></td>
+          <td rowspan="2"><%= openMonth(c) %></td>
+          <td>Firm child-days<br><span class="muted" style="font-size:11.5px;">Offer Accepted / Pre-Offered</span></td>
+          <% c.months.forEach(function(x){ %><td class="num"><strong><%= fmt(x.firm_days) %></strong><br><span class="muted" style="font-size:11.5px;"><%= x.firm_children %> child<%= x.firm_children === 1 ? '' : 'ren' %></span></td><% }); %>
+        </tr>
+        <tr>
+          <td class="muted">All-pipeline child-days<br><span style="font-size:11.5px;">any status, including waitlist</span></td>
+          <% c.months.forEach(function(x){ %><td class="num muted"><%= fmt(x.all_days) %><br><span style="font-size:11.5px;"><%= x.all_children %> child<%= x.all_children === 1 ? '' : 'ren' %></span></td><% }); %>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <div class="two-col" style="margin-top:20px;">
+    <% coe.opening.forEach(function(c){ var mx = Math.max.apply(null, Object.keys(c.mix).map(function(k){ return c.mix[k]; }).concat([1])); %>
+      <div>
+        <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);"><%= shortName(c.name) %> · requested weekdays <span class="muted" style="font-weight:400;">· <%= c.mix_families %> families in the pipeline</span></h3>
+        <div class="coe-mix">
+          <% ['mo','tu','we','th','fr'].forEach(function(d){ %><div style="height:<%= Math.round(c.mix[d] / mx * 100) %>%;" title="<%= c.mix[d] %> families asked for this day"></div><% }); %>
+        </div>
+        <div class="coe-mix-x">
+          <% [['mo','Mon'],['tu','Tue'],['we','Wed'],['th','Thu'],['fr','Fri']].forEach(function(p){ %><span><%= p[1] %><br><strong><%= c.mix[p[0]] %></strong></span><% }); %>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+  <p class="footnote" style="margin-bottom:0;">Weekday mix counts how many pipeline families asked for each day, from every expected start recorded on or after <%= dLong(coe.pipeline_from) %> (no month cut-off), so one family appears in as many columns as the days they asked for. Child-days before a centre's opening month are start dates recorded ahead of the opening in LineLeader, not an error — they are shown as recorded. Park Rd (2028) is excluded: it opens well beyond this window.</p>
+</div>
+<% } %>
+
+<div class="card">
+  <h2 style="margin-top:0;">How every number on this page is calculated</h2>
+  <div class="coe-method">
+    <p><strong>Child-days available</strong> = licensed places × operating days in the month. Operating days come from the NSW calendar (weekdays, less gazetted public holidays): <%= coe.months.map(function(x){ return mShort(x.month) + ' ' + x.operating_days; }).join(' · ') %>.</p>
+    <p><strong>Run rate</strong> = child-days booked in the last complete Mon–Fri week (<%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %>), scaled by operating days ÷ 5. It counts every family who has not set a finish date, which is why it is a ceiling.</p>
+    <p><strong>Leavers</strong> = children in OWNA with <em>upcoming</em> finish dates on or after <%= dLong(coe.as_at) %>. The headcount is exact. A child counted in one month stays counted in every later month.</p>
+    <p><strong>Leaver child-days</strong> = the centre's average booked days per child per week (last complete week ÷ children enrolled) × operating days ÷ 5, prorated by the share of the month falling after the finish date.</p>
+    <p><strong>Firm backfill</strong> = LineLeader expected starts at <strong>Offer Accepted</strong> or <strong>Pre-Offered</strong> with a start date on or before the month, valued at the weekdays that family asked for, prorated from the start date. Soft interest is excluded on purpose.</p>
+    <p><strong>All-pipeline backfill</strong> = the same calculation across every status, including waitlist and tours. It is the secondary figure and never feeds the projection.</p>
+    <p><strong>Projected filled</strong> = run rate − leaver child-days + firm backfill, shown as child-days and as a share of available child-days.</p>
+    <p><strong>Target <%= TGT %>%</strong> is a <strong>placeholder</strong> only. It should be a per-centre number the CEO sets, and the colours on this page will follow it once it is.</p>
+    <p><strong>Not used:</strong> OWNA's own forward bookings. Recurring bookings are rolled forward different distances for each family, so a raw forward month reads as demand when it is really an artefact of how far ahead the roll has run. The run-rate model avoids that; the per-child continuing count will replace it.</p>
+    <p><strong>Next build:</strong> a per-child count of who has confirmed bookings in the new year. That splits the navy segment into <em>confirmed continuing</em> and <em>not yet confirmed</em> — the second of those is the campaign's working list — and replaces the centre-average estimate with each leaver's own booking mix.</p>
+  </div>
+</div>
+
+<p class="footnote">
+  First release: the projection is a ceiling built from the current run rate, not a count of families who have confirmed they are staying. Continuing count and per-child booking mix follow in the next build.
+  <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
+</p>
+
+<%- include('partials/footer') %>
