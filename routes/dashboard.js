@@ -301,13 +301,21 @@ router.get("/projection", blockScoped, (req, res) => {
   res.render("projection", { title: "Enrolment Projection", proj: m.projection(scope, days), lastRun: lastRun() });
 });
 
-// Exit report (OWNA departures + LineLeader reasons), group-wide.
+// Exit report (OWNA departures + LineLeader reasons), group-wide. ?year=fy|cy picks the reporting year
+// for the departures-by-year table (default: financial year from 1 July).
 router.get("/exits", blockScoped, requireIdentified, (req, res) => {
+  const yearKind = req.query.year === "cy" ? "cy" : "fy";
   res.render("exits", {
     title: "Exit Report",
     summary: m.exitsSummary(),
     reasons: m.exitReasons(null),
     asAt: m.exitsLatestDate(),
+    yearKind,
+    byMonth: m.exitsByMonth(24),
+    byYear: m.exitsByYear(yearKind),
+    upcomingByMonth: m.upcomingExitsByMonth(8),
+    tenure: m.tenureByCentre(),
+    churn: m.churnByRoom(12),
     lastRun: lastRun(),
   });
 });

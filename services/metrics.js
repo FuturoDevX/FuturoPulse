@@ -691,6 +691,158 @@ function exitsLatestDate() {
   return r && r.d;
 }
 
+// ---- Exit report: by month / by year, finish dates set, tenure, churn ----
+
+// YYYY-MM for the calendar month `offset` months from the month containing `today` (0 = current month).
+function monthKey(today, offset) {
+  const [y, mo] = today.slice(0, 7).split("-").map(Number);
+  return new Date(Date.UTC(y, mo - 1 + offset, 1)).toISOString().slice(0, 7);
+}
+
+// Operating centres — the only ones with OWNA children, so the only ones that can have exits — alphabetical.
+function exitCentres() {
+  return db.prepare(`SELECT owna_id, name, capacity, enrolled FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name`).all();
+}
+
+// Earliest departure the snapshot holds. The exits snapshot is rebuilt every sync with a fixed look-back
+// (EXIT_LOOKBACK_DAYS, default 365), so months before this date are "not captured", not zero.
+function exitsCapturedFrom() {
+  const r = db.prepare(`SELECT MIN(finish_date) d FROM child_exits WHERE upcoming = 0`).get();
+  return (r && r.d) || null;
+}
+
+// Departures (upcoming = 0) per calendar month for the `months` months ending with the current month, per
+// operating centre and for the group. Months before the snapshot's earliest departure are null (not captured).
+function exitsByMonth(months = 24, today = todayStr()) {
+  const axis = []; for (let i = months - 1; i >= 0; i--) axis.push(monthKey(today, -i));
+  const capturedFrom = exitsCapturedFrom();
+  const capMonth = capturedFrom ? capturedFrom.slice(0, 7) : null;
+  const captured = (mo) => capMonth != null && mo >= capMonth;
+  const counts = db.prepare(`
+    SELECT owna_id, substr(finish_date, 1, 7) AS month, COUNT(*) AS n
+    FROM child_exits WHERE upcoming = 0 AND substr(finish_date, 1, 7) BETWEEN ? AND ?
+    GROUP BY owna_id, month
+  `).all(axis[0], axis[axis.length - 1]);
+  const map = new Map(); counts.forEach((r) => map.set(`${r.owna_id}|${r.month}`, r.n));
+  const rows = exitCentres().map((c) => {
+    const points = axis.map((mo) => (captured(mo) ? (map.get(`${c.owna_id}|${mo}`) || 0) : null));
+    return { owna_id: c.owna_id, name: c.name, points, total: points.reduce((s, v) => s + (v || 0), 0) };
+  });
+  const group = { points: axis.map((mo, i) => (captured(mo) ? rows.reduce((s, r) => s + (r.points[i] || 0), 0) : null)) };
+  group.total = group.points.reduce((s, v) => s + (v || 0), 0);
+  return { months: axis, current: axis[axis.length - 1], captured_from: capturedFrom, rows, group };
+}
+
+// Departures (upcoming = 0) per reporting year — 'fy' = financial years from 1 July (label "FY 2025-26"),
+// 'cy' = calendar years — per operating centre and for the group, from the earliest captured year to the current one.
+// A year is `to_date` when it has not finished, and carries `captured_from` when the snapshot only covers part of it.
+function exitsByYear(kind = "fy", today = todayStr()) {
+  const k = kind === "cy" ? "cy" : "fy";
+  const startYear = (d) => { const y = Number(d.slice(0, 4)); return k === "cy" ? y : (Number(d.slice(5, 7)) >= 7 ? y : y - 1); };
+  const capturedFrom = exitsCapturedFrom();
+  const years = [];
+  for (let y = startYear(capturedFrom || today); y <= startYear(today); y++) {
+    const start = k === "cy" ? `${y}-01-01` : `${y}-07-01`, end = k === "cy" ? `${y}-12-31` : `${y + 1}-06-30`;
+    years.push({
+      key: String(y), label: k === "cy" ? String(y) : `FY ${y}-${String(y + 1).slice(2)}`, start, end,
+      to_date: end > today, captured_from: capturedFrom && capturedFrom > start ? capturedFrom : null,
+    });
+  }
+  const tally = new Map();
+  db.prepare(`SELECT owna_id, finish_date FROM child_exits WHERE upcoming = 0`).all()
+    .forEach((e) => { const key = `${e.owna_id}|${startYear(e.finish_date)}`; tally.set(key, (tally.get(key) || 0) + 1); });
+  const rows = exitCentres().map((c) => {
+    const counts = {}; years.forEach((y) => { counts[y.key] = tally.get(`${c.owna_id}|${y.key}`) || 0; });
+    return { owna_id: c.owna_id, name: c.name, counts, total: Object.values(counts).reduce((s, v) => s + v, 0) };
+  });
+  const group = { counts: {} }; years.forEach((y) => { group.counts[y.key] = rows.reduce((s, r) => s + r.counts[y.key], 0); });
+  group.total = Object.values(group.counts).reduce((s, v) => s + v, 0);
+  return { kind: k, years, rows, group, captured_from: capturedFrom };
+}
+
+// Finish dates already set in OWNA (upcoming = 1) per month for the current month and the following
+// `months` - 1, per operating centre and for the group; anything beyond the window is counted in `later`.
+// This is the COE leaver signal: confirmed departures whose places will need refilling.
+function upcomingExitsByMonth(months = 8, today = todayStr()) {
+  const axis = []; for (let i = 0; i < months; i++) axis.push(monthKey(today, i));
+  const last = axis[axis.length - 1];
+  const map = new Map(), laterMap = new Map();
+  db.prepare(`SELECT owna_id, substr(finish_date, 1, 7) AS month, COUNT(*) AS n FROM child_exits WHERE upcoming = 1 GROUP BY owna_id, month`).all()
+    .forEach((r) => { if (r.month > last) laterMap.set(r.owna_id, (laterMap.get(r.owna_id) || 0) + r.n); else map.set(`${r.owna_id}|${r.month}`, r.n); });
+  const rows = exitCentres().map((c) => {
+    const points = axis.map((mo) => map.get(`${c.owna_id}|${mo}`) || 0);
+    const later = laterMap.get(c.owna_id) || 0;
+    return { owna_id: c.owna_id, name: c.name, points, later, total: points.reduce((s, v) => s + v, 0) + later };
+  });
+  const group = { points: axis.map((_, i) => rows.reduce((s, r) => s + r.points[i], 0)), later: rows.reduce((s, r) => s + r.later, 0) };
+  group.total = group.points.reduce((s, v) => s + v, 0) + group.later;
+  return { months: axis, rows, group };
+}
+
+// Average and median tenure of departed children (upcoming = 0, tenure_days > 0) in years (÷ 365.25), per
+// operating centre and overall, with the count each figure rests on. Departed children without a usable
+// start date (tenure null or zero) are excluded from the averages and reported in `excluded`.
+function tenureByCentre() {
+  const years = (days) => Math.round((days / 365.25) * 100) / 100;
+  const stats = (vals) => {
+    if (!vals.length) return { n: 0, avg_days: null, median_days: null, avg_years: null, median_years: null };
+    const s = vals.slice().sort((a, b) => a - b), mid = Math.floor(s.length / 2);
+    const median = s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    const avg = s.reduce((a, b) => a + b, 0) / s.length;
+    return { n: s.length, avg_days: Math.round(avg), median_days: Math.round(median), avg_years: years(avg), median_years: years(median) };
+  };
+  const byCentre = new Map();
+  db.prepare(`SELECT owna_id, tenure_days FROM child_exits WHERE upcoming = 0`).all().forEach((e) => {
+    const c = byCentre.get(e.owna_id) || { departed: 0, vals: [] };
+    c.departed += 1; if (e.tenure_days > 0) c.vals.push(e.tenure_days); byCentre.set(e.owna_id, c);
+  });
+  const all = { departed: 0, vals: [] };
+  const rows = exitCentres().map((c) => {
+    const t = byCentre.get(c.owna_id) || { departed: 0, vals: [] };
+    all.departed += t.departed; all.vals.push(...t.vals);
+    return { owna_id: c.owna_id, name: c.name, departed: t.departed, excluded: t.departed - t.vals.length, ...stats(t.vals) };
+  });
+  return { rows, group: { departed: all.departed, excluded: all.departed - all.vals.length, ...stats(all.vals) } };
+}
+
+// Departures over the last `months` months (window (from, today]) per operating centre and per room — the room
+// at exit as recorded in OWNA, rooms in descending order of departures — with an annualised churn rate:
+// departures × (12 ÷ months) ÷ average booked children per operating day over the same window (daily_metrics,
+// NSW operating days with bookings). A centre with no booking data in the window falls back to centres.enrolled.
+function churnByRoom(months = 12, today = todayStr()) {
+  const d = new Date(today + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() - months);
+  const from = d.toISOString().slice(0, 10);
+  const roomRows = db.prepare(`
+    SELECT owna_id, room, COUNT(*) AS n FROM child_exits
+    WHERE upcoming = 0 AND finish_date > ? AND finish_date <= ?
+    GROUP BY owna_id, room ORDER BY n DESC, room IS NULL, room
+  `).all(from, today);
+  const seat = new Map();
+  db.prepare(`SELECT owna_id, metric_date, booked FROM daily_metrics WHERE metric_date > ? AND metric_date <= ? AND booked > 0`).all(from, today)
+    .forEach((r) => { if (!cal.isOperatingDay(r.metric_date)) return; const s = seat.get(r.owna_id) || { sum: 0, days: 0 }; s.sum += r.booked; s.days += 1; seat.set(r.owna_id, s); });
+  const annualise = (n) => (n * 12) / months;
+  const rate = (n, den) => (den > 0 ? Math.round((annualise(n) / den) * 1000) / 10 : null);
+  let gDep = 0, gDen = 0;
+  const rows = exitCentres().map((c) => {
+    const rooms = roomRows.filter((r) => r.owna_id === c.owna_id);
+    const departures = rooms.reduce((s, r) => s + r.n, 0);
+    const s = seat.get(c.owna_id);
+    const denominator = s ? s.sum / s.days : (c.enrolled > 0 ? c.enrolled : 0);
+    gDep += departures; gDen += denominator;
+    return {
+      owna_id: c.owna_id, name: c.name, departures, annualised: Math.round(annualise(departures) * 10) / 10,
+      avg_booked: s ? Math.round((s.sum / s.days) * 10) / 10 : null, booked_days: s ? s.days : 0,
+      enrolled: c.enrolled || 0, denominator_source: s ? "booked" : (c.enrolled > 0 ? "enrolled" : null),
+      churn_pct: rate(departures, denominator),
+      rooms: rooms.map((r) => ({ room: r.room || "Not recorded", n: r.n, share: pct(r.n, departures) })),
+    };
+  });
+  return {
+    from, to: today, months, rows,
+    group: { departures: gDep, annualised: Math.round(annualise(gDep) * 10) / 10, avg_booked: Math.round(gDen * 10) / 10, churn_pct: rate(gDep, gDen) },
+  };
+}
+
 
 
 
@@ -1395,7 +1547,7 @@ module.exports = {
   rosterWeeks, rosterForWeek, rosterCentre, latestReconciledRosterWeek,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
   llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr, pipelineTrend, pipelineCentres, waitlistJoins,
-  exitsSummary, exitReasons, centreExits, exitsLatestDate,
+  exitsSummary, exitReasons, centreExits, exitsLatestDate, exitsByMonth, exitsByYear, upcomingExitsByMonth, tenureByCentre, churnByRoom,
   forwardOccupancyByCentre, projection, centrePipelineDetail,
   occupancyTrend, occupancyTrendGroup, occupancyTrendGroupFwd,
   labourWeeks, labourForWeek, labourTrend, wagesTrend, compareTrend, COMPARE_METRICS, labourBudgets, saveLabourBudget,

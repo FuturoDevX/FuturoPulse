@@ -5,12 +5,22 @@
   const totUp = summary.reduce((s,r)=>s+r.upcoming,0);
   const totKnown = summary.reduce((s,r)=>s+r.reason_known,0);
   const reasonColour = (r) => r==='Another Centre' ? 'bad' : (r==='Staff/Teacher Issue' ? 'bad' : (r==='Aged Out-Too Old' ? 'muted-reason' : 'navy'));
+  // Batch 3: departures by month / year, finish dates set, tenure, churn. ?year=fy|cy picks the reporting year for the year table.
+  const yk = locals.yearKind === 'cy' ? 'cy' : 'fy';
+  const mLong = (mo) => { const [y,m]=mo.split('-'); return new Date(y, m-1, 1).toLocaleDateString('en-AU',{month:'short',year:'numeric'}); };
+  const mShort = (mo) => { const [y,m]=mo.split('-'); return new Date(y, m-1, 1).toLocaleDateString('en-AU',{month:'short'}) + ' ' + y.slice(2); };
+  const dLong = (d) => d ? new Date(d+'T00:00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : '';
+  const yrs = (v) => v == null ? '—' : v.toFixed(2);
+  const cell = (v) => v == null ? '—' : v;
 %>
 
 <div class="page-head">
   <div>
     <h1>Exit Report</h1>
     <p class="sub">Departures from OWNA (finish dates), reasons from LineLeader where recorded · last 12 months<%= asAt ? ' · as at ' + asAt.slice(0,10) : '' %></p>
+  </div>
+  <div class="head-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <span class="year-toggle">Reporting year: <a href="/exits?year=fy" class="<%= yk === 'fy' ? 'on' : '' %>" title="Financial year (from 1 July)">FY</a> | <a href="/exits?year=cy" class="<%= yk === 'cy' ? 'on' : '' %>" title="Calendar year (from 1 January)">Calendar</a></span>
   </div>
 </div>
 
@@ -19,6 +29,7 @@
   <div class="card stat"><div class="n"><%= totUp %></div><div class="l">Scheduled to leave</div></div>
   <div class="card stat"><div class="n"><%= totPast ? Math.round(totKnown/totPast*100) : 0 %>%</div><div class="l">With a recorded reason</div></div>
   <div class="card stat"><div class="n bad-text"><%= (reasons.rows.find(r=>r.reason==='Another Centre')||{}).n || 0 %></div><div class="l">Lost to another centre</div></div>
+  <div class="card stat"><div class="n"><%= tenure.group.avg_years == null ? '—' : tenure.group.avg_years.toFixed(2) + ' yrs' %></div><div class="l">Average tenure of departed children<span class="cap">median <%= yrs(tenure.group.median_years) %> yrs · based on <%= tenure.group.n %> of <%= tenure.group.departed %> departed children with a recorded start date</span></div></div>
 </div>
 
 <div class="card">
@@ -58,6 +69,104 @@
       <div class="reason-n"><%= r.n %> <span class="muted">(<%= wpct %>%)</span></div>
     </div>
   <% }); %>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Departures by month <span class="muted" style="font-weight:400;font-size:13px;">· last <%= byMonth.months.length %> months · per centre</span></h2>
+  <%- include('partials/linechart', { lc: { labels: byMonth.months.map(mShort), series: byMonth.rows.map(function(r){ return { name: shortName(r.name), points: r.points }; }), height: 200 } }) %>
+  <div style="overflow-x:auto;margin-top:14px;"><table>
+    <thead><tr><th>Month</th><% byMonth.rows.forEach(function(r){ %><th class="num"><%= shortName(r.name) %></th><% }); %><th class="num">All centres</th></tr></thead>
+    <tbody>
+      <% byMonth.months.forEach(function(mo, i){ %>
+        <tr>
+          <td><%= mLong(mo) %><%= mo === byMonth.current ? ' (so far)' : '' %></td>
+          <% byMonth.rows.forEach(function(r){ %><td class="num"><%= cell(r.points[i]) %></td><% }); %>
+          <td class="num"><strong><%= cell(byMonth.group.points[i]) %></strong></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot><tr class="total-row"><td>Total · captured months</td><% byMonth.rows.forEach(function(r){ %><td class="num"><%= r.total %></td><% }); %><td class="num"><%= byMonth.group.total %></td></tr></tfoot>
+  </table></div>
+  <p class="footnote" style="margin-bottom:0;">— = not captured. The OWNA exits snapshot is rebuilt each sync with a 365-day look-back (EXIT_LOOKBACK_DAYS), so it only ever holds the last 12 months of departures<%= byMonth.captured_from ? ' — nothing before ' + dLong(byMonth.captured_from) : '' %>; the earlier months of this 24-month table stay empty until the look-back is extended. The current month is still in progress.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Departures by <%= yk === 'fy' ? 'financial year' : 'calendar year' %> <span class="muted" style="font-weight:400;font-size:13px;">· <%= yk === 'fy' ? '1 July – 30 June' : '1 January – 31 December' %> · <a href="/exits?year=<%= yk === 'fy' ? 'cy' : 'fy' %>">switch to <%= yk === 'fy' ? 'calendar year' : 'financial year' %></a></span></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Centre</th><% byYear.years.forEach(function(y){ %><th class="num"><%= y.label %><% if (y.to_date) { %> <span class="muted">(to date)</span><% } %><% if (y.captured_from) { %><br><span class="muted" style="font-weight:400;text-transform:none;">from <%= dLong(y.captured_from) %></span><% } %></th><% }); %><th class="num">Total</th></tr></thead>
+    <tbody>
+      <% byYear.rows.forEach(function(r){ %>
+        <tr><td><%= shortName(r.name) %></td><% byYear.years.forEach(function(y){ %><td class="num"><%= r.counts[y.key] %></td><% }); %><td class="num"><strong><%= r.total %></strong></td></tr>
+      <% }); %>
+    </tbody>
+    <tfoot><tr class="total-row"><td>All centres</td><% byYear.years.forEach(function(y){ %><td class="num"><%= byYear.group.counts[y.key] %></td><% }); %><td class="num"><%= byYear.group.total %></td></tr></tfoot>
+  </table></div>
+  <p class="footnote" style="margin-bottom:0;">Showing <%= yk === 'fy' ? 'financial years (FY 2025-26 = 1 Jul 2025 – 30 Jun 2026); ?year=fy is the default' : 'calendar years; switch back with FY at the top' %>. A year marked “from …” only holds departures from that date because of the snapshot look-back above, so it understates the full year.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Finish dates already set <span class="muted" style="font-weight:400;font-size:13px;">· next <%= upcomingByMonth.months.length %> months · the COE leaver signal</span></h2>
+  <p class="footnote" style="margin-top:0;">Children whose OWNA finish date is already in the future — confirmed leavers, so each month’s count is enrolment that will need replacing. This is the COE leaver signal: it reflects finish dates entered in OWNA so far, not a forecast.</p>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Centre</th><% upcomingByMonth.months.forEach(function(mo){ %><th class="num"><%= mShort(mo) %></th><% }); %><th class="num">Later</th><th class="num">Total</th></tr></thead>
+    <tbody>
+      <% upcomingByMonth.rows.forEach(function(r){ %>
+        <tr><td><%= shortName(r.name) %></td><% r.points.forEach(function(v){ %><td class="num"><%= v || '' %></td><% }); %><td class="num"><%= r.later || '' %></td><td class="num"><strong><%= r.total %></strong></td></tr>
+      <% }); %>
+    </tbody>
+    <tfoot><tr class="total-row"><td>All centres</td><% upcomingByMonth.group.points.forEach(function(v){ %><td class="num"><%= v %></td><% }); %><td class="num"><%= upcomingByMonth.group.later %></td><td class="num"><%= upcomingByMonth.group.total %></td></tr></tfoot>
+  </table></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Average tenure of departed children <span class="muted" style="font-weight:400;font-size:13px;">· years from OWNA start date to finish date</span></h2>
+  <table>
+    <thead><tr><th>Centre</th><th class="num">Departed</th><th class="num">With recorded tenure</th><th class="num">Average (yrs)</th><th class="num">Median (yrs)</th></tr></thead>
+    <tbody>
+      <% tenure.rows.forEach(function(r){ %>
+        <tr><td><%= shortName(r.name) %></td><td class="num"><%= r.departed %></td><td class="num"><%= r.n %><% if (r.excluded) { %><span class="muted"> (<%= r.excluded %> without)</span><% } %></td><td class="num"><%= yrs(r.avg_years) %></td><td class="num"><%= yrs(r.median_years) %></td></tr>
+      <% }); %>
+    </tbody>
+    <tfoot><tr class="total-row"><td>All centres</td><td class="num"><%= tenure.group.departed %></td><td class="num"><%= tenure.group.n %></td><td class="num"><%= yrs(tenure.group.avg_years) %></td><td class="num"><%= yrs(tenure.group.median_years) %></td></tr></tfoot>
+  </table>
+  <p class="footnote" style="margin-bottom:0;">Tenure = days from the child’s earliest OWNA start date to their finish date, ÷ 365.25, averaged over departed children (not those still scheduled to leave). Children with no start date or a zero-day tenure are excluded — “with recorded tenure” is the count each average rests on, so a centre with many exclusions is a weaker figure. Newer centres naturally show shorter tenure.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Churn by centre <span class="muted" style="font-weight:400;font-size:13px;">· last <%= churn.months %> months · <%= dLong(churn.from) %> → <%= dLong(churn.to) %></span></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Centre</th><th class="num">Departures</th><th class="num">Avg booked<br>per operating day</th><th class="num">Enrolled now<br>(OWNA headcount)</th><th class="num">Annualised churn</th></tr></thead>
+    <tbody>
+      <% churn.rows.forEach(function(r){ %>
+        <tr>
+          <td><%= shortName(r.name) %></td>
+          <td class="num"><%= r.departures %></td>
+          <td class="num"><% if (r.denominator_source === 'booked') { %><%= r.avg_booked %><span class="muted"> · <%= r.booked_days %> days</span><% } else { %><span class="muted">no booking data</span><% } %></td>
+          <td class="num"><%= r.enrolled || '—' %></td>
+          <td class="num"><% if (r.churn_pct == null) { %>—<% } else { %><strong><%= r.churn_pct %>%</strong><% if (r.denominator_source === 'enrolled') { %> <span class="badge warn" title="No OWNA booking data in the window, so departures are divided by the enrolled headcount instead">vs enrolled headcount</span><% } %><% } %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot><tr class="total-row"><td>All centres</td><td class="num"><%= churn.group.departures %></td><td class="num"><%= churn.group.avg_booked %></td><td class="num">—</td><td class="num"><%= churn.group.churn_pct == null ? '—' : churn.group.churn_pct + '%' %></td></tr></tfoot>
+  </table></div>
+
+  <h3 style="margin:18px 0 8px;">By room <span class="muted" style="font-weight:400;font-size:13px;">· departures in the window, rooms in descending order</span></h3>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));align-items:start;">
+    <% churn.rows.forEach(function(r){ %>
+      <div>
+        <div class="section-label"><%= shortName(r.name) %> · <%= r.departures %></div>
+        <% if (!r.rooms.length) { %><p class="muted" style="font-size:13px;margin:4px 0;">No departures in the window.</p><% } else { %>
+        <table>
+          <thead><tr><th>Room</th><th class="num">Departures</th><th class="num">Share</th></tr></thead>
+          <tbody><% r.rooms.forEach(function(rm){ %><tr><td><%= rm.room %></td><td class="num"><%= rm.n %></td><td class="num"><%= rm.share %>%</td></tr><% }); %></tbody>
+        </table>
+        <% } %>
+      </div>
+    <% }); %>
+  </div>
+  <p class="footnote" style="margin-bottom:0;">
+    <strong>Annualised churn</strong> = departures in the window × (12 ÷ <%= churn.months %>) ÷ average booked children per operating day over the same window (OWNA daily bookings on NSW operating days that have bookings ÷ those days); the “All centres” rate divides total departures by the sum of the centre averages. Where a centre has no booking data in the window the OWNA enrolled headcount is used instead and flagged. Enrolled headcount is higher than daily booked seats because most children attend two or three days a week, so churn against daily seats reads higher than churn against headcount — the headcount column is there for context. <strong>Room</strong> is the room at exit as recorded in OWNA, not the room the child spent most time in.
+  </p>
 </div>
 
 <p class="footnote">

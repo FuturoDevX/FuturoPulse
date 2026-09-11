@@ -256,5 +256,104 @@ test('Week 1 batch 1',async(t)=>{
   assert.doesNotMatch(html,/\$80\.\d/);
   assert.equal((await request('/wages',await login('centre'))).status,403); // still blocked for centre logins
  });
+ // ===== Batch 3 (Day 3): exits by month / year, finish dates set, tenure, churn by centre and room =====
+ await t.test('exitsByMonth, exitsByYear and upcomingExitsByMonth count OWNA finish dates per centre and group',()=>{
+  // Fixtures (inserted here so batches 1–2 above are unaffected): a third operating centre with an enrolled headcount
+  // but no booking rows, and departures / scheduled finishes anchored to the current month. Names must never render.
+  db.prepare("INSERT INTO centres(owna_id,name,capacity,enrolled,opening) VALUES('c','Centre Gamma',80,50,0)").run();
+  const ex=db.prepare("INSERT INTO child_exits(owna_id,child_key,child_name,dob,room,start_date,finish_date,tenure_days,upcoming,reason,reason_source,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,datetime('now'))");
+  const mk=(id,key,room,finish,tenure,up,reason)=>ex.run(id,key,'Fixture Child '+key,'2022-01-01',room,null,finish,tenure,up,reason||null,reason?'lineleader':null);
+  mk('a','a1','Room 6',monthShift(0)+'-01',730,0,'Aged Out-Too Old'); mk('a','a2','Room 6',monthShift(-1)+'-15',365,0,'Another Centre');
+  mk('a','a3','Room 1',monthShift(-3)+'-10',0,0); mk('a','a4','Room 3',monthShift(-6)+'-20',null,0); // zero / missing tenure → excluded from tenure
+  mk('a','a5','Room 2',monthShift(-13)+'-05',100,0); // outside the 12-month churn window, inside the 24-month table
+  mk('b','b1','Toddlers',monthShift(0)+'-01',200,0); mk('b','b2',null,monthShift(-10)+'-12',800,0); // no room recorded
+  mk('c','c1','Nursery',monthShift(-2)+'-03',50,0);
+  mk('a','a6','Room 6',monthShift(1)+'-15',null,1); mk('a','a7','Room 6',monthShift(3)+'-15',null,1); mk('b','b3','Toddlers',monthShift(9)+'-01',null,1);
+  const bm=m.exitsByMonth(24);
+  assert.equal(bm.months.length,24);assert.equal(bm.months[0],monthShift(-23));assert.equal(bm.current,monthShift(0));
+  assert.equal(bm.captured_from,monthShift(-13)+'-05');
+  assert.deepEqual(bm.rows.map(r=>[r.owna_id,r.total]),[['a',5],['b',2],['c',1]]);
+  const idx=(n)=>23+n, a=bm.rows[0], b=bm.rows[1];
+  assert.equal(a.points[idx(-14)],null);assert.equal(bm.group.points[idx(-23)],null); // before the snapshot look-back: not captured
+  assert.equal(a.points[idx(-13)],1);assert.equal(a.points[idx(-12)],0);assert.equal(a.points[idx(-6)],1);assert.equal(a.points[idx(-3)],1);assert.equal(a.points[idx(-1)],1);assert.equal(a.points[idx(0)],1);
+  assert.equal(b.points[idx(-10)],1);assert.equal(b.points[idx(0)],1);assert.equal(bm.group.points[idx(0)],2);assert.equal(bm.group.total,8);
+  assert.equal(m.exitsByMonth(3).months.length,3);
+  // Years: FY (default) and calendar, labelled, with the current year "to date" and a partially captured first year.
+  const fyKey=(d)=>{const y=+d.slice(0,4);return String(+d.slice(5,7)>=7?y:y-1);};
+  const fy=m.exitsByYear('fy');
+  assert.equal(fy.kind,'fy');assert.equal(fy.years[0].key,fyKey(monthShift(-13)+'-05'));assert.equal(fy.years[fy.years.length-1].key,fyKey(today));
+  const cur=fy.years[fy.years.length-1];assert.equal(cur.label,'FY '+cur.key+'-'+String(+cur.key+1).slice(2));assert.equal(cur.to_date,true);assert.equal(cur.start,cur.key+'-07-01');
+  assert.equal(fy.years[0].captured_from,monthShift(-13)+'-05');
+  const fixA=[monthShift(0)+'-01',monthShift(-1)+'-15',monthShift(-3)+'-10',monthShift(-6)+'-20',monthShift(-13)+'-05'];
+  fy.years.forEach(y=>assert.equal(fy.rows[0].counts[y.key],fixA.filter(d=>fyKey(d)===y.key).length,'FY '+y.key));
+  assert.equal(fy.rows[0].total,5);assert.equal(fy.group.total,8);assert.equal(fy.years.reduce((s,y)=>s+fy.group.counts[y.key],0),8);
+  const cy=m.exitsByYear('cy');
+  assert.equal(cy.kind,'cy');assert.equal(cy.years[cy.years.length-1].label,today.slice(0,4));assert.equal(cy.years[cy.years.length-1].to_date,today.slice(5)!=='12-31');
+  cy.years.forEach(y=>assert.equal(cy.rows[0].counts[y.key],fixA.filter(d=>d.slice(0,4)===y.key).length,'CY '+y.key));
+  assert.equal(m.exitsByYear('bogus').kind,'fy');
+  assert.deepEqual(m.exitsByYear('fy','2026-09-11').years.map(y=>y.label).slice(-1),['FY 2026-27']);
+  // Finish dates already set: current month + 7, anything later in `later`.
+  const up=m.upcomingExitsByMonth(8);
+  assert.deepEqual(up.months,[0,1,2,3,4,5,6,7].map(monthShift));
+  assert.deepEqual(up.rows.map(r=>[r.owna_id,r.points,r.later,r.total]),[['a',[0,1,0,1,0,0,0,0],0,2],['b',[0,0,0,0,0,0,0,0],1,1],['c',[0,0,0,0,0,0,0,0],0,0]]);
+  assert.deepEqual(up.group,{points:[0,1,0,1,0,0,0,0],later:1,total:3});
+ });
+ await t.test('tenureByCentre averages departed children with a positive tenure, in years, with a JS median',()=>{
+  const tn=m.tenureByCentre();
+  assert.deepEqual(tn.rows.map(r=>[r.owna_id,r.departed,r.n,r.excluded,r.avg_years,r.median_years,r.avg_days,r.median_days]),[
+   ['a',5,3,2,1.09,1.00,398,365],  // 730, 365, 100 days
+   ['b',2,2,0,1.37,1.37,500,500],
+   ['c',1,1,0,0.14,0.14,50,50]]);
+  assert.deepEqual(tn.group,{departed:8,excluded:2,n:6,avg_days:374,median_days:283,avg_years:1.02,median_years:0.77}); // median of 6 = (200+365)/2
+  assert.ok(tn.rows.every(r=>!('child_name' in r)));
+ });
+ await t.test('churnByRoom annualises departures over average booked per operating day, rooms in descending order',()=>{
+  const ch=m.churnByRoom(12);
+  assert.equal(ch.to,today);assert.equal(ch.months,12);
+  const f=new Date(today+'T00:00:00Z');f.setUTCMonth(f.getUTCMonth()-12);assert.equal(ch.from,f.toISOString().slice(0,10));
+  const a=ch.rows[0], b=ch.rows[1], c=ch.rows[2];
+  // Alpha: 4 departures in the window (the 13-month-old one drops out). Booking rows: 9 Jun (50), 10 Jun (70) and today's
+  // (50) when today is an operating day; the King's Birthday row and the booked-ahead row are excluded.
+  const op=cal.isOperatingDay(today), sum=120+(op?50:0), days=2+(op?1:0);
+  assert.equal(a.departures,4);assert.equal(a.annualised,4);assert.equal(a.denominator_source,'booked');
+  assert.equal(a.booked_days,days);assert.equal(a.avg_booked,Math.round(sum/days*10)/10);
+  assert.equal(a.churn_pct,Math.round(4/(sum/days)*1000)/10);
+  assert.deepEqual(a.rooms,[{room:'Room 6',n:2,share:50},{room:'Room 1',n:1,share:25},{room:'Room 3',n:1,share:25}]);
+  assert.deepEqual([b.departures,b.avg_booked,b.booked_days,b.churn_pct,b.denominator_source,b.enrolled],[2,40,1,5,'booked',0]);
+  assert.deepEqual(b.rooms,[{room:'Toddlers',n:1,share:50},{room:'Not recorded',n:1,share:50}]); // unnamed room sorts last
+  assert.deepEqual([c.departures,c.avg_booked,c.booked_days,c.enrolled,c.denominator_source,c.churn_pct],[1,null,0,50,'enrolled',2]); // 1 ÷ 50 headcount
+  assert.equal(ch.group.departures,7);assert.equal(ch.group.avg_booked,Math.round((sum/days+40+50)*10)/10);
+  assert.equal(ch.group.churn_pct,Math.round(7/(sum/days+40+50)*1000)/10);
+  const f6=new Date(today+'T00:00:00Z');f6.setUTCMonth(f6.getUTCMonth()-6);const from6=f6.toISOString().slice(0,10);
+  const n6=[monthShift(0)+'-01',monthShift(-1)+'-15',monthShift(-3)+'-10',monthShift(-6)+'-20'].filter(d=>d>from6&&d<=today).length;
+  const six=m.churnByRoom(6);assert.equal(six.rows[0].departures,n6);assert.equal(six.rows[0].annualised,n6*2); // 6-month window annualised × 2
+ });
+ await t.test('Exit Report shows month / year tables, the COE leaver table, tenure, churn and no names; year toggle works',async()=>{
+  const c=await login('admin');
+  const html=await page('/exits',c);
+  assert.match(html,/Departures by month <span[^>]*>· last 24 months/);
+  assert.match(html,/Departures by financial year/);assert.match(html,/FY \d{4}-\d{2} <span class="muted">\(to date\)<\/span>/);
+  assert.match(html,/href="\/exits\?year=fy" class="on"/);assert.match(html,/href="\/exits\?year=cy" class=""/);
+  assert.match(html,/Finish dates already set <span[^>]*>· next 8 months · the COE leaver signal/);
+  assert.match(html,/This is the COE leaver signal/);
+  assert.match(html,/<div class="n">1\.02 yrs<\/div><div class="l">Average tenure of departed children<span class="cap">median 0\.77 yrs · based on 6 of 8 departed children/);
+  assert.match(html,/Average tenure of departed children <span[^>]*>· years from OWNA start date/);
+  assert.match(html,/<td class="num">3<span class="muted"> \(2 without\)<\/span><\/td><td class="num">1\.09<\/td><td class="num">1\.00<\/td>/); // Alpha tenure row
+  assert.match(html,/Churn by centre <span[^>]*>· last 12 months/);
+  assert.match(html,/vs enrolled headcount/); // Gamma has no booking data
+  assert.match(html,/<td>Room 6<\/td><td class="num">2<\/td><td class="num">50%<\/td>/);
+  assert.match(html,/<td>Not recorded<\/td><td class="num">1<\/td>/);
+  assert.match(html,/room at exit as recorded in OWNA/);
+  assert.match(html,/365-day look-back \(EXIT_LOOKBACK_DAYS\)/);assert.match(html,/<td class="num">—<\/td>/); // not-captured months
+  assert.match(html,/ \(so far\)<\/td>/);
+  assert.doesNotMatch(html,/Fixture Child/);
+  const cy=await page('/exits?year=cy',c);
+  assert.match(cy,/Departures by calendar year/);assert.match(cy,/href="\/exits\?year=cy" class="on"/);
+  assert.match(cy,new RegExp('<th class="num">'+today.slice(0,4)+' <span class="muted">\\(to date\\)'));
+  assert.doesNotMatch(cy,/Departures by financial year/);
+  assert.match(await page('/exits',await login('exec')),/COE leaver signal/);
+  assert.equal((await request('/exits',await login('viewer'))).status,403); // aggregates-only login stays out
+  assert.equal((await request('/exits',await login('centre'))).status,403); // centre-scoped login stays out
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
