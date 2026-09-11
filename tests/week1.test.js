@@ -10,6 +10,8 @@ const db=require('../db/db'), bcrypt=require('bcryptjs');
 const pass='FixturePasswordOnly!';
 for(const [id,name,cap,opening] of [['a','Centre Alpha',100,0],['b','Centre Beta',100,0],['open','Centre Opening',0,1]]) db.prepare('INSERT INTO centres(owna_id,name,capacity,opening) VALUES(?,?,?,?)').run(id,name,cap,opening);
 for(const role of ['viewer','centre','exec','admin']) db.prepare('INSERT INTO users(email,name,password_hash,role,location_id) VALUES(?,?,?,?,?)').run(role+'@example.test',role,bcrypt.hashSync(pass,4),role,role==='centre'?'a':null);
+// /admin/users can assign a centre login to a pre-opening centre, which has no utilisation row (opening=1, capacity=0).
+db.prepare('INSERT INTO users(email,name,password_hash,role,location_id) VALUES(?,?,?,?,?)').run('centre-open@example.test','centre-open',bcrypt.hashSync(pass,4),'centre','open');
 const m=require('../services/metrics'), cal=require('../services/calendar');
 const today=m.todayStr();
 const addDays=(d,n)=>{const x=new Date(d+'T00:00:00Z');x.setUTCDate(x.getUTCDate()+n);return x.toISOString().slice(0,10);};
@@ -148,6 +150,17 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(await page('/',await login('viewer')),/Seats filled, avg per day/);
   const scoped=await page(`/?from=${today}&to=${addDays(today,7)}`,await login('centre'));
   assert.match(scoped,/booked ahead — departures not yet deducted/);assert.doesNotMatch(scoped,/Centre Beta/);
+  // The utilisation footnote is per centre: a scoped login sees its own 100 places, never the 200-place group denominator.
+  const gu=m.utilisationYtd('fy',today);
+  assert.match(scoped,/÷ \(100 places ×/);assert.doesNotMatch(scoped,new RegExp('\\('+gu.places+' places ×'));
+  // A scoped login on a centre with no utilisation row (pre-opening, 0 licensed places) must get no figures at all, not the group's.
+  const noCap=await page('/',await login('centre-open'));
+  assert.match(noCap,/No licensed places recorded for your centre yet, so utilisation cannot be calculated\./);
+  assert.doesNotMatch(noCap,/Utilisation FYTD \(FY/);assert.doesNotMatch(noCap,/Annual denominator/);
+  assert.doesNotMatch(noCap,new RegExp(gu.places+' places'));
+  assert.doesNotMatch(noCap,new RegExp(gu.group.cap_days.toLocaleString('en-AU')+' child-days'));
+  assert.doesNotMatch(noCap,new RegExp(gu.annual_child_days.toLocaleString('en-AU')+' child-days'));
+  assert.match(await page('/?year=cy',await login('centre-open')),/Showing calendar year/); // the year toggle hint survives the suppression
  });
  await t.test('projection is renamed, sits after the pipeline in the nav and carries the 90-day trust note',async()=>{
   const c=await login('exec');
