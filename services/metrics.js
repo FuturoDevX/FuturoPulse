@@ -2,6 +2,7 @@
 // so pages are fast and work even if OWNA is briefly unreachable.
 const db = require("../db/db");
 const cal = require("./calendar");
+const { ownaIdFor } = require("./eh-labour"); // payroll's own EH-name → owna_id mapping; see the target section below
 
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
@@ -666,6 +667,97 @@ function saveLabourBudget(ehCentre, weekEnding, budget) {
   `).run(ehCentre, weekEnding, budget.wages, budget.hours, budget.occ, budget.support);
 }
 
+// ===== Per-centre occupancy target =====
+// ONE stored value, in labour_budget.budget_occ at week_ending='default'. The wage page and the COE page
+// read the same row, so a target changed in either place moves both; nothing here keeps a second copy.
+// labour_budget is keyed by the EMPLOYMENT HERO centre name ("Futuro GWH"), not owna_id, so every lookup
+// goes through services/eh-labour.js ownaIdFor() — the payroll import's own mapping, reused rather than
+// re-implemented. A centre with no stored target falls back to GROUP_TARGET_PCT and says so: the pages must
+// be able to print which target each centre was judged against, because they are not all the same number
+// (Heath Rd is on 85 while the other three are on 102).
+const GROUP_TARGET_PCT = 95;        // the fallback, used ONLY where a centre has no stored target
+const MAX_TARGET_PCT = 200;         // a guard against a typo like 1020 — a target above 100 is legitimate here
+
+// Every Employment Hero centre name we know of: the ones payroll has imported, plus any a budget was
+// typed against before payroll reached them.
+function ehCentreNames() {
+  return db.prepare(`SELECT eh_centre FROM labour_weekly WHERE eh_centre IS NOT NULL
+                     UNION SELECT eh_centre FROM labour_budget WHERE eh_centre IS NOT NULL
+                     ORDER BY eh_centre`).all().map((r) => r.eh_centre);
+}
+// owna_id -> [eh_centre, …] and eh_centre -> owna_id. Head office and the food project map to no centre
+// (ownaIdFor answers null) and are simply absent, which is what makes them invisible to the COE page.
+function ehCentreMap() {
+  const centres = db.prepare(`SELECT owna_id, name FROM centres`).all();
+  const byOwna = {}, byEh = {};
+  for (const eh of ehCentreNames()) {
+    const id = ownaIdFor(eh, centres);
+    byEh[eh] = id;
+    if (id) (byOwna[id] = byOwna[id] || []).push(eh);
+  }
+  return { byOwna, byEh };
+}
+// The Employment Hero name a centre's target is stored under — the one that already carries a target if
+// more than one payroll location maps to the centre, so an edit lands on the row the pages read.
+function ehCentreFor(ownaId, budgets = labourBudgets(), map = ehCentreMap()) {
+  const names = map.byOwna[ownaId] || [];
+  return names.find((n) => budgets[n] && budgets[n].budget_occ != null) || names[0] || null;
+}
+// Occupancy target per centre, keyed by owna_id: { pct, source: 'centre'|'default', eh_centre }.
+// `source` is not decoration — the page has to say "judged against its own 102%" or "against the 95% group
+// default" beside the figure, or a reader cannot tell why two centres in the same column are coloured
+// differently. A stored 0 or a negative is treated as not set: it is not a target anyone means.
+function occupancyTargets() {
+  const budgets = labourBudgets(), map = ehCentreMap();
+  const out = {};
+  for (const c of db.prepare(`SELECT owna_id FROM centres`).all()) {
+    const eh = ehCentreFor(c.owna_id, budgets, map);
+    const stored = eh && budgets[eh] ? Number(budgets[eh].budget_occ) : NaN;
+    out[c.owna_id] = Number.isFinite(stored) && stored > 0
+      ? { pct: Math.round(stored * 10) / 10, source: "centre", eh_centre: eh }
+      : { pct: GROUP_TARGET_PCT, source: "default", eh_centre: eh };
+  }
+  return out;
+}
+function targetFor(ownaId, targets) {
+  return (targets || occupancyTargets())[ownaId] || { pct: GROUP_TARGET_PCT, source: "default", eh_centre: null };
+}
+// The group's target is the places-weighted blend of the centre targets, not their mean and not the
+// fallback: 501 places split 365 at 102% and 136 at 85% is a group target of 97.4%, and averaging the four
+// numbers instead (97.75%) would quietly weight Heath Rd's 136 places the same as GWH's 119.
+function blendedTarget(rows, targets) {
+  const places = rows.reduce((a, c) => a + (c.places || 0), 0);
+  if (!places) return GROUP_TARGET_PCT;
+  const weighted = rows.reduce((a, c) => a + (c.places || 0) * targetFor(c.owna_id, targets).pct, 0);
+  return Math.round(weighted / places * 10) / 10;
+}
+// Parse one submitted target: "" clears it (the centre falls back to the group default), otherwise a
+// number from 1 to MAX_TARGET_PCT with at most one decimal. Over 100 is accepted on purpose.
+function parseOccupancyTarget(raw) {
+  const s = String(raw == null ? "" : raw).trim().replace(/%$/, "").trim();
+  if (s === "") return { value: null };
+  if (!/^\d{1,3}(\.\d)?$/.test(s)) return { error: "must be a percentage like 102 or 97.5" };
+  const n = Number(s);
+  if (n < 1 || n > MAX_TARGET_PCT) return { error: `must be between 1 and ${MAX_TARGET_PCT}` };
+  return { value: n };
+}
+// Write a target back to the ONE row it lives in, leaving the wage and hours budgets on that row alone —
+// saveLabourBudget replaces every column, so the untouched ones have to be read and written back.
+// Answers false when the centre has no Employment Hero name yet: there is nothing to key the row on, and
+// inventing one would create the second copy this whole section exists to avoid.
+function saveOccupancyTarget(ownaId, pctValue) {
+  const eh = ehCentreFor(ownaId);
+  if (!eh) return false;
+  const b = labourBudgets()[eh] || {};
+  saveLabourBudget(eh, "default", {
+    wages: b.budget_wages != null ? b.budget_wages : null,
+    hours: b.budget_hours != null ? b.budget_hours : null,
+    occ: pctValue,
+    support: b.budget_support != null ? b.budget_support : null,
+  });
+  return true;
+}
+
 // ===== Approved places (admin maintenance) =====
 // Nothing automated can fill this in: OWNA does not hold the licensed count, so it comes off the service
 // approval on the ACECQA National Register and is typed in at /admin/places. Every centre is listed,
@@ -673,15 +765,27 @@ function saveLabourBudget(ehCentre, weekEnding, budget) {
 // (Austral: 124 approved places, 122 room capacity) is visible instead of silently wrong.
 const MAX_APPROVED_PLACES = 500; // a guard against a typo like 1240, not a regulatory limit
 const ACECQA_SERVICE_URL = "https://www.acecqa.gov.au/resources/national-registers/services/";
+// The occupancy target rides along on these rows: it is a percentage OF the approved places on the same
+// line, so this is where a reader looks for it. `target_stored` is the value actually in labour_budget
+// (null = nothing stored, and the centre falls back to the group default), kept separate from `target_pct`
+// so the form's input can be blank rather than pre-filled with a default nobody typed. `target_eh_centre`
+// is null for a centre payroll has never seen, and the form has to say the target cannot be stored yet.
 function placesAdminRows() {
+  const budgets = labourBudgets(), map = ehCentreMap(), targets = occupancyTargets();
   return db.prepare(`SELECT owna_id, name, capacity, approved_places, approval_no, opening, opening_year, opening_month
-    FROM centres ORDER BY COALESCE(opening, 0), name`).all().map((c) => ({
-    ...c,
-    places: placesFor(c),
-    // Only meaningful once both numbers exist: null means "nothing to compare", not "they agree".
-    discrepancy: (c.approved_places != null && c.capacity) ? c.approved_places - c.capacity : null,
-    register_url: c.approval_no ? ACECQA_SERVICE_URL + encodeURIComponent(c.approval_no) : null,
-  }));
+    FROM centres ORDER BY COALESCE(opening, 0), name`).all().map((c) => {
+    const eh = ehCentreFor(c.owna_id, budgets, map);
+    const stored = eh && budgets[eh] && Number(budgets[eh].budget_occ) > 0 ? Math.round(Number(budgets[eh].budget_occ) * 10) / 10 : null;
+    const t = targetFor(c.owna_id, targets);
+    return {
+      ...c,
+      places: placesFor(c),
+      // Only meaningful once both numbers exist: null means "nothing to compare", not "they agree".
+      discrepancy: (c.approved_places != null && c.capacity) ? c.approved_places - c.capacity : null,
+      register_url: c.approval_no ? ACECQA_SERVICE_URL + encodeURIComponent(c.approval_no) : null,
+      target_eh_centre: eh, target_stored: stored, target_pct: t.pct, target_source: t.source,
+    };
+  });
 }
 // Parse one submitted value: "" (blank) clears it, otherwise a positive integer up to MAX_APPROVED_PLACES.
 // Returns { value } or { error } — rubbish is rejected outright rather than silently coerced to 0, which is
@@ -1886,7 +1990,22 @@ function rosterCentre(ownaId, weeksBack = 12) {
 const COE_FIRST_MONTH = "2026-11";
 const COE_MONTH_COUNT = 6;                       // Nov 2026 → Apr 2027
 const COE_FIRM_STATUSES = [5, 12];               // LineLeader: Offer Accepted, Pre-Offered
-const COE_TARGET_PCT = 95;                       // PLACEHOLDER — the CEO replaces this with a per-centre target
+// The COE target is now the PER-CENTRE occupancy target stored in labour_budget.budget_occ (see
+// occupancyTargets() above): Austral, Bardia and GWH are on 102% and Heath Rd on 85%. COE_TARGET_PCT is
+// kept as the single group fallback for a centre with nothing stored, and every figure derived from a
+// target carries target_pct and target_source so the page can print which one it used.
+//
+// WHY A TARGET ABOVE 100% IS NOT A BUG, and which measure it applies to. The measure is BOOKED child-days
+// ÷ (approved places × operating days) — the same construction as the occupancy figure budget_occ has
+// always been compared against on the wage page, so the stored number keeps its meaning here. A booking
+// counts whether or not the child turns up: an absent child still holds the place. So booked child-days run
+// above the children actually present, and the ratio can pass 100% while the number of children in the
+// building does not — the licence limits who ATTENDS on a day. In the run-rate week of 7–11 Sep 2026
+// Austral booked 625 child-days against 620 place-days (100.8%) and 572 of them were attended (92.3%).
+// It is NOT reached by part-time families sharing a place across the week: that is what makes CHILDREN
+// PER PLACE 1.52, and it cannot lift days-filled, because a part-time child contributes fewer child-days,
+// not more. coeOutlook therefore reports run_week_attended beside run_week_days so the page can show both.
+const COE_TARGET_PCT = GROUP_TARGET_PCT;         // group fallback only — per-centre targets come from labour_budget
 const COE_WEEKDAYS = ["mo", "tu", "we", "th", "fr"];
 
 const coeDaysInMonth = (ym) => { const [y, mo] = ym.split("-").map(Number); return new Date(Date.UTC(y, mo, 0)).getUTCDate(); };
@@ -1926,7 +2045,10 @@ function coeOutlook() {
   const pipelineFrom = today.slice(0, 7) + "-01";   // starts are counted from the first of the current month
   const months = keys.map((k) => ({ month: k, operating_days: cal.operatingDays(k + "-01", coeMonthEnd(k)), days_in_month: coeDaysInMonth(k) }));
 
-  const runRow = db.prepare("SELECT COALESCE(SUM(booked),0) AS booked FROM daily_metrics WHERE owna_id=? AND metric_date BETWEEN ? AND ?");
+  const targets = occupancyTargets();
+  // Attendance beside the bookings in the same week, so the page can show why a target over 100% of
+  // approved places is reachable on a BOOKED measure without any child being in the building over licence.
+  const runRow = db.prepare("SELECT COALESCE(SUM(booked),0) AS booked, COALESCE(SUM(attended),0) AS attended FROM daily_metrics WHERE owna_id=? AND metric_date BETWEEN ? AND ?");
   const exitRows = db.prepare("SELECT owna_id, finish_date FROM child_exits WHERE upcoming=1 AND finish_date>=? AND finish_date<=? ORDER BY finish_date").all(today, lastEnd);
   const startRows = db.prepare("SELECT owna_id, status_id, expected_start, days_csv FROM ll_pipeline_starts WHERE expected_start>=? AND expected_start<=? ORDER BY expected_start").all(pipelineFrom, lastEnd);
   const byOwna = (rows) => rows.reduce((a, r) => { (a[r.owna_id] = a[r.owna_id] || []).push(r); return a; }, {});
@@ -1957,7 +2079,9 @@ function coeOutlook() {
 
   const operating = db.prepare(`SELECT owna_id, name, capacity, ${PLACES_SQL} AS places, enrolled FROM centres WHERE (opening IS NULL OR opening=0) AND ${PLACES_SQL}>0 ORDER BY name`).all();
   const centres = operating.map((c) => {
-    const runDays = runRow.get(c.owna_id, runWeek.from, runWeek.to).booked;
+    const runWk = runRow.get(c.owna_id, runWeek.from, runWeek.to);
+    const runDays = runWk.booked;
+    const tgt = targetFor(c.owna_id, targets);               // this centre's own target, or the group fallback
     const avgDays = c.enrolled ? runDays / c.enrolled : 0;   // average booked days per child per week
     const exits = exitsBy[c.owna_id] || [], starts = startsBy[c.owna_id] || [];
     const rows = months.map((mo) => {
@@ -1982,33 +2106,54 @@ function coeOutlook() {
         firm_children: bf.firm_children, firm_days: d1(bf.firm_days), days_unknown: bf.days_unknown,
         all_children: bf.all_children, all_days: d1(bf.all_days), all_days_unknown: bf.all_days_unknown,
         projected_days: d1(projected), pct: pct(projected, available),
-        gap_days: d1(Math.max(0, available * COE_TARGET_PCT / 100 - projected)),
+        // Target and gap are this centre's own, never the group's: Heath Rd is measured against 85% in the
+        // same column where Austral is measured against 102%, so both travel with the row.
+        target_pct: tgt.pct, target_days: d1(available * tgt.pct / 100),
+        gap_days: d1(Math.max(0, available * tgt.pct / 100 - projected)),
         _raw: { available, runRate, leaverDays, firm: bf.firm_days, all: bf.all_days, projected, leavers: toDate, inMonth,
-          firmKids: bf.firm_children, unknown: bf.days_unknown, allUnknown: bf.all_days_unknown },
+          firmKids: bf.firm_children, unknown: bf.days_unknown, allUnknown: bf.all_days_unknown,
+          targetDays: available * tgt.pct / 100 },
       };
     });
     return { owna_id: c.owna_id, name: c.name, places: c.places, enrolled: c.enrolled,
-      run_week_days: runDays, avg_days_per_child: Math.round(avgDays * 100) / 100, months: rows };
+      run_week_days: runDays, run_week_attended: runWk.attended,
+      run_week_pct: pctOrNull(runDays, c.places * 5), run_week_attended_pct: pctOrNull(runWk.attended, c.places * 5),
+      target_pct: tgt.pct, target_source: tgt.source, target_eh_centre: tgt.eh_centre,
+      avg_days_per_child: Math.round(avgDays * 100) / 100, months: rows };
   });
 
+  const groupPlaces = centres.reduce((a, c) => a + c.places, 0);
+  const groupTarget = blendedTarget(centres, targets);
   const group = {
-    places: centres.reduce((a, c) => a + c.places, 0),
+    places: groupPlaces,
     enrolled: centres.reduce((a, c) => a + c.enrolled, 0),
     run_week_days: centres.reduce((a, c) => a + c.run_week_days, 0),
+    run_week_attended: centres.reduce((a, c) => a + c.run_week_attended, 0),
+    run_week_pct: pctOrNull(centres.reduce((a, c) => a + c.run_week_days, 0), groupPlaces * 5),
+    run_week_attended_pct: pctOrNull(centres.reduce((a, c) => a + c.run_week_attended, 0), groupPlaces * 5),
+    // The group target is the places-weighted blend of the centre targets, not the 95% fallback and not
+    // their mean — see blendedTarget(). A group row coloured against a flat number would say Heath Rd's
+    // 85% and Austral's 102% average out to something neither centre is actually judged against.
+    target_pct: groupTarget,
     months: months.map((mo, i) => {
       const t = centres.reduce((a, c) => {
         const r = c.months[i]._raw;
         a.available += r.available; a.runRate += r.runRate; a.leaverDays += r.leaverDays; a.firm += r.firm; a.all += r.all;
         a.projected += r.projected; a.leavers += r.leavers; a.inMonth += r.inMonth; a.firmKids += r.firmKids;
         a.unknown += r.unknown; a.allUnknown += r.allUnknown;
+        a.targetDays += r.targetDays; a.shortfall += Math.max(0, r.targetDays - r.projected);
         return a;
-      }, { available: 0, runRate: 0, leaverDays: 0, firm: 0, all: 0, projected: 0, leavers: 0, inMonth: 0, firmKids: 0, unknown: 0, allUnknown: 0 });
+      }, { available: 0, runRate: 0, leaverDays: 0, firm: 0, all: 0, projected: 0, leavers: 0, inMonth: 0, firmKids: 0, unknown: 0, allUnknown: 0, targetDays: 0, shortfall: 0 });
       return { month: mo.month, operating_days: mo.operating_days, available_days: t.available,
         run_rate_days: d1(t.runRate), leavers_in_month: t.inMonth, leavers_to_date: t.leavers, leaver_days: d1(t.leaverDays),
         firm_children: t.firmKids, firm_days: d1(t.firm), all_days: d1(t.all),
         days_unknown: t.unknown, all_days_unknown: t.allUnknown,
         projected_days: d1(t.projected), pct: pct(t.projected, t.available),
-        gap_days: d1(Math.max(0, t.available * COE_TARGET_PCT / 100 - t.projected)) };
+        target_pct: pct(t.targetDays, t.available), target_days: d1(t.targetDays),
+        gap_days: d1(Math.max(0, t.targetDays - t.projected)),
+        // …and the same shortfall counted centre by centre, which is the number the campaign has to fill:
+        // a centre over its target cannot fill a seat at a centre under it, so the two differ on purpose.
+        shortfall_days: d1(t.shortfall) };
     }),
   };
   centres.forEach((c) => c.months.forEach((r) => { delete r._raw; }));
@@ -2034,8 +2179,15 @@ function coeOutlook() {
     });
 
   return { months, window: { first: keys[0], last: keys[keys.length - 1] }, as_at: today,
-    run_week: runWeek, pipeline_from: pipelineFrom, target_pct: COE_TARGET_PCT,
-    centres, group, opening, measured: coeMeasured(keys),
+    run_week: runWeek, pipeline_from: pipelineFrom,
+    // target_pct is the GROUP FALLBACK, kept under its old name so nothing that reads it silently changes
+    // meaning. The number a centre is actually judged against is centre.target_pct, and the group's is
+    // group.target_pct. targets_* count how many centres are on a stored target and how many fell back.
+    target_pct: COE_TARGET_PCT, target_default_pct: COE_TARGET_PCT,
+    targets_stored: centres.filter((c) => c.target_source === "centre").length,
+    targets_default: centres.filter((c) => c.target_source !== "centre").length,
+    targets_editable_at: "/admin/places",
+    centres, group, opening, measured: coeMeasured(keys, targets),
     unknown_holiday_years: cal.unknownHolidayYears(keys[0] + "-01", lastEnd) };
 }
 
@@ -2067,7 +2219,7 @@ function coeSnapshotDate(meta) {
   return (db.prepare("SELECT MAX(snapshot_date) AS d FROM coe_continuing").get() || {}).d || null;
 }
 
-function coeMeasured(keys = coeMonthKeys()) {
+function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
   // Read the operating centres first: they decide WHICH night to read, not just which rows to keep.
   const meta = db.prepare(`SELECT owna_id, name, capacity, ${PLACES_SQL} AS places FROM centres WHERE (opening IS NULL OR opening = 0) AND ${PLACES_SQL} > 0 ORDER BY name`).all();
   const date = coeSnapshotDate(meta);
@@ -2092,12 +2244,15 @@ function coeMeasured(keys = coeMonthKeys()) {
     const mix = (mixBy[c.owna_id] || []).map((r) => ({ days_per_week: r.days_per_week, children: r.children, child_days: r.child_days }));
     const children = mix.reduce((a, b) => a + b.children, 0);
     const childDays = mix.reduce((a, b) => a + b.child_days, 0);
+    const tgt = targetFor(c.owna_id, targets);
     return { owna_id: c.owna_id, name: c.name, places: c.places,
       enrolled: h.enrolled != null ? h.enrolled : (rows[0] ? rows[0].enrolled : 0),
       months: rows, mix, mix_children: children, mix_child_days: childDays,
       avg_days_per_child: children ? Math.round(childDays / children * 100) / 100 : 0,
       places_filled_pct: pctOrNull(children, c.places),       // one child holds one licensed place
       days_filled_pct: pctOrNull(childDays, c.places * 5),    // …but only for the days they book
+      // Days filled is the measure the stored target is set against, so it travels with its own target.
+      target_pct: tgt.pct, target_source: tgt.source, target_eh_centre: tgt.eh_centre,
       week: { from: h.week_from || null, to: h.week_to || null },
       last_booking_date: h.last_booking_date || null,
       horizon_children: h.horizon_children || 0,
@@ -2139,7 +2294,12 @@ function coeMeasured(keys = coeMonthKeys()) {
     centres_expected: meta.length, centres_missing: missing, partial: missing.length > 0,
     group: { places, months, mix, mix_children: mixChildren, mix_child_days: mixChildDays,
       avg_days_per_child: mixChildren ? Math.round(mixChildDays / mixChildren * 100) / 100 : 0,
-      places_filled_pct: pctOrNull(mixChildren, places), days_filled_pct: pctOrNull(mixChildDays, places * 5) },
+      places_filled_pct: pctOrNull(mixChildren, places), days_filled_pct: pctOrNull(mixChildDays, places * 5),
+      // Blended over the centres this night actually reached, so a partial night is not judged against a
+      // target that includes a centre whose numbers are not in the total.
+      target_pct: blendedTarget(centres, targets) },
+    targets_stored: centres.filter((c) => c.target_source === "centre").length,
+    targets_default: centres.filter((c) => c.target_source !== "centre").length,
     centres, stops: centres.filter((c) => c.stops_early) };
 }
 
@@ -2149,6 +2309,8 @@ module.exports = {
   rosterWeeks, rosterForWeek, rosterCentre, latestReconciledRosterWeek,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
   placesFor, placesOf, placesAdminRows, parseApprovedPlaces, saveApprovedPlaces, MAX_APPROVED_PLACES, ACECQA_SERVICE_URL,
+  occupancyTargets, targetFor, blendedTarget, ehCentreMap, ehCentreFor, parseOccupancyTarget, saveOccupancyTarget,
+  GROUP_TARGET_PCT, MAX_TARGET_PCT,
   llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr, pipelineTrend, pipelineCentres, waitlistJoins,
   exitsSummary, exitReasons, centreExits, exitsLatestDate, exitsByMonth, exitsByYear, upcomingExitsByMonth, tenureByCentre, churnByRoom,
   forwardOccupancyByCentre, projection, centrePipelineDetail,

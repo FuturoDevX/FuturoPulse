@@ -54,12 +54,17 @@ router.post("/wage-budget", requireAdminOrOps, (req, res) => {
 // Approved places per centre — the licensed count on the service approval (ACECQA National Register).
 // OWNA cannot supply it (its room capacities are how the rooms are configured, not what the service is
 // licensed for), so it is maintained here and every licensed-places denominator divides by it.
+// The occupancy target each centre is judged against is edited here too, beside the licensed count it is a
+// percentage of — the COE page links to this form. It is NOT a second copy: the field reads and writes the
+// same labour_budget.budget_occ row the wage-budget page uses, through m.saveOccupancyTarget().
 router.get("/places", requireAdminOrOps, (req, res) => {
   res.render("admin-places", {
     title: "Approved Places",
     rows: m.placesAdminRows(),
     max: m.MAX_APPROVED_PLACES,
-    saved: req.query.saved, err: req.query.err,
+    maxTarget: m.MAX_TARGET_PCT,
+    defaultTarget: m.GROUP_TARGET_PCT,
+    saved: req.query.saved, savedTargets: req.query.targets, err: req.query.err,
     lastRun: lastRun(),
   });
 });
@@ -67,17 +72,32 @@ router.post("/places", requireAdminOrOps, (req, res) => {
   const rows = m.placesAdminRows();
   const errors = [];
   const writes = [];
+  const targetWrites = [];
   for (const c of rows) {
-    if (!Object.prototype.hasOwnProperty.call(req.body, "places_" + c.owna_id)) continue; // field not on the form
-    const parsed = m.parseApprovedPlaces(req.body["places_" + c.owna_id]);
-    if (parsed.error) { errors.push(`${c.name}: ${parsed.error}`); continue; }
-    if (parsed.value !== c.approved_places) writes.push([c.owna_id, parsed.value]);
+    if (Object.prototype.hasOwnProperty.call(req.body, "places_" + c.owna_id)) {
+      const parsed = m.parseApprovedPlaces(req.body["places_" + c.owna_id]);
+      if (parsed.error) errors.push(`${c.name}: approved places ${parsed.error}`);
+      else if (parsed.value !== c.approved_places) writes.push([c.owna_id, parsed.value]);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, "target_" + c.owna_id)) {
+      const parsed = m.parseOccupancyTarget(req.body["target_" + c.owna_id]);
+      if (parsed.error) errors.push(`${c.name}: target ${parsed.error}`);
+      else if (parsed.value !== c.target_stored) {
+        // A centre payroll has never seen has no Employment Hero name to key the row on. Say so rather than
+        // inventing one — that would be the second, drifting copy this shares a row to avoid.
+        if (!c.target_eh_centre) errors.push(`${c.name}: no payroll centre name yet, so a target cannot be stored against it`);
+        else targetWrites.push([c.owna_id, parsed.value]);
+      }
+    }
   }
   // Reject the whole submission on a bad value rather than saving half of it: a partly applied form leaves
   // the user unsure which centres took and which did not.
   if (errors.length) return res.redirect("/admin/places?err=" + encodeURIComponent(errors.join(" · ")));
-  db.transaction(() => { writes.forEach(([id, v]) => m.saveApprovedPlaces(id, v)); })();
-  res.redirect("/admin/places?saved=" + writes.length);
+  db.transaction(() => {
+    writes.forEach(([id, v]) => m.saveApprovedPlaces(id, v));
+    targetWrites.forEach(([id, v]) => m.saveOccupancyTarget(id, v));
+  })();
+  res.redirect("/admin/places?saved=" + writes.length + "&targets=" + targetWrites.length);
 });
 
 // Monthly lead & tour targets per centre (standing 'default' month), one row per centre incl. pre-opening centres.

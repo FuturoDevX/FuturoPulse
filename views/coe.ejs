@@ -9,9 +9,18 @@
   const dLong  = (d) => d ? new Date(d+'T00:00:00Z').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : '';
   const fmt  = (n) => Math.round(Number(n)||0).toLocaleString('en-AU');
   const sgn  = (n) => (Number(n)||0) > 0 ? '−' + fmt(n) : fmt(n);
+  // Targets are PER CENTRE (services/metrics.js occupancyTargets → labour_budget.budget_occ, 'default' week).
+  // TGT is only the group fallback for a centre with nothing stored; GTGT is the places-weighted group
+  // target. Nothing on this page may be coloured against a single number any more, so tone() takes the
+  // target it is judging against and every caller passes the right one.
   const TGT  = coe.target_pct;
-  const tone = (p) => p >= TGT ? 'good' : (p >= TGT - 10 ? 'warn' : 'bad');
+  const GTGT = coe.group.target_pct;
+  const pctStr = (n) => (Number(n) % 1 === 0 ? String(Number(n)) : Number(n).toFixed(1)) + '%';
+  const tone = (p, t) => { const g = (t == null ? TGT : t); return p >= g ? 'good' : (p >= g - 10 ? 'warn' : 'bad'); };
   const W    = (v, avail) => avail > 0 ? Math.max(0, Math.min(100, v / avail * 100)).toFixed(1) : '0';
+  const canEditTargets = ['admin','ops_manager'].includes(user.role);
+  const mixedTargets = coe.centres.some((c) => c.target_pct !== coe.centres[0].target_pct);
+  const overTarget = coe.centres.filter((c) => c.target_pct > 100);
   // Anchor month: February 2027, the first full month after the school-year transition.
   let ai = coe.months.findIndex((x) => x.month === '2027-02');
   if (ai < 0) ai = Math.min(3, coe.months.length - 1);
@@ -53,35 +62,103 @@
   <p class="footnote" style="margin-bottom:0;">Built from the snapshot as at <%= dLong(coe.as_at) %>. Run-rate week <%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %> (the last complete Mon–Fri week, the same week for every centre). Pipeline starts counted from <%= dLong(coe.pipeline_from) %>. Operating days exclude weekends and NSW public holidays<%= coe.unknown_holiday_years.length ? ' (no gazetted list yet for ' + coe.unknown_holiday_years.join(', ') + ' — weekdays only)' : '' %>.</p>
 </div>
 
+<div class="card" id="targets">
+  <h2 style="margin-top:0;">What each centre is measured against
+    <span class="muted" style="font-weight:400;font-size:13px;">· <%= mixedTargets ? 'the targets are not the same number, so neither are the colours' : 'every centre is on the same target' %></span>
+  </h2>
+  <p class="sub" style="margin-bottom:14px;">
+    Every percentage and every colour below is judged against <strong>that centre's own occupancy target</strong>, not one
+    number for the group. The targets are the ones already stored against each centre for wage budgeting
+    (<code>labour_budget.budget_occ</code>) — one stored value, read by this page and by the wage page, so changing it
+    in either place moves both. A centre with none stored falls back to the <%= pctStr(coe.target_default_pct) %> group
+    default and is labelled “group default” in the table.
+  </p>
+  <div style="overflow-x:auto;"><table>
+    <thead>
+      <tr>
+        <th>Centre</th><th class="num">Approved places</th><th class="num">Target</th><th>Target comes from</th>
+        <th class="num" title="Booked child-days in the run-rate week ÷ (approved places × 5)">Booked, run-rate week</th>
+        <th class="num" title="Child-days actually attended in the same week ÷ (approved places × 5)">Attended, same week</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% coe.centres.forEach(function(c){ %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a></td>
+          <td class="num"><%= c.places %></td>
+          <td class="num"><strong><%= pctStr(c.target_pct) %></strong></td>
+          <td>
+            <% if (c.target_source === 'centre') { %>
+              its own stored target <span class="muted" style="font-size:11.5px;">· saved against the payroll centre “<%= c.target_eh_centre %>”</span>
+            <% } else { %>
+              <span class="warn-text">group default</span> <span class="muted" style="font-size:11.5px;">· no target stored for this centre yet</span>
+            <% } %>
+          </td>
+          <td class="num"><%= fmt(c.run_week_days) %><br><span class="muted" style="font-size:11.5px;"><%= c.run_week_pct %>% of places × 5</span></td>
+          <td class="num"><%= fmt(c.run_week_attended) %><br><span class="muted" style="font-size:11.5px;"><%= c.run_week_attended_pct %>% of places × 5</span></td>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All operating centres</td>
+        <td class="num"><%= coe.group.places %></td>
+        <td class="num"><strong><%= pctStr(GTGT) %></strong></td>
+        <td>weighted by approved places <span class="muted" style="font-size:11.5px;">· not the average of the four numbers</span></td>
+        <td class="num"><%= fmt(coe.group.run_week_days) %><br><span class="muted" style="font-size:11.5px;"><%= coe.group.run_week_pct %>%</span></td>
+        <td class="num"><%= fmt(coe.group.run_week_attended) %><br><span class="muted" style="font-size:11.5px;"><%= coe.group.run_week_attended_pct %>%</span></td>
+      </tr>
+    </tfoot>
+  </table></div>
+  <% if (overTarget.length) { %>
+  <p class="footnote" style="border-left:3px solid var(--navy);padding-left:10px;">
+    <strong>A target above 100% of approved places is not a mistake.</strong>
+    The measure it applies to is <em>booked</em> child-days ÷ (approved places × operating days), and a booking counts
+    whether or not the child turns up — an absent child still holds the place — so bookings run above the children
+    actually in the building and the ratio can pass 100% while the number attending does not. A centre is over its
+    licence only if more children <em>attend</em> on the same day than it is licensed for, and in the run-rate week
+    <%= overTarget.map(function(c){ return shortName(c.name) + ' booked ' + c.run_week_pct + '% of its place-days and attended ' + c.run_week_attended_pct + '%'; }).join(', ') %>.
+    It is <strong>not</strong> reached by part-time families sharing a place across the week — that is what makes
+    <em>children per place</em> greater than one, and it cannot lift days filled, because a part-time child books
+    fewer child-days, not more.
+  </p>
+  <% } %>
+  <p class="footnote" style="margin-bottom:0;">
+    <%= coe.targets_stored %> of the <%= coe.centres.length %> operating centres have a target stored<%= coe.targets_default ? '; ' + coe.targets_default + ' fall back to the ' + pctStr(coe.target_default_pct) + ' group default' : '' %>.
+    <% if (canEditTargets) { %><a class="row-link" href="<%= coe.targets_editable_at %>#targets"><strong>Set targets →</strong></a> They live on the Approved places page, beside the licensed count they are a percentage of, and on the Wage budgets page — both write the same row.<% } else { %>Targets are maintained by an administrator or the operations manager on the Approved places page.<% } %>
+  </p>
+</div>
+
 <div class="grid kpis">
   <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> approved places × <%= am.operating_days %> operating days</span></div></div>
-  <div class="card stat"><div class="n <%= tone(ga.pct) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · target <%= TGT %>% is a placeholder</span></div></div>
+  <div class="card stat"><div class="n <%= tone(ga.pct, GTGT) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · against the group target of <%= pctStr(GTGT) %>, the centre targets weighted by approved places</span></div></div>
   <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>, at each centre's average booking pattern</span></div></div>
   <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date<%= ga.days_unknown ? ' · ' + ga.days_unknown + ' of them with no requested days recorded, valued at their centre average' : '' %></span></div></div>
-  <div class="card stat"><div class="n"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></div><div class="l">Gap to the <%= TGT %>% placeholder target<span class="cap">child-days in <%= mLong(am.month) %><%= ga.gap_days > 0 && am.operating_days ? ' · about ' + Math.round(ga.gap_days / (am.operating_days / 5) / 3) + ' children at 3 days a week' : ' · the projection is at or above the placeholder' %></span></div></div>
+  <div class="card stat"><div class="n"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></div><div class="l">Gap to target<span class="cap">child-days in <%= mLong(am.month) %> against <%= fmt(ga.target_days) %> targeted (<%= pctStr(GTGT) %> of available)<%= ga.gap_days > 0 && am.operating_days ? ' · about ' + Math.round(ga.gap_days / (am.operating_days / 5) / 3) + ' children at 3 days a week' : ' · the projection is at or above target' %><%= ga.shortfall_days > 0 ? ' · ' + fmt(ga.shortfall_days) + ' counted centre by centre, since a centre over its target cannot fill a seat at one under it' : '' %></span></div></div>
 </div>
 
 <div class="card">
   <h2 style="margin-top:0;"><%= mLong(am.month) %>, the anchor month <span class="muted" style="font-weight:400;font-size:13px;">· each bar is that centre's available child-days</span></h2>
   <% coe.centres.forEach(function(c){ var x = c.months[ai]; var keep = Math.max(0, x.run_rate_days - x.leaver_days); %>
     <div class="coe-bar-row">
-      <div class="coe-bar-name"><%= shortName(c.name) %><span><%= c.places %> places · <%= am.operating_days %> days · <%= fmt(x.available_days) %> days available</span></div>
+      <div class="coe-bar-name"><%= shortName(c.name) %><span><%= c.places %> places · <%= am.operating_days %> days · <%= fmt(x.available_days) %> days available · target <%= pctStr(c.target_pct) %><%= c.target_source === 'centre' ? '' : ' (group default)' %></span></div>
       <div class="coe-track">
         <div class="coe-seg keep" style="width:<%= W(keep, x.available_days) %>%;" title="Run rate less leavers: <%= fmt(keep) %> days"></div>
         <div class="coe-seg firm" style="width:<%= W(x.firm_days, x.available_days) %>%;" title="Firm backfill: <%= fmt(x.firm_days) %> days"></div>
         <div class="coe-seg lost" style="width:<%= W(x.leaver_days, x.available_days) %>%;" title="Days falling away: <%= fmt(x.leaver_days) %> days"></div>
-        <div class="coe-target" style="left:<%= TGT %>%;" title="Placeholder target <%= TGT %>%"></div>
+        <%# The track is clipped at 100%, so a target above 100 sits on the right-hand edge and says so. %>
+        <div class="coe-target" style="left:<%= Math.min(100, c.target_pct) %>%;" title="<%= shortName(c.name) %> target <%= pctStr(c.target_pct) %><%= c.target_pct > 100 ? ' — beyond the end of the track, which stops at 100%' : '' %>"></div>
       </div>
-      <div class="coe-bar-val <%= tone(x.pct) + '-text' %>"><%= x.pct %>%<span><%= fmt(x.projected_days) %> days projected</span></div>
+      <div class="coe-bar-val <%= tone(x.pct, c.target_pct) + '-text' %>"><%= x.pct %>%<span><%= fmt(x.projected_days) %> days · target <%= pctStr(c.target_pct) %></span></div>
     </div>
   <% }); %>
   <div class="coe-legend">
     <span><i style="background:var(--navy);"></i>Run rate, less the children with finish dates</span>
     <span><i style="background:#4caf7d;"></i>Firm backfill (Offer Accepted / Pre-Offered)</span>
     <span><i class="coe-seg lost" style="width:14px;height:10px;"></i>Days falling away (shown beyond the fill, not inside it)</span>
-    <span><i style="background:var(--warn);width:3px;"></i>Placeholder target <%= TGT %>%</span>
+    <span><i style="background:var(--warn);width:3px;"></i>That centre's own target<%= mixedTargets ? ' — a different mark on each row' : '' %></span>
   </div>
-  <p class="footnote">The track is clipped at 100%: a centre above target fills it and the figure beside the bar carries the real number.</p>
+  <p class="footnote">The track is clipped at 100%: a centre above target fills it and the figure beside the bar carries the real number. Each row's target mark is its own — <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %><% if (overTarget.length) { %>, and a target over 100% sits on the right-hand edge because the track cannot draw past it<% } %>.</p>
 </div>
 
 <div class="card">
@@ -89,7 +166,7 @@
   <div style="overflow-x:auto;"><table>
     <thead>
       <tr>
-        <th>Centre</th><th class="num">Places</th><th class="num">Run rate / week</th><th class="num">Leaving by <%= mShort(coe.window.last) %></th>
+        <th>Centre</th><th class="num">Places</th><th class="num">Target</th><th class="num">Run rate / week</th><th class="num">Leaving by <%= mShort(coe.window.last) %></th>
         <% coe.months.forEach(function(x){ %><th class="num"><%= mShort(x.month) %><br><span style="font-weight:400;text-transform:none;letter-spacing:0;"><%= x.operating_days %> days</span></th><% }); %>
       </tr>
     </thead>
@@ -98,9 +175,10 @@
         <tr>
           <td><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a><br><span class="muted" style="font-size:11.5px;"><%= c.enrolled %> enrolled · <%= c.avg_days_per_child.toFixed(1) %> days per child</span></td>
           <td class="num"><%= c.places %></td>
+          <td class="num"><strong><%= pctStr(c.target_pct) %></strong><% if (c.target_source !== 'centre') { %><br><span class="muted" style="font-size:11.5px;">group default</span><% } %></td>
           <td class="num"><%= fmt(c.run_week_days) %></td>
           <td class="num bad-text"><%= c.months[coe.months.length-1].leavers_to_date %></td>
-          <% c.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days"><%= x.pct %>%</td><% }); %>
+          <% c.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct, c.target_pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days · <%= shortName(c.name) %> is measured against <%= pctStr(c.target_pct) %>"><%= x.pct %>%</td><% }); %>
         </tr>
       <% }); %>
     </tbody>
@@ -108,13 +186,14 @@
       <tr class="total-row">
         <td>All operating centres</td>
         <td class="num"><%= coe.group.places %></td>
+        <td class="num"><strong><%= pctStr(GTGT) %></strong></td>
         <td class="num"><%= fmt(coe.group.run_week_days) %></td>
         <td class="num"><%= coe.group.months[coe.months.length-1].leavers_to_date %></td>
-        <% coe.group.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days"><%= x.pct %>%</td><% }); %>
+        <% coe.group.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct, x.target_pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days · measured against the weighted group target <%= pctStr(x.target_pct) %>"><%= x.pct %>%</td><% }); %>
       </tr>
     </tfoot>
   </table></div>
-  <p class="footnote" style="margin-bottom:0;">Green is at or above the <%= TGT %>% placeholder target, amber within ten points of it, red below. <strong>Leaving by <%= mShort(coe.window.last) %></strong> counts every child whose finish date falls between <%= dLong(coe.as_at) %> and <%= mLong(coe.window.last) %> — the same children are deducted from every later month. The pre-opening centres are not in this table or in the group row: they have no run rate and no licensed places recorded.</p>
+  <p class="footnote" style="margin-bottom:0;">Green is at or above <strong>that centre's own target</strong> — <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %> — amber within ten points of it, red below; the group row is measured against <%= pctStr(GTGT) %>, those targets weighted by approved places. Two centres on the same percentage can therefore be different colours, and that is the point of the column. <strong>Leaving by <%= mShort(coe.window.last) %></strong> counts every child whose finish date falls between <%= dLong(coe.as_at) %> and <%= mLong(coe.window.last) %> — the same children are deducted from every later month. The pre-opening centres are not in this table or in the group row: they have no run rate and no licensed places recorded.</p>
 </div>
 
 <% if (ms && mm) { %>
@@ -188,7 +267,7 @@
     </div>
     <div>
       <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);">The roll against the week</h3>
-      <p style="font-size:13px;margin:0 0 8px;"><strong><%= fmt(ms.group.mix_children) %> children</strong> share the <%= fmt(ms.group.places) %> licensed places, because most attend part-time — <strong><%= (ms.group.places_filled_pct / 100).toFixed(2) %></strong> children to a place. Together they book <strong><%= fmt(ms.group.mix_child_days) %></strong> of the <%= fmt(ms.group.places * 5) %> child-days a week those places could carry — <strong class="<%= tone(ms.group.days_filled_pct) + '-text' %>"><%= ms.group.days_filled_pct %>%</strong> of the week.</p>
+      <p style="font-size:13px;margin:0 0 8px;"><strong><%= fmt(ms.group.mix_children) %> children</strong> share the <%= fmt(ms.group.places) %> licensed places, because most attend part-time — <strong><%= (ms.group.places_filled_pct / 100).toFixed(2) %></strong> children to a place. Together they book <strong><%= fmt(ms.group.mix_child_days) %></strong> of the <%= fmt(ms.group.places * 5) %> child-days a week those places could carry — <strong class="<%= tone(ms.group.days_filled_pct, ms.group.target_pct) + '-text' %>"><%= ms.group.days_filled_pct %>%</strong> of the week, against the <%= pctStr(ms.group.target_pct) %> group target.</p>
       <p style="font-size:13px;margin:0;">The group averages <strong><%= ms.group.avg_days_per_child.toFixed(2) %> days per child per week</strong>. Every extra day a week taken by an existing family is worth as much as <%= ms.group.avg_days_per_child >= 1 ? (1 / ms.group.avg_days_per_child).toFixed(2) : '—' %> of a new enrolment, and costs no marketing.</p>
     </div>
   </div>
@@ -197,7 +276,7 @@
       <tr>
         <th>Centre</th><th class="num">Places</th><th class="num">Children</th>
         <% [1,2,3,4,5].forEach(function(d){ %><th class="num"><%= d %> day<%= d === 1 ? '' : 's' %></th><% }); %>
-        <th class="num">Child-days / week</th><th class="num">Avg days</th><th class="num">Children per place</th><th class="num">Days filled</th>
+        <th class="num">Child-days / week</th><th class="num">Avg days</th><th class="num">Children per place</th><th class="num">Target</th><th class="num">Days filled</th>
       </tr>
     </thead>
     <tbody>
@@ -210,7 +289,8 @@
           <td class="num"><strong><%= fmt(c.mix_child_days) %></strong></td>
           <td class="num"><%= c.avg_days_per_child.toFixed(2) %></td>
           <td class="num"><%= (c.places_filled_pct / 100).toFixed(2) %></td>
-          <td class="num coe-pct <%= tone(c.days_filled_pct) %>"><%= c.days_filled_pct %>%</td>
+          <td class="num"><%= pctStr(c.target_pct) %><% if (c.target_source !== 'centre') { %><br><span class="muted" style="font-size:11.5px;">group default</span><% } %></td>
+          <td class="num coe-pct <%= tone(c.days_filled_pct, c.target_pct) %>" title="measured against <%= shortName(c.name) %>'s own target of <%= pctStr(c.target_pct) %>"><%= c.days_filled_pct %>%</td>
         </tr>
       <% }); %>
     </tbody>
@@ -223,11 +303,12 @@
         <td class="num"><%= fmt(ms.group.mix_child_days) %></td>
         <td class="num"><%= ms.group.avg_days_per_child.toFixed(2) %></td>
         <td class="num"><%= (ms.group.places_filled_pct / 100).toFixed(2) %></td>
-        <td class="num coe-pct <%= tone(ms.group.days_filled_pct) %>"><%= ms.group.days_filled_pct %>%</td>
+        <td class="num"><%= pctStr(ms.group.target_pct) %></td>
+        <td class="num coe-pct <%= tone(ms.group.days_filled_pct, ms.group.target_pct) %>"><%= ms.group.days_filled_pct %>%</td>
       </tr>
     </tfoot>
   </table></div>
-  <p class="footnote" style="margin-bottom:0;"><strong>Days per week</strong> is each child's own distinct booked days in the reference week, so it is what OWNA holds rather than what a family once asked for. A family booked fortnightly counts at the days of that week only. <strong>Children per place</strong> = children on the roll ÷ licensed places. It is above 1 wherever families attend part-time and share a place across the week, which is normal and not a breach; a centre is over its licence only if more children attend on the same day than it is licensed for. <strong>Days filled</strong> = child-days a week ÷ (licensed places × 5), and it is the number the campaign has to move.</p>
+  <p class="footnote" style="margin-bottom:0;"><strong>Days per week</strong> is each child's own distinct booked days in the reference week, so it is what OWNA holds rather than what a family once asked for. A family booked fortnightly counts at the days of that week only. <strong>Children per place</strong> = children on the roll ÷ licensed places. It is above 1 wherever families attend part-time and share a place across the week, which is normal and not a breach; a centre is over its licence only if more children attend on the same day than it is licensed for. <strong>Days filled</strong> = child-days a week ÷ (licensed places × 5), and it is the number the campaign has to move — it is also the measure each centre's stored target is set against, which is why the Target column sits beside it. Days filled passes 100% only when more child-days are BOOKED than the licence has place-days, which happens because a booked child who is absent still holds the place — it is the children who <em>attend</em> on a day that the licence limits; part-time sharing is what lifts <em>children per place</em> above 1 and it cannot lift days filled, because a part-time child books fewer child-days, not more.</p>
 </div>
 <% } else { %>
 <div class="card" style="border-left:3px solid var(--muted);">
@@ -243,7 +324,7 @@
       <tr>
         <th>Month</th><th class="num">Operating days</th><th class="num">Available</th><th class="num">Run rate</th>
         <th class="num">Leavers</th><th class="num">Leaver days</th><th class="num">Firm starters</th><th class="num">Firm days</th>
-        <th class="num">All-pipeline days</th><th class="num">Projected</th><th class="num">% filled</th><th class="num">Gap to <%= TGT %>%</th>
+        <th class="num">All-pipeline days</th><th class="num">Projected</th><th class="num">Target</th><th class="num">% filled</th><th class="num" title="Targeted child-days − projected, at the weighted group target">Gap to target</th><th class="num" title="The same shortfall counted centre by centre: a centre over its own target cannot fill a seat at one under it">Centre shortfall</th>
       </tr>
     </thead>
     <tbody>
@@ -259,8 +340,10 @@
           <td class="num good-text">+<%= fmt(x.firm_days) %></td>
           <td class="num muted"><%= fmt(x.all_days) %></td>
           <td class="num"><strong><%= fmt(x.projected_days) %></strong></td>
-          <td class="num coe-pct <%= tone(x.pct) %>"><%= x.pct %>%</td>
+          <td class="num"><%= fmt(x.target_days) %><br><span class="muted" style="font-size:11.5px;"><%= pctStr(x.target_pct) %></span></td>
+          <td class="num coe-pct <%= tone(x.pct, x.target_pct) %>"><%= x.pct %>%</td>
           <td class="num"><%= x.gap_days > 0 ? fmt(x.gap_days) : '—' %></td>
+          <td class="num"><%= x.shortfall_days > 0 ? fmt(x.shortfall_days) : '—' %></td>
         </tr>
       <% }); %>
     </tbody>
@@ -275,7 +358,7 @@
       <tr>
         <th>Centre</th><th class="num">Places</th><th class="num">Available</th><th class="num">Run rate</th>
         <th class="num">Leavers</th><th class="num">Leaver days</th><th class="num">Firm starters</th><th class="num">Firm days</th>
-        <th class="num">All-pipeline days</th><th class="num">Projected</th><th class="num">% filled</th><th class="num">Gap to <%= TGT %>%</th>
+        <th class="num">All-pipeline days</th><th class="num">Projected</th><th class="num">Target</th><th class="num">% filled</th><th class="num" title="Targeted child-days − projected, at that centre's own target">Gap to target</th>
       </tr>
     </thead>
     <tbody>
@@ -291,7 +374,8 @@
           <td class="num good-text">+<%= fmt(x.firm_days) %></td>
           <td class="num muted"><%= fmt(x.all_days) %></td>
           <td class="num"><strong><%= fmt(x.projected_days) %></strong></td>
-          <td class="num coe-pct <%= tone(x.pct) %>"><%= x.pct %>%</td>
+          <td class="num"><%= fmt(x.target_days) %><br><span class="muted" style="font-size:11.5px;"><%= pctStr(c.target_pct) %><%= c.target_source === 'centre' ? '' : ' default' %></span></td>
+          <td class="num coe-pct <%= tone(x.pct, c.target_pct) %>"><%= x.pct %>%</td>
           <td class="num"><%= x.gap_days > 0 ? fmt(x.gap_days) : '—' %></td>
         </tr>
       <% }); %>
@@ -308,11 +392,13 @@
         <td class="num">+<%= fmt(ga.firm_days) %></td>
         <td class="num"><%= fmt(ga.all_days) %></td>
         <td class="num"><%= fmt(ga.projected_days) %></td>
-        <td class="num coe-pct <%= tone(ga.pct) %>"><%= ga.pct %>%</td>
+        <td class="num"><%= fmt(ga.target_days) %><br><span class="muted" style="font-size:11.5px;"><%= pctStr(ga.target_pct) %></span></td>
+        <td class="num coe-pct <%= tone(ga.pct, ga.target_pct) %>"><%= ga.pct %>%</td>
         <td class="num"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></td>
       </tr>
     </tfoot>
   </table></div>
+  <p class="footnote" style="margin-bottom:0;"><strong>Target</strong> is that centre's own targeted child-days — approved places × operating days × its stored target — so the gap beside it is the gap to the number that centre is actually managed to. The group row targets <%= fmt(ga.target_days) %> child-days, the four centre targets weighted by approved places (<%= pctStr(GTGT) %>); the centre-by-centre shortfall in the table above is <%= fmt(ga.shortfall_days) %>, larger because a centre over its target cannot fill a seat at one under it.</p>
 </div>
 
 <% if (coe.opening.length) { %>
@@ -365,7 +451,8 @@
     <p><strong>Firm backfill</strong> = LineLeader expected starts at <strong>Offer Accepted</strong> or <strong>Pre-Offered</strong> with a start date on or before the month, valued at the weekdays that family asked for, prorated from the start date. Soft interest is excluded on purpose. Where LineLeader carries no requested days on the enrolment the child is still counted as committed and valued at that centre's mean requested days per week. Starters valued that way are marked <strong>(<%= ga.days_unknown %> est.)</strong> in the tables above — <%= ga.days_unknown %> of the <%= ga.firm_children %> firm starters counted in <%= mLong(am.month) %>. A committed starter is never dropped from the count or from the projection because its days are missing.</p>
     <p><strong>All-pipeline backfill</strong> = the same calculation across every status, including waitlist and tours. It is the secondary figure and never feeds the projection.</p>
     <p><strong>Projected filled</strong> = run rate − leaver child-days + firm backfill, shown as child-days and as a share of available child-days.</p>
-    <p><strong>Target <%= TGT %>%</strong> is a <strong>placeholder</strong> only. It should be a per-centre number the CEO sets, and the colours on this page will follow it once it is.</p>
+    <p><strong>Target</strong> is per centre, not one number for the group: <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct) + (c.target_source === 'centre' ? '' : ' (group default)'); }).join(', ') %>. It is read from the occupancy target already stored against each centre for wage budgeting (<code>labour_budget.budget_occ</code> at the standing 'default' week, keyed by the Employment Hero centre name and resolved to the OWNA centre by the payroll import's own mapping), so this page and the wage page judge a centre against the same stored number and there is no second copy to drift. A centre with nothing stored falls back to <%= pctStr(coe.target_default_pct) %> and every figure derived from it says “group default”. The group's own target, <%= pctStr(GTGT) %>, is those centre targets weighted by approved places — not their average, which would give a large licence the same say as a small one.</p>
+    <p><strong>Why a target above 100% of approved places is legitimate, and what it is a target for.</strong> The measure is <em>booked</em> child-days ÷ (approved places × operating days) — the same construction as the occupancy figure this target has always been compared against on the wage page. A booking counts whether or not the child turns up, and a child who is absent still holds the place, so booked child-days sit above the children actually in the building — a centre is over its licence only if more children <em>attend</em> on the same day than it is licensed for: in the run-rate week the group booked <%= coe.group.run_week_pct %>% of its place-days and attended <%= coe.group.run_week_attended_pct %>%<%= overTarget.length ? ', and ' + overTarget.map(function(c){ return shortName(c.name) + ' booked ' + c.run_week_pct + '% against ' + c.run_week_attended_pct + '% attended'; }).join(', ') : '' %>. That is the whole of the headroom above 100%. It is <strong>not</strong> part-time families sharing a place across the week: sharing is why <em>children per place</em> is about <%= ms ? (ms.group.places_filled_pct / 100).toFixed(2) : '1.5' %>, and it cannot lift days filled or % filled, because a part-time child contributes fewer child-days to the numerator, not more.</p>
     <p><strong>Why the projection above does not simply add up OWNA's forward bookings:</strong> recurring bookings are rolled forward different distances for each family, so a raw forward month reads as demand when it is really an artefact of how far ahead the roll has run. The run-rate model avoids that. The measured count below it reports the same bookings honestly instead: it says how many children are booked into a month and how many are not yet confirmed, rather than treating the gap as demand that has gone.</p>
     <% if (ms) { %>
     <p><strong>Measured continuing count</strong> = of the children enrolled today at a centre, how many hold at least one booked operating day in the month. <strong>Enrolled today</strong> is the children with a booking in the reference week (the Mon–Fri week with the most children booked in the forward pull, so a holiday week cannot read as a collapse). <strong>Not yet confirmed</strong> holds no booking in that month and has no finish date; <strong>leaving</strong> has a finish date before the month starts. The child-days for those two groups are each child's own days per week scaled to the month's operating days — not the centre average the run-rate model uses.</p>
@@ -379,7 +466,7 @@
 </div>
 
 <p class="footnote">
-  <% if (ms) { %>The run-rate projection above is still a ceiling; the measured continuing count from <%= dLong(ms.snapshot_date) %> is what is actually booked. Per-centre targets from the CEO replace the <%= TGT %>% placeholder.
+  <% if (ms) { %>The run-rate projection above is still a ceiling; the measured continuing count from <%= dLong(ms.snapshot_date) %> is what is actually booked. Each centre is judged against its own stored target (<%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %>), the group against <%= pctStr(GTGT) %>.
   <% } else { %>First release: the projection is a ceiling built from the current run rate, not a count of families who have confirmed they are staying. The measured continuing count and booking mix start accumulating from the first nightly run.<% } %>
   <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= sydneyStamp(lastRun.finished_at) %>.<% } %>
 </p>

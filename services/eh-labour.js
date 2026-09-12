@@ -5,7 +5,10 @@ const { eh } = require("./eh");
 const WEEKS = parseInt(process.env.EH_LABOUR_WEEKS || "16", 10);
 const d10 = (s) => (s ? String(s).slice(0, 10) : null);
 
-// Map an EH centre name ("Futuro GWH") to an OWNA centre owna_id.
+// Map an EH centre name ("Futuro GWH") to an OWNA centre owna_id. Exported because payroll is not the only
+// thing keyed by the Employment Hero name: labour_budget rows (wages, hours and the occupancy target the
+// COE page is judged against) are keyed by it too, and services/metrics.js resolves them through THIS
+// function rather than keeping a second copy of the mapping that could drift from the payroll import.
 function ownaIdFor(ehCentre, centres) {
   const norm = (s) => (s || "").toLowerCase().replace(/futuro( early learning)?/g, "").replace(/[^a-z]/g, "");
   const alias = { gwh: "gledswoodhills", heathrd: "heathrd" };
@@ -166,4 +169,4 @@ function centreLocation(id, locations) {
   }
   return loc.name;
 }
-module.exports = { runLabourSnapshot, normaliseRun, classify, centreLocation };
+module.exports = { runLabourSnapshot, normaliseRun, classify, centreLocation, ownaIdFor };

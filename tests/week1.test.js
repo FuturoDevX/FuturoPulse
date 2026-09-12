@@ -649,10 +649,12 @@ test('Week 1 batch 1',async(t)=>{
   // The anchor row carries its highlight as a class, not an escaped inline style attribute.
   assert.match(html,/<tr class="coe-anchor">\s*<td>Feb 2027 — anchor<\/td>/);
   assert.doesNotMatch(html,/style=&#34;/);
-  assert.match(html,/target 95% is a placeholder/);
-  assert.match(html,/<strong>placeholder<\/strong> only/);
+  assert.match(html,/against the group target of 95%/);                        // no stored target here → the fallback, named as such
+  assert.match(html,/<strong>Target<\/strong> is per centre, not one number for the group/);
+  assert.match(html,/Centre Alpha 95% \(group default\)/);
+  assert.doesNotMatch(html,/placeholder/i,'the placeholder wording is gone: the target is a real stored value now');
   assert.match(html,/% once licensed places are confirmed/);                    // opening centres get no percentage
-  assert.match(html,/title="429 of 2,100 days">20\.4%<\/td>/);                  // Alpha, November: 429 of 2,100 available child-days
+  assert.match(html,/title="429 of 2,100 days · Centre Alpha is measured against 95%">20\.4%<\/td>/); // Alpha, November: 429 of 2,100 available child-days, judged against its own target
   // The starter with no requested days recorded is in the count, and the page says so beside the number.
   assert.match(html,/<td class="num">3<span class="muted"> \(1 est\.\)<\/span><\/td>/);
   assert.match(html,/1 of them with no requested days recorded, valued at their centre average/);

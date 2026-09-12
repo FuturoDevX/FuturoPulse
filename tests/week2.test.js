@@ -853,6 +853,173 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
 
   db.prepare('UPDATE centres SET approved_places=NULL WHERE owna_id=?').run('a');
  });
+
+ // ===== Batch H: the COE target is the REAL per-centre target, not a 95% placeholder =====
+ // The business already stores an occupancy target per centre, in labour_budget.budget_occ at the standing
+ // 'default' week — Austral, Bardia and GWH on 102, Heath Rd on 85. The COE page coloured everything
+ // against one hard-coded 95 instead, so Heath Rd was judged against a number 10 points above the one it is
+ // actually managed to and the other three against one 7 points below. The row is keyed by the EMPLOYMENT
+ // HERO centre name, so every lookup goes through services/eh-labour.js ownaIdFor() rather than a second
+ // copy of that mapping.
+ const EH_ALPHA='Futuro Alpha', EH_BETA='Futuro Beta';
+ const setTarget=(eh,occ,wages)=>db.prepare(
+   `INSERT INTO labour_budget(eh_centre,week_ending,budget_wages,budget_hours,budget_occ,budget_support)
+    VALUES(?,'default',?,NULL,?,NULL)
+    ON CONFLICT(eh_centre,week_ending) DO UPDATE SET budget_wages=excluded.budget_wages, budget_occ=excluded.budget_occ`
+ ).run(eh,wages==null?null:wages,occ);
+ const clearTargets=()=>db.prepare("DELETE FROM labour_budget WHERE week_ending='default'").run();
+
+ await t.test('the Employment Hero name → owna_id mapping resolves all four operating centres',()=>{
+  // The REAL names on both sides, so a rename on either system fails here rather than on the page.
+  const { ownaIdFor }=require('../services/eh-labour');
+  const real=[
+   {owna_id:'669597770e27307b6e0eb590',name:'Futuro Childcare & Education - Austral'},
+   {owna_id:'65f7d76df54b2cd83721524a',name:'Futuro Childcare & Education - Bardia'},
+   {owna_id:'64547c8b8e248030d4902e9f',name:'Futuro Childcare & Education - Gledswood Hills'},
+   {owna_id:'686464706375331b2aae486d',name:'Futuro Childcare & Education - Heath Rd'},
+  ];
+  assert.equal(ownaIdFor('Futuro Austral',real),'669597770e27307b6e0eb590');
+  assert.equal(ownaIdFor('Futuro Bardia',real),'65f7d76df54b2cd83721524a');
+  assert.equal(ownaIdFor('Futuro GWH',real),'64547c8b8e248030d4902e9f','the GWH alias must reach Gledswood Hills');
+  assert.equal(ownaIdFor('Futuro Heath Rd',real),'686464706375331b2aae486d');
+  // …and payroll locations that are not centres resolve to nothing, so they can never carry a COE target.
+  assert.equal(ownaIdFor('Futuro HQ',real),null);
+  assert.equal(ownaIdFor('Futuro Food Project',real),null);
+  // Every one of the four is distinct: a mapping that collapsed two centres would silently share a target.
+  const ids=['Futuro Austral','Futuro Bardia','Futuro GWH','Futuro Heath Rd'].map((n)=>ownaIdFor(n,real));
+  assert.equal(new Set(ids).size,4);
+
+  // Through the metrics accessor, against this fixture DB, the same mapping keys the stored row.
+  setTarget(EH_ALPHA,102,50000);
+  try{
+   assert.equal(m.ehCentreMap().byEh[EH_ALPHA],'a');
+   assert.equal(m.ehCentreFor('a'),EH_ALPHA);
+   assert.equal(m.ehCentreFor('b'),null,'a centre payroll has never seen has no name to key a target on');
+  } finally {clearTargets();}
+ });
+
+ await t.test('a centre with a stored target is judged against it; one without falls back and is labelled',()=>{
+  setTarget(EH_ALPHA,102,50000);                 // Alpha is managed to 102%
+  db.prepare(`INSERT INTO labour_weekly(eh_centre,week_ending,owna_id,updated_at) VALUES(?,?,?,datetime('now'))
+              ON CONFLICT(eh_centre,week_ending) DO NOTHING`).run(EH_BETA,'2026-09-11','b'); // Beta is known to payroll…
+  try{
+   const t2=m.occupancyTargets();
+   assert.deepEqual(t2.a,{pct:102,source:'centre',eh_centre:EH_ALPHA});
+   assert.deepEqual(t2.b,{pct:95,source:'default',eh_centre:EH_BETA},'…but has no target stored, so it falls back');
+   assert.equal(m.GROUP_TARGET_PCT,95,'the fallback is the single group default, not a per-page constant');
+
+   const coe=freeze(FROZEN,()=>m.coeOutlook());
+   const a=coe.centres.find((c)=>c.owna_id==='a'), b=coe.centres.find((c)=>c.owna_id==='b');
+   assert.equal(a.target_pct,102);assert.equal(a.target_source,'centre');assert.equal(a.target_eh_centre,EH_ALPHA);
+   assert.equal(b.target_pct,95);assert.equal(b.target_source,'default');
+   // The gap is to the centre's OWN target, in child-days, month by month.
+   a.months.forEach((x)=>{
+    assert.equal(x.target_pct,102);
+    assert.equal(x.target_days,Math.round(x.available_days*1.02*10)/10);
+    assert.equal(x.gap_days,Math.round(Math.max(0,x.available_days*1.02-x.projected_days)*10)/10);
+   });
+   b.months.forEach((x)=>{ assert.equal(x.target_pct,95); });
+   // target_pct at the top level keeps its old meaning — the FALLBACK — so nothing reading it silently changed.
+   assert.equal(coe.target_pct,95);assert.equal(coe.target_default_pct,95);
+   assert.equal(coe.targets_stored,1);assert.equal(coe.targets_default,coe.centres.length-1);
+
+   // The group target is the centre targets weighted by approved places, not their mean and not the fallback.
+   const places=coe.centres.reduce((s,c)=>s+c.places,0);
+   const weighted=coe.centres.reduce((s,c)=>s+c.places*c.target_pct,0)/places;
+   assert.equal(coe.group.target_pct,Math.round(weighted*10)/10);
+   assert.ok(coe.group.target_pct>95,'one centre on 102 must pull the group above the 95 fallback');
+   coe.group.months.forEach((x)=>{
+    assert.equal(x.gap_days,Math.round(Math.max(0,x.target_days-x.projected_days)*10)/10);
+    // Counted centre by centre the shortfall is never smaller: a centre over its target cannot fill a seat
+    // at one under it, so the two numbers are different on purpose and both are printed.
+    assert.ok(x.shortfall_days>=x.gap_days-0.05,x.month);
+   });
+
+   // The measured half is judged the same way — days filled is the measure the stored target is set against.
+   const ms=freeze(FROZEN,()=>m.coeMeasured());
+   if(ms){
+    const ma=ms.centres.find((c)=>c.owna_id==='a');
+    if(ma){assert.equal(ma.target_pct,102);assert.equal(ma.target_source,'centre');}
+    assert.equal(ms.group.target_pct,m.blendedTarget(ms.centres,m.occupancyTargets()));
+   }
+  } finally {clearTargets();db.prepare("DELETE FROM labour_weekly WHERE eh_centre=?").run(EH_BETA);}
+ });
+
+ await t.test('the COE page says, per centre, which target it is measuring against',async()=>{
+  setTarget(EH_ALPHA,102,50000);
+  try{
+   const adminCookie=await login('admin');
+   const html=await freeze(FROZEN,()=>page('/coe',adminCookie));
+   assert.match(html,/What each centre is measured against/);
+   // Every centre's own target is printed beside its name, and the fallback is named as a fallback.
+   assert.match(html,/Centre Alpha[\s\S]{0,400}?<strong>102%<\/strong>/);
+   assert.match(html,/its own stored target/);
+   assert.match(html,/Centre Beta[\s\S]{0,600}?group default/);
+   // …and the colour follows the centre's own target, not one number for the page.
+   assert.match(html,/Centre Alpha is measured against 102%/);
+   assert.match(html,/Centre Beta is measured against 95%/);
+   assert.match(html,/Centre Alpha 102%, Centre Beta 95%/);
+   // (b) A target over 100% is explained where it is shown — accurately.
+   assert.match(html,/A target above 100% of approved places is not a mistake/);
+   assert.match(html,/an absent child still holds the place/);
+   assert.match(html,/A centre is over its\s+licence only if more children <em>attend<\/em> on the same day than it is licensed for/);
+   assert.match(html,/not<\/strong> reached by part-time families sharing a place across the week/,
+     'the page must not offer the wrong reason: sharing lifts children-per-place, never days filled');
+   assert.doesNotMatch(html,/placeholder/i);
+   // (c) admin and ops get the way to change it; a viewer is told where it lives instead of being sent there.
+   assert.match(html,/href="\/admin\/places#targets"/);
+   const viewerCookie=await login('viewer');
+   const viewer=await freeze(FROZEN,()=>page('/coe',viewerCookie));
+   assert.doesNotMatch(viewer,/Set targets/);
+   assert.match(viewer,/Targets are maintained by an administrator or the operations manager/);
+   assert.match(viewer,/<strong>102%<\/strong>/,'a viewer still sees what each centre is measured against');
+  } finally {clearTargets();}
+ });
+
+ await t.test('/admin/places edits the SAME stored target the wage page writes, never a second copy',async()=>{
+  const admin=await login('admin');
+  setTarget(EH_ALPHA,102,50000);
+  // Payroll has imported this centre, so the wage page lists it too — both forms must reach the same row.
+  db.prepare(`INSERT INTO labour_weekly(eh_centre,week_ending,owna_id,updated_at) VALUES(?,?,?,datetime('now'))
+              ON CONFLICT(eh_centre,week_ending) DO NOTHING`).run(EH_ALPHA,'2026-09-11','a');
+  const occOf=(eh)=>{const r=db.prepare("SELECT budget_occ o, budget_wages w FROM labour_budget WHERE eh_centre=? AND week_ending='default'").get(eh);return r||{};};
+  try{
+   const form=await page('/admin/places',admin);
+   assert.match(form,/name="target_a"/,'the target is editable beside the places it is a percentage of');
+   assert.match(form,/value="102"/);
+   assert.doesNotMatch(form,/name="target_b"/,'a centre with no payroll name has nothing to key a target on');
+   assert.match(form,/no payroll centre yet/);
+
+   const post=(cookie,body)=>fetch(base+'/admin/places',{method:'POST',redirect:'manual',
+     headers:{cookie,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body)});
+   let r=await post(admin,{target_a:'97.5'});
+   assert.equal(r.status,302);assert.match(r.headers.get('location'),/targets=1/);
+   assert.equal(occOf(EH_ALPHA).o,97.5,'it writes the one stored row…');
+   assert.equal(occOf(EH_ALPHA).w,50000,'…and leaves the wage budget on that row alone');
+   assert.equal(db.prepare("SELECT COUNT(*) n FROM labour_budget WHERE week_ending='default'").get().n,1,'no second copy');
+   assert.equal(m.occupancyTargets().a.pct,97.5);
+
+   // Over 100 is legitimate here and must be accepted; rubbish and a typo like 1020 must not be.
+   r=await post(admin,{target_a:'102'});
+   assert.match(r.headers.get('location'),/targets=1/);assert.equal(occOf(EH_ALPHA).o,102);
+   for(const bad of ['abc','0','-5','1020','97.55']){
+    const br=await post(admin,{target_a:bad,places_a:'110'});
+    assert.match(decodeURIComponent(br.headers.get('location')),/err=/,bad+' must be rejected');
+    assert.equal(occOf(EH_ALPHA).o,102,bad+' must not overwrite a good target');
+    assert.equal(db.prepare("SELECT approved_places p FROM centres WHERE owna_id='a'").get().p,null,
+      bad+' must not let the rest of the form through');
+   }
+   // Blank clears it back to the group default rather than storing a zero.
+   r=await post(admin,{target_a:''});
+   assert.match(r.headers.get('location'),/targets=1/);
+   assert.equal(occOf(EH_ALPHA).o,null);
+   assert.deepEqual(m.occupancyTargets().a,{pct:95,source:'default',eh_centre:EH_ALPHA});
+   // The wage-budget page still edits the very same row, so the two forms cannot drift apart.
+   const wage=await page('/admin/wage-budget',admin);
+   assert.match(wage,new RegExp('name="occ_'+EH_ALPHA.replace(/ /g,'\\s')+'"'));
+  } finally {clearTargets();db.prepare("DELETE FROM labour_weekly WHERE eh_centre=?").run(EH_ALPHA);
+             db.prepare("UPDATE centres SET approved_places=NULL WHERE owna_id='a'").run();}
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
 

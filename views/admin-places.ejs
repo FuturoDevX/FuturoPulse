@@ -6,19 +6,29 @@
   const total = rows.filter((r) => !r.opening).reduce((s, r) => s + (r.approved_places || 0), 0);
   const roomTotal = rows.filter((r) => !r.opening).reduce((s, r) => s + (r.capacity || 0), 0);
   const missing = rows.filter((r) => !r.opening && r.approved_places == null);
+  const pctStr = (n) => (Number(n) % 1 === 0 ? String(Number(n)) : Number(n).toFixed(1)) + '%';
+  const noTarget = rows.filter((r) => !r.opening && r.target_stored == null);
+  const noEh = rows.filter((r) => !r.target_eh_centre);
 %>
 <div class="page-head"><div>
   <p class="crumb"><a href="/">← Overview</a></p>
-  <h1>Approved places</h1>
+  <h1>Approved places &amp; occupancy targets</h1>
   <p class="sub">The licensed count on each service approval, as published on the ACECQA National Register. Every
     licensed-places figure on the dashboard divides by this — utilisation, unused places, seats, the COE
-    available child-days and the booking mix.</p>
+    available child-days and the booking mix. The occupancy <strong>target</strong> beside it is the percentage
+    of those places each centre is managed to: it is the same stored value the
+    <a class="row-link" href="/admin/wage-budget">Wage budgets</a> page edits and the
+    <a class="row-link" href="/coe#targets">Continuation of Enrolment</a> page colours against — one value, not a copy.</p>
 </div></div>
 
-<% if (saved) { %><div class="flash"><%= Number(saved) === 0 ? 'No changes to save.' : (Number(saved) === 1 ? '1 centre updated.' : Number(saved) + ' centres updated.') %></div><% } %>
+<% if (locals.saved != null) { var np = Number(saved), nt = Number(locals.savedTargets || 0); %>
+  <div class="flash"><%= (np + nt) === 0 ? 'No changes to save.'
+      : [np ? (np === 1 ? '1 centre’s approved places updated' : np + ' centres’ approved places updated') : null,
+         nt ? (nt === 1 ? '1 occupancy target updated' : nt + ' occupancy targets updated') : null].filter(Boolean).join(' · ') + '.' %></div>
+<% } %>
 <% if (err) { %><div class="flash bad">Nothing was saved — <%= err %>.</div><% } %>
 
-<div class="card">
+<div class="card" id="targets">
   <form method="POST" action="/admin/places">
     <div style="overflow-x:auto;">
     <table>
@@ -28,6 +38,7 @@
           <th class="num" title="Sum of the centre's OWNA room capacities, rewritten by the nightly snapshot. This is how the rooms are set up, not what the service is licensed for.">OWNA room sum</th>
           <th class="num" title="Approved Places on the service approval. Blank = not licensed yet.">Approved places</th>
           <th class="num" title="Approved places − OWNA room sum">Difference</th>
+          <th class="num" title="The share of the approved places this centre is managed to. Above 100% is legitimate: the measure counts BOOKED child-days, and a booked child who is absent still holds the place. Blank = fall back to the group default.">Occupancy target</th>
           <th>Service approval</th>
         </tr>
       </thead>
@@ -50,6 +61,17 @@
               <% } else if (c.discrepancy === 0) { %><span class="muted">0</span>
               <% } else { %><strong class="warn-text"><%= c.discrepancy > 0 ? '+' : '' %><%= c.discrepancy %></strong><% } %>
             </td>
+            <td class="num">
+              <% if (c.target_eh_centre) { %>
+                <input type="text" inputmode="decimal" name="target_<%= c.owna_id %>"
+                       value="<%= c.target_stored != null ? c.target_stored : '' %>"
+                       style="width:90px;text-align:right;" placeholder="<%= defaultTarget %>"
+                       aria-label="Occupancy target for <%= shortName(c.name) %>">
+                <br><span class="muted" style="font-size:11.5px;"><%= c.target_stored != null ? 'stored' : 'group default ' + pctStr(c.target_pct) %></span>
+              <% } else { %>
+                <span class="muted">—</span><br><span class="muted" style="font-size:11.5px;">no payroll centre yet</span>
+              <% } %>
+            </td>
             <td>
               <% if (c.approval_no) { %>
                 <a class="row-link" href="<%= c.register_url %>" target="_blank" rel="noopener noreferrer"><%= c.approval_no %> →</a>
@@ -64,12 +86,13 @@
           <td class="num"><%= roomTotal %></td>
           <td class="num"><strong><%= missing.length ? '—' : total %></strong></td>
           <td class="num"><%= missing.length ? '—' : (total - roomTotal === 0 ? '0' : (total - roomTotal > 0 ? '+' : '') + (total - roomTotal)) %></td>
+          <td class="num"></td>
           <td></td>
         </tr>
       </tfoot>
     </table>
     </div>
-    <button type="submit" style="margin-top:16px;">Save approved places</button>
+    <button type="submit" style="margin-top:16px;">Save places &amp; targets</button>
   </form>
 </div>
 
@@ -83,5 +106,23 @@
   The nightly snapshot never writes this column — it keeps refreshing the OWNA room sum beside it, so a licence
   change shows up here as a difference rather than quietly moving every percentage on the dashboard.
   Check a number against the register entry linked in the last column (ACECQA publishes it as “Approved Places”).
+</p>
+
+<p class="footnote">
+  <strong>Occupancy target.</strong> Enter a percentage from 1 to <%= maxTarget %> (one decimal allowed), or leave it blank
+  to fall back to the <%= defaultTarget %>% group default. <strong>A target above 100% is legitimate here and is meant to
+  be typed.</strong> The measure it is compared against is <em>booked</em> child-days ÷ (approved places × operating days),
+  and a booking counts whether or not the child attends — an absent child still holds the place — so bookings run above the
+  children actually present and the ratio can pass 100% while the number attending does not; a centre is over its licence
+  only if more children <em>attend</em> on the same day than it is licensed for.
+  It is not reached by part-time families sharing a place across the week: that is what puts <em>children per place</em>
+  above 1, and it cannot lift the days-filled measure at all.
+  The value is stored once, in <code>labour_budget.budget_occ</code> against the Employment Hero centre name, which is
+  why a centre payroll has not seen yet shows “—” instead of a field
+  <% if (noEh.length) { %>(<%= noEh.map(function(c){ return shortName(c.name); }).join(', ') %>)<% } %> — the alternative
+  would be a second copy that drifts from the one the wage page and the COE page read.
+  <% if (noTarget.length) { %>
+  Still on the group default: <%= noTarget.map(function(c){ return shortName(c.name); }).join(', ') %>.
+  <% } %>
 </p>
 <%- include('partials/footer') %>
