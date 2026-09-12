@@ -478,5 +478,55 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.equal(good.signal,null,'requiring the app in production must not hang');
   assert.equal(good.status,0,good.stderr);
  });
+
+ // ===== Batch D: the "data as at" stamp is read in Sydney too =====
+ // snapshot_runs.started_at/finished_at are SQLite datetime('now') — UTC, stored space-separated.
+ // V8 parses that form as LOCAL time, so `new Date(finished_at).toLocaleString('en-AU')` showed a
+ // nightly 02:15 Sydney run as 4:15pm the PREVIOUS day: ten hours and a whole calendar day early, on
+ // the one date a reader checks to decide whether the numbers are current.
+ const SYD_STAMP=(s)=>cal.sydneyStamp(s).replace('Sept','Sep'); // ICU writes Sept or Sep by version
+ await t.test('a UTC snapshot timestamp is shown as its Sydney time, on any host',()=>{
+  assert.equal(SYD_STAMP('2026-09-11 16:15:00'),'12 Sep, 2:15 am','a 02:15 Sydney run must not read as the previous afternoon');
+  assert.equal(SYD_STAMP('2026-09-12 16:20:31'),'13 Sep, 2:20 am');
+  assert.equal(SYD_STAMP('2026-09-10 09:47:14'),'10 Sep, 7:47 pm','a daytime run is 10h out without a day shift');
+  assert.equal(SYD_STAMP('2026-01-05 13:00:00'),'6 Jan, 12:00 am','daylight saving is +11, not +10');
+  assert.equal(cal.sydneyStamp(null),'');assert.equal(cal.sydneyStamp(undefined),'');
+  assert.equal(cal.sydneyStamp('not a date'),'not a date','an unparseable value is passed through, never NaN');
+  // The zone is pinned in the helper, so dropping TZ from render.yaml cannot shift what is displayed.
+  const read=(tz)=>spawnSync(process.execPath,['-e',"process.stdout.write(require('./services/calendar').sydneyStamp('2026-09-11 16:15:00'))"],
+    {cwd:ROOT,env:{...process.env,TZ:tz},encoding:'utf8',timeout:30000});
+  for(const tz of ['UTC','America/New_York','Asia/Kolkata','Australia/Sydney']){
+   const r=read(tz);assert.equal(r.status,0,r.stderr);
+   assert.equal(r.stdout.replace('Sept','Sep'),'12 Sep, 2:15 am',`TZ=${tz} must not change the displayed stamp`);
+  }
+ });
+
+ await t.test('every page footer renders that stamp, never the raw UTC column',async()=>{
+  db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,rows_written) VALUES('2026-09-12 16:18:02','2026-09-12 16:20:31','ok',10)").run();
+  const cookie=await login('exec');
+  for(const url of ['/','/coe']){ // the two footers this fixture DB has the data to render
+   const html=await freeze(FROZEN,()=>page(url,cookie));
+   assert.match(html,/Data as at/,url+' should carry a freshness stamp');
+   assert.ok(html.includes('13 Sep, 2:20 am')||html.includes('13 Sept, 2:20 am'),url+' must show the Sydney time of the run');
+   assert.doesNotMatch(html,/2026-09-12 16:20:31/,url+' must not print the raw UTC column');
+   assert.doesNotMatch(html,/12\/09\/2026, 4:20:31/,url+' must not read the stored stamp as host-local time');
+  }
+  // Rostering and Safety hide their footnote until they have data, so check their source instead.
+  for(const f of ['rostering.ejs','safety.ejs'])
+   assert.match(fs.readFileSync(path.join(ROOT,'views',f),'utf8'),/sydneyStamp\(lastRun\.finished_at\)/,f+' must render the stamp through sydneyStamp');
+  // No view may format a sync timestamp itself again: parsing one by hand, or printing the column
+  // raw, is what put these footers a day behind. They all go through sydneyStamp() now.
+  const bad=[];
+  for(const rel of ['views','views/partials'])
+   for(const f of fs.readdirSync(path.join(ROOT,rel)).filter((f)=>f.endsWith('.ejs'))){
+    fs.readFileSync(path.join(ROOT,rel,f),'utf8').split('\n').forEach((line,i)=>{
+     const stamps=/lastRun\.(finished_at|started_at)|last_success|last_attempt/;
+     if(!stamps.test(line)) return;
+     if(/new Date\(/.test(line)) bad.push(`${rel}/${f}:${i+1} parses the timestamp itself`);
+     else if(/<%[=-]\s*(lastRun\.(finished|started)_at|ps\.last_(success|attempt))/.test(line)) bad.push(`${rel}/${f}:${i+1} prints the raw UTC column`);
+    });
+   }
+  assert.deepEqual(bad,[],'these views must render sync timestamps through sydneyStamp(): '+bad.join(', '));
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

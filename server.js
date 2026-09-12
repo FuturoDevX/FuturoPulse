@@ -17,6 +17,9 @@ if (isProd && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.include
 }
 
 app.locals.privacyContact = process.env.PRIVACY_CONTACT || "the Privacy Officer";
+// Every stored timestamp is UTC (SQLite datetime('now')). Views must render it in Sydney, never raw
+// and never through the host's zone — so they all go through this one helper.
+app.locals.sydneyStamp = require("./services/calendar").sydneyStamp;
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 app.use(express.urlencoded({ extended: true }));

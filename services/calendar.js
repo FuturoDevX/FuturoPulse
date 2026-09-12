@@ -30,6 +30,19 @@ function today(at) { return sydneyDate(at); }
 // The current Sydney month (YYYY-MM).
 function currentMonth(at) { return sydneyDate(at).slice(0, 7); }
 
+// Render a stored timestamp for a reader, in Sydney. SQLite's datetime('now') is UTC and is stored
+// space-separated ('2026-09-12 16:20:31'), which V8 parses as LOCAL time — so handing it straight to
+// toLocaleString() showed a run that finished 2:20am on 13 Sep as 4:20pm on 12 Sep: ten hours and a
+// whole calendar day early, on the one stamp a reader checks to judge whether the numbers are current.
+// Marking the value as UTC and pinning timeZone fixes both halves, and leaves nothing to the host's TZ.
+function sydneyStamp(ts) {
+  if (!ts) return "";
+  const s = String(ts).trim().replace(" ", "T");
+  const d = new Date(/(Z|[+-]\d{2}:?\d{2})$/.test(s) ? s : s + "Z"); // already zoned? leave it alone
+  if (Number.isNaN(d.getTime())) return String(ts);
+  return d.toLocaleString("en-AU", { timeZone: TIME_ZONE, day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+}
+
 // Calendar arithmetic on YYYY-MM-DD strings, done in UTC so the host's zone can never shift the
 // result. Callers pass a Sydney date in and get a Sydney date back.
 function addDays(dateStr, n) { const d = toUtc(dateStr); d.setUTCDate(d.getUTCDate() + n); return fmt(d); }
@@ -67,4 +80,4 @@ function unknownHolidayYears(from, to) {
 }
 
 module.exports = { NSW_HOLIDAYS, isHoliday, isWeekday, isOperatingDay, holidaysKnown, operatingDayList, operatingDays, unknownHolidayYears,
-  TIME_ZONE, sydneyDate, today, currentMonth, addDays, daysAgo, daysAhead };
+  TIME_ZONE, sydneyDate, today, currentMonth, sydneyStamp, addDays, daysAgo, daysAhead };

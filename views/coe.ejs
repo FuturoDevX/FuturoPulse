@@ -371,7 +371,7 @@
 <p class="footnote">
   <% if (ms) { %>The run-rate projection above is still a ceiling; the measured continuing count from <%= dLong(ms.snapshot_date) %> is what is actually booked. Per-centre targets from the CEO replace the <%= TGT %>% placeholder.
   <% } else { %>First release: the projection is a ceiling built from the current run rate, not a count of families who have confirmed they are staying. The measured continuing count and booking mix start accumulating from the first nightly run.<% } %>
-  <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= new Date(lastRun.finished_at).toLocaleString('en-AU') %>.<% } %>
+  <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= sydneyStamp(lastRun.finished_at) %>.<% } %>
 </p>
 
 <%- include('partials/footer') %>

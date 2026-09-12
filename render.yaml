@@ -66,8 +66,11 @@ services:
         value: 20
       - key: AI_DAILY_CAP
         value: 300
-      # Host clock. The nightly cron ALSO pins this zone in server.js, and every date-level decision
-      # goes through services/calendar.js today(), so neither depends on this being set.
+      # Host clock. Nothing the dashboard decides or reports depends on it: the nightly cron pins the
+      # zone in server.js, every date-level decision goes through services/calendar.js today(), and the
+      # "data as at" sync stamps go through sydneyStamp() in the same module, which pins it too.
+      # Setting it keeps the container's own logs — and the LineLeader tour times views still format
+      # directly — in Sydney time.
       - key: TZ
         value: Australia/Sydney
       - key: ADMIN_DEFAULT_PASSWORD

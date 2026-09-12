@@ -82,7 +82,9 @@ so it survives deploys and is on a real filesystem (never keep the DB inside One
   in `server.js` (`cron.schedule(..., { timezone })`) as well as by `TZ` in `render.yaml`, so the job does
   not depend on the host's clock settings. Every date the app decides — what "today" is, which month is
   current, how far a window reaches back — comes from `services/calendar.js` (`today()`), which asks Intl
-  for the Sydney date; `toISOString()` is always UTC and reads a day behind all Sydney morning.
+  for the Sydney date; `toISOString()` is always UTC and reads a day behind all Sydney morning. The
+  "data as at" stamp in each footer is the same story in reverse — the run timestamps SQLite stores are
+  UTC, so views render them through `sydneyStamp()`, which marks them as UTC and formats them in Sydney.
 - **Change the admin password** after first login.
 
 Give teammates the URL + the read-only `viewer` login (or add named accounts).

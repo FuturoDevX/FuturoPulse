@@ -204,7 +204,7 @@
   Utilisation <%= util.ytdLabel %> (<%= util.label %>) = booked child-days on operating days <%= dLbl(util.start) %> → <%= dLbl(util.today) %> ÷ (<%= uCap %> places × <%= util.operating_days_ytd %> operating days = <%= uCapDays.toLocaleString('en-AU') %> child-days).
   Annual denominator <%= util.label %> = <%= util.operating_days_year %> operating days (<%= dLbl(util.start) %> → <%= dLbl(util.end) %>) × <%= uCap %> places = <%= uAnnual.toLocaleString('en-AU') %> child-days.<% } else { %>No licensed places recorded for your centre yet, so utilisation cannot be calculated.<% } %><%= util.kind === 'cy' ? ' Showing calendar year (?year=cy); the default is the financial year.' : '' %>
   <% var unk = [...new Set([...(seats.unknownYears || []), ...(util.unknownYears || [])])]; if (unk.length) { %>No NSW public-holiday list is loaded for <%= unk.join(', ') %> — weekdays only for those years.<% } %>
-  <% if (lastRun) { %>· Data as at <%= lastRun.finished_at || lastRun.started_at %> (<%= lastRun.status %><% if (lastRun.note && ['admin','ops_manager'].includes(user.role)) { %> — <%= lastRun.note %><% } %>)<% } else { %>· No snapshot yet — click “Refresh from OWNA”.<% } %>
+  <% if (lastRun) { %>· Data as at <%= sydneyStamp(lastRun.finished_at || lastRun.started_at) %> (<%= lastRun.status %><% if (lastRun.note && ['admin','ops_manager'].includes(user.role)) { %> — <%= lastRun.note %><% } %>)<% } else { %>· No snapshot yet — click “Refresh from OWNA”.<% } %>
 </p>
 
 <%- include('partials/footer') %>

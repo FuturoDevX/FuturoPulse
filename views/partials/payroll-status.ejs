@@ -3,7 +3,7 @@
   // wage-budget admin page so a failed or stalled import is visible where the numbers are read.
   const ps = locals.payroll || null;
   const psMeta = (ps && ps.meta) || {};
-  const psTs = (s) => s ? new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  const psTs = sydneyStamp; // same format as before, with the zone pinned to Sydney rather than the host's
   const psDay = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 %>
 <% if (!ps) { %>
