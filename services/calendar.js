@@ -13,6 +13,30 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const toUtc = (dateStr) => new Date(dateStr + "T00:00:00Z");
 const fmt = (d) => d.toISOString().slice(0, 10);
 
+// ===== "Today" in Sydney =====
+// Every DATE-level decision in the app (what today is, which month is current, how far back a window
+// reaches) must be made in the centres' own time zone. `new Date().toISOString()` is always UTC no
+// matter what TZ is set to, so between midnight and 10am Sydney (11am while daylight saving is on)
+// it still reads yesterday's date. Intl with timeZone 'Australia/Sydney' applies the gazetted DST
+// rules (starts the first Sunday in October, ends the first Sunday in April) instead of a hard-coded
+// +10/+11 offset; en-CA formats as YYYY-MM-DD, the convention used throughout.
+const TIME_ZONE = "Australia/Sydney";
+const SYDNEY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
+
+// The Sydney calendar date (YYYY-MM-DD) at instant `at` — defaults to now.
+function sydneyDate(at = new Date()) { return SYDNEY_FMT.format(at); }
+// The current Sydney date. This is "today" everywhere in the app.
+function today(at) { return sydneyDate(at); }
+// The current Sydney month (YYYY-MM).
+function currentMonth(at) { return sydneyDate(at).slice(0, 7); }
+
+// Calendar arithmetic on YYYY-MM-DD strings, done in UTC so the host's zone can never shift the
+// result. Callers pass a Sydney date in and get a Sydney date back.
+function addDays(dateStr, n) { const d = toUtc(dateStr); d.setUTCDate(d.getUTCDate() + n); return fmt(d); }
+// `n` days before / after today in Sydney.
+function daysAgo(n, at) { return addDays(today(at), -n); }
+function daysAhead(n, at) { return addDays(today(at), n); }
+
 function isHoliday(dateStr) { return HOLIDAY_SET.has(dateStr); }
 function isWeekday(dateStr) { const dow = toUtc(dateStr).getUTCDay(); return dow >= 1 && dow <= 5; }
 function isOperatingDay(dateStr) { return DATE_RE.test(dateStr) && isWeekday(dateStr) && !isHoliday(dateStr); }
@@ -42,4 +66,5 @@ function unknownHolidayYears(from, to) {
   return out;
 }
 
-module.exports = { NSW_HOLIDAYS, isHoliday, isWeekday, isOperatingDay, holidaysKnown, operatingDayList, operatingDays, unknownHolidayYears };
+module.exports = { NSW_HOLIDAYS, isHoliday, isWeekday, isOperatingDay, holidaysKnown, operatingDayList, operatingDays, unknownHolidayYears,
+  TIME_ZONE, sydneyDate, today, currentMonth, addDays, daysAgo, daysAhead };

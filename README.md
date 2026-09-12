@@ -78,7 +78,11 @@ so it survives deploys and is on a real filesystem (never keep the DB inside One
   ```bash
   npm run backfill 730
   ```
-- The nightly cron (02:15) keeps everything current after that.
+- The nightly cron (02:15 **Australia/Sydney**) keeps everything current after that. The zone is pinned
+  in `server.js` (`cron.schedule(..., { timezone })`) as well as by `TZ` in `render.yaml`, so the job does
+  not depend on the host's clock settings. Every date the app decides — what "today" is, which month is
+  current, how far a window reaches back — comes from `services/calendar.js` (`today()`), which asks Intl
+  for the Sydney date; `toISOString()` is always UTC and reads a day behind all Sydney morning.
 - **Change the admin password** after first login.
 
 Give teammates the URL + the read-only `viewer` login (or add named accounts).

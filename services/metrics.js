@@ -6,7 +6,9 @@ const cal = require("./calendar");
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// "Today" is always the Sydney date (services/calendar.js owns the zone), never the UTC one:
+// toISOString is UTC regardless of TZ, so before 10am Sydney it reads a day behind.
+const todayStr = () => cal.today();
 
 // Default range = the last 7 days up to today (history). Future data exists in the table
 // but the default view is "to date"; forward presets expose the forecast.
@@ -15,17 +17,13 @@ function defaultRange() {
   const today = todayStr();
   const maxd = (row && row.maxd) || today;
   const to = maxd < today ? maxd : today; // never default into the future
-  const d = new Date(to);
-  d.setDate(d.getDate() - 6);
-  return { from: d.toISOString().slice(0, 10), to };
+  return { from: cal.addDays(to, -6), to };
 }
 
 // A forward-looking range: today → today + n days (the booked/scheduled horizon).
 function forwardRange(days = 30) {
   const today = todayStr();
-  const d = new Date(today);
-  d.setDate(d.getDate() + days);
-  return { from: today, to: d.toISOString().slice(0, 10) };
+  return { from: today, to: cal.addDays(today, days) };
 }
 
 function centres() {
@@ -342,8 +340,7 @@ function llForCentre(ownaId) {
 // Uses scheduled future bookings already in daily_metrics.
 function forwardOccupancyByCentre(days = 30) {
   const today = todayStr();
-  const end = new Date(today); end.setDate(end.getDate() + days);
-  const to = end.toISOString().slice(0, 10);
+  const to = cal.addDays(today, days);
   const rows = db.prepare(`
     SELECT owna_id, capacity,
            COALESCE(SUM(booked),0) AS booked,
@@ -640,8 +637,7 @@ function projection(scope = "likely", days = 90) {
   const scopeDef = PROJECTION_SCOPES[scope] || PROJECTION_SCOPES.likely;
   const statusSet = new Set(scopeDef.statuses);
   const today = todayStr();
-  const end = new Date(today); end.setDate(end.getDate() + days);
-  const to = end.toISOString().slice(0, 10);
+  const to = cal.addDays(today, days);
 
   const centres = db.prepare(`SELECT owna_id, name, capacity FROM centres WHERE ll_id IS NOT NULL AND capacity > 0`).all();
 
@@ -706,12 +702,11 @@ function projection(scope = "likely", days = 90) {
   return { scope, scopeLabel: scopeDef.label, days, to, rows, scopes: PROJECTION_SCOPES };
 }
 
-// Monday (ISO week start) for a YYYY-MM-DD date, as YYYY-MM-DD.
+// Monday (ISO week start) for a YYYY-MM-DD date, as YYYY-MM-DD. Parsed and stepped in UTC: parsing
+// as local time and then slicing an ISO string lands a day early on any host east of Greenwich.
 function weekStart(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  const dow = (d.getDay() + 6) % 7; // 0 = Monday
-  d.setDate(d.getDate() - dow);
-  return d.toISOString().slice(0, 10);
+  const dow = (new Date(dateStr + "T00:00:00Z").getUTCDay() + 6) % 7; // 0 = Monday
+  return cal.addDays(dateStr, -dow);
 }
 
 // ===== Operating days, seats & utilisation =====
@@ -1132,7 +1127,7 @@ function incidentsMonth(ownaId, month, preferComplete) {
     const r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? AND month=?").get(ownaId, month);
     if (r) return r;
   }
-  const nowMonth = new Date().toISOString().slice(0, 7);
+  const nowMonth = cal.currentMonth();
   if (preferComplete) {
     const r = db.prepare("SELECT * FROM incidents_monthly WHERE owna_id=? AND month<? ORDER BY month DESC LIMIT 1").get(ownaId, nowMonth);
     if (r) return r;
@@ -1163,7 +1158,7 @@ function incidentTotalsBetween(centreRows, fromMonth, toMonth) {
 function incidentsReport(scopedOwnaId, monthsBack = 12, headlineMonth = null, yearKind = "fy", today = todayStr()) {
   let months = db.prepare("SELECT DISTINCT month FROM incidents_monthly ORDER BY month DESC LIMIT ?").all(monthsBack).map((r) => r.month);
   months.reverse(); // chronological (oldest → newest)
-  const nowMonth = new Date().toISOString().slice(0, 7);
+  const nowMonth = today.slice(0, 7); // the (partial) current month in Sydney
   const yr = yearRange(yearKind, today);
   const yStart = Number(yr.start.slice(0, 4));
   const year = { kind: yr.kind, start: yr.start, label: yr.label,
@@ -1415,8 +1410,7 @@ function labourWeeks(limit = 16) {
 // holidays — OWNA keeps booking rows on holidays although the centre is closed); op_days = those days.
 function ownaWeek(ownaId, weekEnding) {
   if (!ownaId) return { revenue: 0, occupancy: null, child_days: 0, op_days: 0 };
-  const start = new Date(weekEnding + "T00:00:00"); start.setDate(start.getDate() - 6);
-  const from = start.toISOString().slice(0, 10);
+  const from = cal.addDays(weekEnding, -6); // Monday of the Mon..weekEnding week
   const r = db.prepare(`
     SELECT COALESCE(SUM(fee_total),0) rev, COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) days
     FROM daily_metrics WHERE owna_id = ? AND metric_date BETWEEN ? AND ?
@@ -1537,7 +1531,7 @@ const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // Average occupancy per weekday (Mon–Fri) over a recent window (past days only).
 function centreDowOccupancy(ownaId, days = 56) {
   const today = todayStr();
-  const from = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const from = cal.addDays(today, -days);
   const rows = db.prepare(`
     SELECT CAST(strftime('%w', metric_date) AS INTEGER) AS dow,
            COALESCE(SUM(booked),0) AS booked, COALESCE(SUM(casual),0) AS casual,
@@ -1653,8 +1647,8 @@ function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
   const tips = [];
   const today = todayStr();
   const money = (n) => "$" + Math.round(n).toLocaleString("en-AU");
-  const ago = (days) => new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
-  const ahead = (days) => new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
+  const ago = (days) => cal.addDays(today, -days);
+  const ahead = (days) => cal.addDays(today, days);
 
   // Recent 28-day actuals (past only): occupancy, attendance, avg daily fee, absences.
   const recent = db.prepare(`

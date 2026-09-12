@@ -7,6 +7,7 @@ const fb = require("../services/feedback");
 const askAI = require("../services/ai-ask");
 const { blockScoped, scopedOwnaId, requireAdminOrOps, requireIdentified, canSeeIdentified } = require("../middleware/auth");
 const { lastRun, sourceSyncFor } = require("../services/snapshot");
+const cal = require("../services/calendar");
 const router = express.Router();
 
 // Simple in-memory limits for the AI endpoints: per-user per-hour, plus a daily cap for the whole team.
@@ -16,7 +17,7 @@ const AI_DAILY_CAP = parseInt(process.env.AI_DAILY_CAP, 10) || 300;
 const aiHits = new Map(); // user key -> [timestamps in the last hour]
 let aiDay = "", aiDayCount = 0;
 function aiAllowed(req) {
-  const now = Date.now(); const day = new Date().toISOString().slice(0, 10);
+  const now = Date.now(); const day = m.todayStr(); // the cap rolls over at Sydney midnight, not UTC
   if (day !== aiDay) { aiDay = day; aiDayCount = 0; }
   if (aiDayCount >= AI_DAILY_CAP) return "The team's daily AI limit has been reached. Please try again tomorrow.";
   const u = req.session.user || {}; const key = u.email || u.id || req.ip;
@@ -39,7 +40,7 @@ function resolveRange(req) {
 // Build "from=…&to=…" preset query strings anchored to the latest data date.
 function presetsFor() {
   const to = m.defaultRange().to;
-  const back = (n) => { const d = new Date(to); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10); };
+  const back = (n) => cal.addDays(to, -n);
   return {
     week: `from=${back(6)}&to=${to}`,
     month: `from=${back(29)}&to=${to}`,
@@ -51,7 +52,7 @@ function presetsFor() {
 // Forward-looking presets anchored to today (the booked/scheduled horizon).
 function fwdPresetsFor() {
   const today = m.todayStr();
-  const ahead = (n) => { const d = new Date(today); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  const ahead = (n) => cal.addDays(today, n);
   return {
     next7: `from=${today}&to=${ahead(7)}`,
     next30: `from=${today}&to=${ahead(30)}`,
@@ -186,7 +187,7 @@ function apResolve(req) {
   const centres = apCentresFor(req);
   const scoped = scopedOwnaId(req);
   const owna = scoped || (centres.find((c) => c.owna_id === req.query.owna) ? req.query.owna : (centres[0] && centres[0].owna_id));
-  const months = m.actionPlanMonths(); const now = new Date().toISOString().slice(0,7);
+  const months = m.actionPlanMonths(); const now = cal.currentMonth();
   const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : (months[0] || now);
   return { centres, owna, months: months.length ? months : [now], month };
 }
@@ -198,7 +199,7 @@ router.get("/action-plans", requireIdentified, (req, res) => {
 });
 router.get("/action-plans/edit", requireAdminOrOps, (req, res) => {
   const centres = m.centres().filter((c) => !c.opening); if (!centres.length) return res.status(404).render("error", {message:"No centres available."}); const owna = centres.find((c)=>c.owna_id===req.query.owna) ? req.query.owna : centres[0].owna_id;
-  const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : new Date().toISOString().slice(0,7);
+  const month = /^\d{4}-\d{2}$/.test(req.query.month) ? req.query.month : cal.currentMonth();
   res.render("action-plan-edit", { title: "Edit Action Plan", centres, owna, month, centre: m.centre(owna), data: m.actionPlanGet(owna, month), cats: AP_CATS });
 });
 router.post("/action-plans/edit", requireAdminOrOps, (req, res) => {
@@ -258,7 +259,7 @@ router.get("/pc", (req, res) => {
   const scoped = scopedOwnaId(req);
   const centresList = m.centres().filter((c) => !c.opening && c.capacity > 0).map((c) => ({ owna_id: c.owna_id, name: c.name }));
   const owna = scoped || (centresList.find((c) => c.owna_id === req.query.owna) ? req.query.owna : null); // null = all centres (group avg)
-  const latestMonth = m.pcMonths(1)[0] || new Date().toISOString().slice(0, 7);
+  const latestMonth = m.pcMonths(1)[0] || cal.currentMonth();
   const full = req.query.full === "1";
   const PC_KEYS = ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"];
   const metric = PC_KEYS.includes(req.query.metric) ? req.query.metric : "enps";

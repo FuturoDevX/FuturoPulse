@@ -31,6 +31,7 @@ router.get("/status", requireAdminOrOps, (req, res) => {
 
 const db = require("../db/db");
 const m = require("../services/metrics");
+const cal = require("../services/calendar");
 
 // Weekly labour budget entry (per centre standing targets).
 router.get("/wage-budget", requireAdminOrOps, (req, res) => {
@@ -101,7 +102,7 @@ router.post("/users/:id/reset", requireAdmin, (req, res) => {
 
 // ===== People & Culture entry (admin) =====
 router.get("/pc", requireAdmin, (req, res) => {
-  const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : new Date().toISOString().slice(0,7);
+  const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : cal.currentMonth();
   const centres = db.prepare("SELECT owna_id, name FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0) ORDER BY name").all();
   const data = {}; db.prepare("SELECT * FROM pc_metrics WHERE month = ?").all(month).forEach((r) => { data[r.owna_id] = r; });
   res.render("admin-pc", { title: "P&C Entry", month, centres, data, targets: m.pcTargets(), msg: req.query.msg, err: req.query.err });

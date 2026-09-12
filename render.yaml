@@ -38,7 +38,7 @@ services:
       - key: SNAPSHOT_FORWARD_DAYS
         value: 240
       - key: SNAPSHOT_CRON
-        value: 15 2 * * *
+        value: 15 2 * * *          # 02:15 Australia/Sydney (zone pinned in server.js)
       - key: EXIT_LOOKBACK_DAYS
         value: 365
       # LineLeader (ChildcareCRM)
@@ -66,6 +66,8 @@ services:
         value: 20
       - key: AI_DAILY_CAP
         value: 300
+      # Host clock. The nightly cron ALSO pins this zone in server.js, and every date-level decision
+      # goes through services/calendar.js today(), so neither depends on this being set.
       - key: TZ
         value: Australia/Sydney
       - key: ADMIN_DEFAULT_PASSWORD

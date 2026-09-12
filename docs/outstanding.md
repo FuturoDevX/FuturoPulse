@@ -29,7 +29,7 @@ The full sequence and reasoning live in the work plan: https://claude.ai/code/ar
 
 ### Week 2
 - [ ] COE nightly snapshot: per-child continuing count and booking-mix distribution, counts only — **in progress**
-- [ ] Sydney-aware "today" throughout the app; time zone pinned in host config — **in progress**
+- [x] Sydney-aware "today" throughout the app; time zone pinned in host config — **done**. `services/calendar.js` `today()` is the single source; the nightly cron pins `Australia/Sydney` in `server.js` as well as via `TZ` in `render.yaml`
 - [ ] Session store that survives a restart — **in progress**
 - [ ] Hosting move to an Australian region: container config, storage, restore, secrets, new address told to trial users, encryption at rest confirmed, backups re-pointed (2½ days) — blocked on #1, #2, #3
 

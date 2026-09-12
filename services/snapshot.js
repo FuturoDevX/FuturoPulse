@@ -5,6 +5,7 @@ const db = require("../db/db");
 const { owna } = require("./owna");
 const { lineleader } = require("./lineleader");
 const { runLabourSnapshot } = require("./eh-labour");
+const cal = require("./calendar");
 
 const WINDOW_DAYS = parseInt(process.env.SNAPSHOT_WINDOW_DAYS || "120", 10);
 // How far FORWARD to pull scheduled/booked data (OWNA bookings + LineLeader expected starts).
@@ -13,17 +14,11 @@ const FORWARD_DAYS = parseInt(process.env.SNAPSHOT_FORWARD_DAYS || "90", 10);
 // LineLeader locations that aren't real centres.
 const LL_EXCLUDE = new Set(["Staff Location", "Z-Test Location"]);
 
-function daysAgo(n) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
-function daysAhead(n) {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-const today = () => new Date().toISOString().slice(0, 10);
+// Every date the snapshot pulls or writes is a Sydney calendar date (services/calendar.js): a UTC
+// "today" would ask OWNA for yesterday's window all morning, Sydney time.
+const daysAgo = (n) => cal.daysAgo(n);
+const daysAhead = (n) => cal.daysAhead(n);
+const today = () => cal.today();
 
 // Match an OWNA centre name to a LineLeader centre (handles the Heath Rd <-> Leppington Heath alias).
 function matchLlCentre(ownaName, llCentres) {
@@ -313,12 +308,12 @@ async function runIncidents({ windowDays = WINDOW_DAYS, log = console.log } = {}
 
 // ===== Weekly staff roster -> per-centre per-week rostered hours + hours/booking =====
 const ROSTER_DOW = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-function recentMondays(n) {
-  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const out = []; const d = new Date();
-  d.setHours(12, 0, 0, 0); // noon local avoids any DST/tz edge
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to this week's Monday
-  for (let i = 0; i < n; i++) { out.push(ymd(d)); d.setDate(d.getDate() - 7); }
+// The last `n` week-starting Mondays, most recent first, anchored on today in Sydney.
+function recentMondays(n, todayDate = cal.today()) {
+  const dow = (new Date(todayDate + "T00:00:00Z").getUTCDay() + 6) % 7; // 0 = Monday
+  let d = cal.addDays(todayDate, -dow); // back to this week's Monday
+  const out = [];
+  for (let i = 0; i < n; i++) { out.push(d); d = cal.addDays(d, -7); }
   return out;
 }
 async function runRoster({ weeks = 14, log = console.log } = {}) {
@@ -366,10 +361,11 @@ function lastRun() {
 // The nightly snapshot never deletes old rows, so backfilled history persists.
 // Pulls in monthly chunks to keep each request small.
 async function runOwnaBackfill({ backDays = 730, log = console.log } = {}) {
-  const start = new Date(Date.now() - backDays * 864e5);
-  const today = new Date();
+  const startDate = cal.daysAgo(backDays), todayDate = cal.today(); // Sydney dates, walked in UTC
+  const start = new Date(startDate + "T00:00:00Z");
+  const today = new Date(todayDate + "T00:00:00Z");
   const centres = await owna.listCentres();
-  log(`[backfill] ${centres.length} centres, ${start.toISOString().slice(0, 10)} → ${today.toISOString().slice(0, 10)}`);
+  log(`[backfill] ${centres.length} centres, ${startDate} → ${todayDate}`);
   let rows = 0;
   for (const c of centres) {
     const capacity = await centreCapacity(c.id);
@@ -377,7 +373,7 @@ async function runOwnaBackfill({ backDays = 730, log = console.log } = {}) {
     let cur = new Date(start);
     while (cur < today) {
       const from = cur.toISOString().slice(0, 10);
-      const next = new Date(cur); next.setMonth(next.getMonth() + 1);
+      const next = new Date(cur); next.setUTCMonth(next.getUTCMonth() + 1);
       const to = (next < today ? next : today).toISOString().slice(0, 10);
       try {
         const att = await owna.attendance(c.id, from, to);
@@ -482,7 +478,7 @@ const selectExitsFold = db.prepare(`
 `);
 
 async function runExitReport({ log = console.log } = {}) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = cal.today();
   const lookback = exitLookbackDays();
   const cutoff = daysAgo(lookback);
   const cutoffMonth = cutoff.slice(0, 7); // the month the window starts in — only partly covered by this run
@@ -492,6 +488,8 @@ async function runExitReport({ log = console.log } = {}) {
   const reasonMap = new Map();
   if (lineleader.hasCreds()) {
     try {
+      // These two are INSTANTS the LineLeader API filters on, not calendar dates, so UTC is correct:
+      // the window is deliberately 120 days wider than the look-back it feeds.
       const isoSec = (d) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
       const from = isoSec(new Date(Date.now() - (lookback + 120) * 864e5));
       const to = isoSec(new Date(Date.now() + 30 * 864e5));
@@ -602,8 +600,9 @@ const linkCentreLl = db.prepare(`UPDATE centres SET ll_id = ? WHERE owna_id = ?`
 async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAYS, log = console.log } = {}) {
   if (!lineleader.hasCreds()) { log("[LineLeader] no credentials — skipping"); return { skipped: true, reason: "no LineLeader credentials configured" }; }
   const failures = []; // best-effort parts that failed; reported to the run as a problem
-  const today = new Date().toISOString().slice(0, 10);
-  // LineLeader rejects millisecond precision — use whole-second ISO (…Z).
+  const today = cal.today();
+  // LineLeader rejects millisecond precision — use whole-second ISO (…Z). These are INSTANTS the API
+  // filters on, not calendar dates, so they stay UTC; only `today` above is a Sydney date.
   const isoSec = (d) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
   const fromISO = isoSec(new Date(Date.now() - windowDays * 864e5));
   const toISO = isoSec(new Date());
@@ -663,7 +662,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
   // per-centre view until the next successful run.
   try { ensureOpeningCentres({ log }); } catch (e) { failures.push("opening-centres failed: " + errSummary(e)); log(`[LineLeader] opening-centres failed: ${errSummary(e)}`); }
   const llToOwna = new Map(db.prepare(`SELECT ll_id, owna_id FROM centres WHERE ll_id IS NOT NULL`).all().map((r) => [r.ll_id, r.owna_id]));
-  const today2 = new Date().toISOString().slice(0, 10);
+  const today2 = cal.today();
   const writePs = db.transaction((rows) => {
     db.prepare(`DELETE FROM ll_pipeline_starts`).run();
     let n = 0;
@@ -782,4 +781,4 @@ function ensureOpeningCentres({ minPipeline = 1, log = console.log } = {}) {
   return { ok: true, n };
 }
 
-module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor };
+module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor, recentMondays };

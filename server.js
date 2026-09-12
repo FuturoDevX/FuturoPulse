@@ -72,14 +72,16 @@ app.use((err, req, res, next) => {
   res.status(500).render("error", { message: "Something went wrong." });
 });
 
-// Nightly snapshot.
+// Nightly snapshot. The zone is pinned here rather than inherited from the host's TZ, so the job
+// fires at 2:15am in Sydney wherever this runs (render.yaml also sets TZ=Australia/Sydney).
 const cronExpr = process.env.SNAPSHOT_CRON || "15 2 * * *";
+const CRON_TZ = require("./services/calendar").TIME_ZONE;
 if (require.main === module && cron.validate(cronExpr)) {
   cron.schedule(cronExpr, () => {
     console.log("[cron] nightly OWNA snapshot starting");
     runSnapshot().catch((e) => console.error("[cron] snapshot failed:", errSummary(e)));
-  });
-  console.log(`[cron] nightly snapshot scheduled: ${cronExpr}`);
+  }, { timezone: CRON_TZ });
+  console.log(`[cron] nightly snapshot scheduled: ${cronExpr} (${CRON_TZ})`);
 } else if (require.main === module) {
   console.warn(`[cron] invalid SNAPSHOT_CRON "${cronExpr}" — nightly snapshot disabled`);
 }
