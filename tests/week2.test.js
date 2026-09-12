@@ -672,6 +672,187 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.match(html,/Month by month/);                           // the run-rate half is untouched
   for(const bad of ['Fixture Child','2022-04-05']) assert.ok(!html.includes(bad),'/coe printed '+bad);
  });
+
+ // ===== Batch G: approved places — the licensed count, as its own field =====
+ // `centres.capacity` is the SUM OF OWNA ROOM CAPACITIES, rewritten by the nightly snapshot. It is not the
+ // licensed count: the approved places on the service approval (ACECQA National Register) are, and for
+ // Austral the two differ (124 licensed, 122 rooms). Every denominator on the dashboard used the room sum,
+ // so utilisation, unused places, seats, the COE available child-days and the booking mix were all judged
+ // against a number the regulator never issued, and the group read 499 places instead of 501.
+ await t.test('every licensed-places denominator divides by approved places, not the OWNA room sum',()=>{
+  // The helper: the approved count wins, the room sum is only a fallback, and "neither" is null — never 0,
+  // because a percentage of zero places is a fabricated figure.
+  assert.equal(m.placesFor({capacity:100,approved_places:110}),110);
+  assert.equal(m.placesFor({capacity:100,approved_places:null}),100);
+  assert.equal(m.placesFor({capacity:0,approved_places:null}),null);
+  assert.equal(m.placesFor({capacity:0,approved_places:0}),null);
+  assert.equal(m.placesFor(null),null);
+
+  const before=freeze(FROZEN,()=>m.utilisationYtd('fy'));
+  db.prepare('UPDATE centres SET approved_places=110 WHERE owna_id=?').run('a'); // licensed for 110, rooms add to 100
+  try{
+   assert.equal(m.placesOf('a'),110);
+   assert.equal(m.placesOf('b'),100);   // nothing recorded → the room sum still stands in
+
+   // Overview: the Places column and the occupancy denominator both move to 110.
+   const row=freeze(FROZEN,()=>m.overview('2026-09-07','2026-09-11').find(r=>r.owna_id==='a'));
+   assert.equal(row.capacity,100);assert.equal(row.places,110);assert.equal(row.op_days,5);assert.equal(row.op_booked,250);
+   assert.equal(row.occupancy,m.pct(250,110*5));                 // 45.5%
+   assert.notEqual(row.occupancy,m.pct(250,100*5));              // not the 50% the room sum gave
+   const tot=m.totals([row]);
+   assert.equal(tot.places,110);assert.equal(tot.capacity,100);  // both are reported; the ratio uses places
+   assert.equal(tot.op_places_days,550);assert.equal(tot.op_capacity_days,500);
+   assert.equal(tot.occupancy,m.pct(250,550));
+
+   // Seats, utilisation (incl. the annual denominator), the day series and the monthly trend.
+   const seats=m.seatsFilled('2026-09-07','2026-09-11');
+   assert.equal(seats.byOwna.a.places,110);assert.equal(seats.byOwna.a.capacity,100);
+   const u=freeze(FROZEN,()=>m.utilisationYtd('fy'));
+   const ua=u.rows.find(r=>r.owna_id==='a');
+   assert.equal(ua.places,110);
+   assert.equal(ua.cap_days,110*u.operating_days_ytd);
+   assert.equal(ua.annual_child_days,110*u.operating_days_year);
+   assert.equal(u.places,before.places+10);                      // the group total moves with it
+   assert.equal(u.group.capacity,u.places);
+   assert.equal(u.annual_child_days,u.places*u.operating_days_year);
+   assert.equal(m.centreDaily('a','2026-09-07','2026-09-07')[0].occupancy,m.pct(50,110));
+   const sep=freeze(FROZEN,()=>m.occupancyTrend('a',24)).find(x=>x.month==='2026-09');
+   const sepBooked=db.prepare("SELECT COALESCE(SUM(booked),0) b FROM daily_metrics WHERE owna_id='a' AND substr(metric_date,1,7)='2026-09' AND metric_date<=?").get(SYD).b;
+   assert.equal(sep.occupancy,m.pct(sepBooked,110*sep.days));
+
+   // Unused places / utilisation by month, and the Compare page that draws them.
+   const pm=m.placesByMonth('a',m.placesOf('a'),'2026-09','2026-09')[0];
+   assert.equal(pm.places,110);
+   assert.equal(pm.unused_places,Math.round((110-pm.avg_booked)*10)/10);
+   assert.equal(pm.utilisation,m.pct(pm.booked,110*pm.days_with_rows));
+   const cmp=freeze(FROZEN,()=>m.compareTrend('unused_places'));
+   const alpha=cmp.series.find(s=>s.name==='Centre Alpha');
+   assert.equal(alpha.points[cmp.axis.indexOf('2026-09')],pm.unused_places);
+
+   // COE: available child-days and the measured booking mix.
+   const coe=freeze(FROZEN,()=>m.coeOutlook());
+   const ca=coe.centres.find(c=>c.owna_id==='a');
+   assert.equal(ca.places,110);
+   assert.equal(ca.months[0].available_days,110*coe.months[0].operating_days);
+   assert.equal(coe.group.places,coe.centres.reduce((s,c)=>s+c.places,0));
+   const ms=freeze(FROZEN,()=>m.coeMeasured());
+   const ma=ms.centres.find(c=>c.owna_id==='a');
+   assert.equal(ma.places,110);
+   assert.equal(ma.places_filled_pct,m.pct(ma.mix_children,110));
+   assert.equal(ma.days_filled_pct,m.pct(ma.mix_child_days,110*5));
+   assert.equal(ma.months[0].available_days,110*ma.months[0].operating_days);
+  } finally {db.prepare('UPDATE centres SET approved_places=NULL WHERE owna_id=?').run('a');}
+  // Cleared again, every figure falls back to the room sum exactly as before.
+  assert.deepEqual(freeze(FROZEN,()=>m.utilisationYtd('fy')),before);
+ });
+
+ // (e) A centre with no approved places recorded has NO denominator. Every dependent figure must read "—".
+ await t.test('a centre with no approved places reads “—”, never 0 or a percentage of zero',async()=>{
+  db.prepare("INSERT INTO centres(owna_id,name,capacity,enrolled,opening) VALUES('nl','Centre Unlicensed',0,0,0)").run();
+  try{
+   assert.equal(m.placesOf('nl'),null);
+   const row=freeze(FROZEN,()=>m.overview('2026-09-07','2026-09-11').find(r=>r.owna_id==='nl'));
+   assert.equal(row.places,null);
+   assert.equal(row.occupancy,null,'no licence means no percentage, not 0%');
+   assert.equal(m.totals([row]).places,0);
+   // It is not a licensed centre, so it is in no denominator anywhere.
+   assert.ok(!freeze(FROZEN,()=>m.utilisationYtd('fy')).byOwna.nl);
+   assert.ok(!m.seatsFilled('2026-09-07','2026-09-11').byOwna.nl);
+   assert.ok(!freeze(FROZEN,()=>m.coeOutlook()).centres.some(c=>c.owna_id==='nl'));
+   // …and where places are unknown for a centre that DOES have booking rows, the month reads as unknown.
+   const pm=m.placesByMonth('a',null,'2026-09','2026-09')[0];
+   assert.equal(pm.places,null);assert.equal(pm.unused_places,null);assert.equal(pm.utilisation,null);
+   assert.ok(pm.booked>0,'the booked child-days are still counted — only the ratio is unknowable');
+
+   const cookie=await login('admin');
+   const html=await freeze(FROZEN,()=>page('/?from=2026-09-07&to=2026-09-11',cookie));
+   const cell=html.split('href="/centre/nl?')[1].slice(0,300); // the table row, not the sidebar link
+   assert.match(cell,/<td>—<\/td>/,'the Places column must be an em dash');
+   assert.doesNotMatch(cell,/\d+%/,'no percentage may be printed against an unlicensed centre');
+   assert.match(html,/approved places on the service approvals/);
+  } finally {db.prepare("DELETE FROM centres WHERE owna_id='nl'").run();}
+ });
+
+ // (a) The nightly pull keeps refreshing the room sum and must never touch the licensed count — nor wipe a
+ // service approval number OWNA does not carry (Heath Rd's).
+ await t.test('a snapshot run rewrites the room sum and leaves approved places alone',()=>{
+  const was=db.prepare('SELECT * FROM centres WHERE owna_id=?').get('a');
+  db.prepare('UPDATE centres SET approved_places=124, approval_no=? WHERE owna_id=?').run('SE-00017004','a');
+  try{
+   // Exactly the row services/snapshot.js writes for a centre each night: a changed room sum, and no
+   // service approval number in the OWNA payload.
+   snap.upsertCentreRow({owna_id:'a',name:'Centre Alpha',alias:null,suburb:'Austral',state:'NSW',
+     capacity:118,enrolled:198,closed:0,approval_no:null,last_updated:'2026-09-12T00:00:00Z'});
+   const after=db.prepare('SELECT capacity,approved_places,approval_no FROM centres WHERE owna_id=?').get('a');
+   assert.equal(after.capacity,118,'the room sum is still refreshed every night');
+   assert.equal(after.approved_places,124,'the licensed count survives the snapshot');
+   assert.equal(after.approval_no,'SE-00017004','a number OWNA does not carry is not wiped to NULL');
+   assert.equal(m.placesOf('a'),124);
+   // And when OWNA does send one, it wins.
+   snap.upsertCentreRow({owna_id:'a',name:'Centre Alpha',alias:null,suburb:null,state:null,
+     capacity:100,enrolled:198,closed:0,approval_no:'SE-99999999',last_updated:null});
+   assert.equal(db.prepare('SELECT approval_no a FROM centres WHERE owna_id=?').get('a').a,'SE-99999999');
+  } finally {
+   db.prepare('UPDATE centres SET name=?,alias=?,suburb=?,state=?,capacity=?,enrolled=?,closed=?,approval_no=?,last_updated=?,approved_places=NULL WHERE owna_id=?')
+     .run(was.name,was.alias,was.suburb,was.state,was.capacity,was.enrolled,was.closed,was.approval_no,was.last_updated,'a');
+  }
+ });
+
+ // (c) The admin form that maintains it.
+ await t.test('/admin/places saves, clears and rejects rubbish, and only admin or ops may reach it',async()=>{
+  db.prepare('INSERT INTO users(email,name,password_hash,role) VALUES(?,?,?,?)')
+    .run('ops_manager@example.test','Ops',bcrypt.hashSync(pass,4),'ops_manager');
+  const post=(cookie,body)=>fetch(base+'/admin/places',{method:'POST',redirect:'manual',
+    headers:{cookie,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body)});
+  const placesOf=(id)=>db.prepare('SELECT approved_places p FROM centres WHERE owna_id=?').get(id).p;
+
+  // Every role that may not write is refused, and the refusal writes nothing.
+  for(const role of ['viewer','exec','centre']){
+   const c=await login(role);
+   assert.equal((await request('/admin/places',c)).status,403,role+' must not read the form');
+   assert.equal((await post(c,{places_a:'150'})).status,403,role+' must not post to it');
+  }
+  assert.equal(placesOf('a'),null,'a refused submission must not land');
+
+  const admin=await login('admin');
+  const form=await page('/admin/places',admin);
+  assert.match(form,/name="places_a"/);
+  assert.match(form,/Centre Alpha/);
+  assert.match(form,/OWNA room sum/,'the room sum is shown beside the licensed count so a gap is visible');
+
+  // Saves.
+  let r=await post(admin,{places_a:'110',places_b:''});
+  assert.equal(r.status,302);assert.match(r.headers.get('location'),/saved=1/);
+  assert.equal(placesOf('a'),110);assert.equal(placesOf('b'),null);
+  // The discrepancy against the OWNA room sum is on the page.
+  assert.match(await page('/admin/places',admin),/\+10/);
+
+  // Rejects rubbish — and rejects the WHOLE submission, so nothing is half-saved.
+  for(const bad of ['abc','0','-5','501','12.5']){
+   const bad_r=await post(admin,{places_a:bad,places_b:'120'});
+   assert.equal(bad_r.status,302,bad);
+   assert.match(decodeURIComponent(bad_r.headers.get('location')),/err=/,bad+' must be rejected');
+   assert.equal(placesOf('a'),110,bad+' must not overwrite a good value');
+   assert.equal(placesOf('b'),null,bad+' must not let the rest of the form through');
+  }
+
+  // Blank clears it back to "not recorded" — null, not 0.
+  r=await post(admin,{places_a:''});
+  assert.equal(r.status,302);
+  assert.equal(placesOf('a'),null);
+
+  // Ops managers maintain it too, and get the nav link an admin gets.
+  const ops=await login('ops_manager');
+  assert.equal((await request('/admin/places',ops)).status,200);
+  r=await post(ops,{places_a:'124'});
+  assert.equal(r.status,302);assert.match(r.headers.get('location'),/saved=1/);
+  assert.equal(placesOf('a'),124);
+  assert.match(await page('/',ops),/href="\/admin\/places"/);
+  assert.match(await page('/',admin),/href="\/admin\/places"/);
+  assert.doesNotMatch(await page('/',await login('exec')),/href="\/admin\/places"/);
+
+  db.prepare('UPDATE centres SET approved_places=NULL WHERE owna_id=?').run('a');
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -733,4 +914,55 @@ test('Week 2 batch F — restore clears the sessions the backup was carrying',as
   const od=new Database(oldOut,{readonly:true});
   try{assert.equal(od.prepare('SELECT COUNT(*) n FROM centres').get().n,1);}finally{od.close();}
  } finally {fs.rmSync(bdir,{recursive:true,force:true});}
+});
+
+// ===== Batch G — the approved-places migration =====
+// The licensed count cannot come from OWNA, so db/init-schema.js seeds it from the ACECQA National Register
+// on boot. Two things have to hold forever: it only ever fills a NULL (an admin's correction at
+// /admin/places must survive every reboot), and running it again changes nothing.
+test('Week 2 batch G — the approved-places migration seeds only nulls and is idempotent', () => {
+ const Database=require('better-sqlite3');
+ const {initSchema}=require('../db/init-schema');
+ const mdir=fs.mkdtempSync(path.join(os.tmpdir(),'pulse-week2-places-'));
+ const d=new Database(path.join(mdir,'migrate.db'));
+ try{
+  initSchema(d);                                   // boot 1: an empty database — the column appears, nothing to seed
+  assert.ok(d.prepare('PRAGMA table_info(centres)').all().some(c=>c.name==='approved_places'),'approved_places must be added to centres');
+
+  // The group as OWNA leaves it: room sums, three approval numbers and none for Heath Rd, plus the
+  // pre-opening centres that have no service approval on the register at all.
+  const ins=d.prepare('INSERT INTO centres(owna_id,name,capacity,approval_no,approved_places,opening) VALUES(?,?,?,?,?,?)');
+  ins.run('1','Futuro Childcare & Education - Austral',122,'SE-00017004',null,0);
+  ins.run('2','Futuro Childcare & Education - Bardia',122,'SE-00016692',null,0);
+  ins.run('3','Futuro Childcare & Education - Gledswood Hills',119,'SE-40025191',null,0);
+  ins.run('4','Futuro Childcare & Education - Heath Rd',136,null,null,0);
+  ins.run('ll-6','Futuro Childcare & Education Cobbitty',0,null,null,1);
+  ins.run('ll-7','Futuro Childcare & Education - Austral Fields',0,null,null,1); // a pre-opening name that MATCHES a seed
+  ins.run('ll-8','Futuro Childcare & Education - Oran Park',0,null,null,1);
+  ins.run('ll-9','Futuro Childcare & Education - Park Rd',0,null,null,1);
+
+  const read=()=>d.prepare('SELECT owna_id,capacity,approved_places,approval_no FROM centres ORDER BY owna_id').all();
+  initSchema(d);                                   // boot 2: the seed runs
+  const seeded=read();
+  assert.deepEqual(seeded.map(r=>[r.owna_id,r.approved_places]),
+    [['1',124],['2',122],['3',119],['4',136],['ll-6',null],['ll-7',null],['ll-8',null],['ll-9',null]],
+    'the four operating services take the register figures; a pre-opening centre stays unknown even when its name matches');
+  assert.equal(seeded.find(r=>r.owna_id==='4').approval_no,'SE-00018172','Heath Rd gets the number OWNA does not return');
+  const operating=seeded.filter(r=>!String(r.owna_id).startsWith('ll-'));
+  assert.equal(operating.reduce((s,r)=>s+r.capacity,0),499,'the OWNA room sums add to 499…');
+  assert.equal(operating.reduce((s,r)=>s+r.approved_places,0),501,'…but the group is licensed for 501 places');
+  assert.equal(seeded.find(r=>r.owna_id==='1').approved_places-seeded.find(r=>r.owna_id==='1').capacity,2,'Austral is the discrepancy: 124 licensed against 122 rooms');
+
+  // Boot 3 changes nothing at all.
+  initSchema(d);
+  assert.deepEqual(read(),seeded,'a second boot must be a no-op');
+
+  // An admin corrects Austral by hand at /admin/places, and clears Bardia back to "not recorded".
+  // Two more boots must leave the correction as typed — and must re-seed only what is genuinely NULL.
+  d.prepare("UPDATE centres SET approved_places=126 WHERE owna_id='1'").run();
+  d.prepare("UPDATE centres SET approved_places=NULL WHERE owna_id='2'").run();
+  initSchema(d); initSchema(d);
+  assert.equal(d.prepare("SELECT approved_places p FROM centres WHERE owna_id='1'").get().p,126,"an admin's edit is never overwritten on reboot");
+  assert.equal(d.prepare("SELECT approved_places p FROM centres WHERE owna_id='2'").get().p,122,'a cleared value is re-seeded from the register');
+ } finally {d.close();fs.rmSync(mdir,{recursive:true,force:true});}
 });

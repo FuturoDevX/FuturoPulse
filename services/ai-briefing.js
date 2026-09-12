@@ -34,7 +34,7 @@ function gatherRangeData(from, to) {
       revenue: r.fee_total,
       revenue_prev: p.fee_total != null ? p.fee_total : null,
       enrolled: r.enrolled,
-      capacity: r.capacity,
+      licensed_places: r.places,   // approved places on the service approval, not the OWNA room sum
     };
   });
 
@@ -53,7 +53,7 @@ function gatherRangeData(from, to) {
       occupancy_pct: t.occupancy, occupancy_pct_prev: tp.occupancy,
       attendance_pct: t.attendance_rate,
       revenue: t.fee_total, revenue_prev: tp.fee_total,
-      enrolled: t.enrolled, capacity: t.capacity,
+      enrolled: t.enrolled, licensed_places: t.places,
     },
     people: { turnover_yoy_pct: pc.turnover, enps: pc.enps, family_nps: pc.family_nps, as_of: pc.month },
     centres,

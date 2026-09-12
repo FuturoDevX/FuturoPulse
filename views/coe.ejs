@@ -54,7 +54,7 @@
 </div>
 
 <div class="grid kpis">
-  <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> licensed places × <%= am.operating_days %> operating days</span></div></div>
+  <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> approved places × <%= am.operating_days %> operating days</span></div></div>
   <div class="card stat"><div class="n <%= tone(ga.pct) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · target <%= TGT %>% is a placeholder</span></div></div>
   <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>, at each centre's average booking pattern</span></div></div>
   <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date<%= ga.days_unknown ? ' · ' + ga.days_unknown + ' of them with no requested days recorded, valued at their centre average' : '' %></span></div></div>
@@ -358,7 +358,7 @@
 <div class="card">
   <h2 style="margin-top:0;">How every number on this page is calculated</h2>
   <div class="coe-method">
-    <p><strong>Child-days available</strong> = licensed places × operating days in the month. Operating days come from the NSW calendar (weekdays, less gazetted public holidays): <%= coe.months.map(function(x){ return mShort(x.month) + ' ' + x.operating_days; }).join(' · ') %>.</p>
+    <p><strong>Child-days available</strong> = licensed places × operating days in the month. <strong>Licensed places</strong> is the <em>approved places</em> on each service approval — the count published on the ACECQA National Register, kept up to date on the Approved places admin page. It is not the sum of the centre’s OWNA room capacities, which is a different number and is what this page used to divide by. Operating days come from the NSW calendar (weekdays, less gazetted public holidays): <%= coe.months.map(function(x){ return mShort(x.month) + ' ' + x.operating_days; }).join(' · ') %>.</p>
     <p><strong>Run rate</strong> = child-days booked in the last complete Mon–Fri week (<%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %>), scaled by operating days ÷ 5. It counts every family who has not set a finish date, which is why it is a ceiling.</p>
     <p><strong>Leavers</strong> = children in OWNA with <em>upcoming</em> finish dates on or after <%= dLong(coe.as_at) %>. The headcount is exact. A child counted in one month stays counted in every later month.</p>
     <p><strong>Leaver child-days</strong> = the centre's average booked days per child per week (last complete week ÷ children enrolled) × operating days ÷ 5, prorated by the share of the month falling after the finish date.</p>

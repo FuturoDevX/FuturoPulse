@@ -354,7 +354,10 @@ router.get("/centre/:id", (req, res) => {
     }
     return a;
   }, { booked: 0, attended: 0, absent: 0, casual: 0, fee_total: 0, days: 0, pastBooked: 0, pastDays: 0 });
-  const capacityDays = c.capacity * agg.days;
+  // Licensed places (approved places, falling back to the OWNA room sum) — null when the service has none
+  // recorded, in which case occupancy has no denominator and the page prints "—" instead of a percentage.
+  const places = m.placesFor(c);
+  const capacityDays = places == null ? null : places * agg.days;
   const pipeline = m.llForCentre(c.owna_id);
   const labour = m.centreLabourLatest(c.owna_id);
   // Centre hub: latest action plan, P&C and Q&C for this centre.
@@ -367,11 +370,12 @@ router.get("/centre/:id", (req, res) => {
     title: c.name,
     from, to,
     centre: c,
+    places,
     daily,
     summary: {
       ...agg,
       fee_total: m.round(agg.fee_total),
-      occupancy: m.pct(agg.booked, capacityDays),
+      occupancy: capacityDays == null ? null : m.pct(agg.booked, capacityDays),
       attendance_rate: m.pct(agg.attended, agg.pastBooked),
       ccs_total: m.ccsTotal(c.owna_id, from, to),
       avg_daily_booked: agg.days ? Math.round(agg.booked / agg.days) : 0,
@@ -387,7 +391,7 @@ router.get("/centre/:id", (req, res) => {
     labour,
     labourTrend: m.labourTrend(c.owna_id, 12),
     wagesTrend: m.wagesTrend(c.owna_id, 16),
-    insights: m.centreInsights(c.owna_id, c.capacity, m.pct(agg.booked, capacityDays), pipeline, labour),
+    insights: m.centreInsights(c.owna_id, places, capacityDays == null ? null : m.pct(agg.booked, capacityDays), pipeline, labour),
     actionPlan, apMonth,
     pcRow, pcMonth, pcTargets: m.pcTargets(),
     qc: canSeeIdentified(req) ? m.qcCentre(c.owna_id) : null,

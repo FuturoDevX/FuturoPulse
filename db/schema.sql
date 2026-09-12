@@ -17,10 +17,17 @@ CREATE TABLE IF NOT EXISTS centres (
   alias         TEXT,
   suburb        TEXT,
   state         TEXT,
-  capacity      INTEGER DEFAULT 0,    -- sum of room capacities (licensed places)
+  capacity      INTEGER DEFAULT 0,    -- SUM OF OWNA ROOM CAPACITIES, rewritten by every nightly snapshot.
+                                      -- It is NOT the licensed count: rooms are configured in OWNA for how the
+                                      -- centre is run, and the sum drifts from the service approval.
+  approved_places INTEGER,            -- APPROVED PLACES on the service approval (ACECQA National Register) — the
+                                      -- licensed count, and the only honest denominator for utilisation, unused
+                                      -- places, seats and available child-days. Maintained by hand at
+                                      -- /admin/places; the snapshot never writes it. NULL = not licensed yet
+                                      -- (a pre-opening centre), which must render "—", never 0.
   enrolled      INTEGER DEFAULT 0,    -- OWNA "children" count
   closed        INTEGER DEFAULT 0,
-  approval_no   TEXT,
+  approval_no   TEXT,                 -- service approval number, e.g. SE-00017004
   last_updated  TEXT,
   ll_id         INTEGER,              -- linked LineLeader centre id (enrolment pipeline)
   opening       INTEGER DEFAULT 0,    -- 1 = pre-opening (LineLeader pipeline only, not yet in OWNA)
@@ -32,7 +39,9 @@ CREATE TABLE IF NOT EXISTS centres (
 CREATE TABLE IF NOT EXISTS daily_metrics (
   owna_id     TEXT NOT NULL,
   metric_date TEXT NOT NULL,          -- YYYY-MM-DD
-  capacity    INTEGER DEFAULT 0,      -- capacity snapshot for that day (from centre)
+  capacity    INTEGER DEFAULT 0,      -- the centre's OWNA ROOM SUM as it stood on that day. Stored history:
+                                      -- never rewritten, and never a denominator — percentages divide by the
+                                      -- centre's approved places (centres.approved_places).
   booked      INTEGER DEFAULT 0,      -- booked child-days (attendance rows)
   attended    INTEGER DEFAULT 0,      -- of those, physically present
   absent      INTEGER DEFAULT 0,      -- booked but not attending

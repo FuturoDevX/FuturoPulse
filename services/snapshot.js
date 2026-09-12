@@ -33,19 +33,29 @@ function matchLlCentre(ownaName, llCentres) {
   });
 }
 
-// Sum of room capacities = licensed places for the centre.
+// Sum of the centre's OWNA room capacities. This is how the rooms are configured, NOT the licensed count:
+// the approved places on the service approval live in centres.approved_places (maintained at /admin/places)
+// and are what every licensed-places denominator divides by. Keep writing this one — it is the figure the
+// discrepancy on /admin/places is measured against — but never let it stand in for the licence.
 async function centreCapacity(centreId) {
   const rooms = await owna.listRooms(centreId);
   return rooms.reduce((s, r) => s + (Number(r.capacity) || 0), 0);
 }
 
+// NOTE: `approved_places` is deliberately absent from both the column list and the DO UPDATE SET — the
+// nightly snapshot must never clobber the licensed count with anything OWNA holds. `approval_no` is only
+// overwritten when OWNA actually returns one, so the Heath Rd number seeded by db/init-schema.js (OWNA
+// returns none for that service) survives the night rather than being reset to NULL.
 const upsertCentre = db.prepare(`
   INSERT INTO centres (owna_id, name, alias, suburb, state, capacity, enrolled, closed, approval_no, last_updated)
   VALUES (@owna_id, @name, @alias, @suburb, @state, @capacity, @enrolled, @closed, @approval_no, @last_updated)
   ON CONFLICT(owna_id) DO UPDATE SET
     name=@name, alias=@alias, suburb=@suburb, state=@state, capacity=@capacity,
-    enrolled=@enrolled, closed=@closed, approval_no=@approval_no, last_updated=@last_updated
+    enrolled=@enrolled, closed=@closed, approval_no=COALESCE(@approval_no, approval_no), last_updated=@last_updated
 `);
+// The one way the nightly pull writes a centre row. Named so a test can prove the statement itself leaves
+// approved_places alone, rather than a copy of it that could drift from the real one.
+function upsertCentreRow(row) { return upsertCentre.run(row); }
 
 const upsertDaily = db.prepare(`
   INSERT INTO daily_metrics (owna_id, metric_date, capacity, booked, attended, absent, casual, fee_total)
@@ -122,7 +132,7 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
 
     for (const c of centres) {
       const capacity = await centreCapacity(c.id);
-      upsertCentre.run({
+      upsertCentreRow({
         owna_id: c.id,
         name: c.name || "",
         alias: c.alias || null,
@@ -1019,4 +1029,4 @@ function ensureOpeningCentres({ minPipeline = 1, log = console.log } = {}) {
   return { ok: true, n };
 }
 
-module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, runCoeSnapshot, coeWeeksFrom, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor, recentMondays };
+module.exports = { upsertCentreRow, runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, runCoeSnapshot, coeWeeksFrom, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor, recentMondays };

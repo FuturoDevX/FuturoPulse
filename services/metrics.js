@@ -6,6 +6,34 @@ const cal = require("./calendar");
 const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pct = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
 
+// ===== Licensed places =====
+// "Licensed places" means the APPROVED PLACES on the service approval — the count on the ACECQA National
+// Register — which is held in centres.approved_places and maintained at /admin/places. centres.capacity is
+// the SUM OF OWNA ROOM CAPACITIES that the nightly snapshot writes; it is a different number (Austral is
+// licensed for 124 and its rooms add to 122), so it is only ever the fallback for a service whose approval
+// has not been recorded yet. EVERY licensed-places denominator on this dashboard — utilisation, unused
+// places, seats, COE available child-days, the booking mix — goes through placesFor()/placesOf()/PLACES_SQL.
+// They answer null, never 0, when neither figure is known, because a centre that is not licensed yet has no
+// denominator at all: the pages must print "—" rather than a percentage of nothing.
+// daily_metrics.capacity stays exactly as the snapshot wrote it — it is a per-day record of the room sum on
+// that day, and history is not rewritten; it is simply no longer what the percentages divide by.
+const PLACES_SQL = "COALESCE(NULLIF(approved_places,0), NULLIF(capacity,0))";
+const PLACES_SQL_C = "COALESCE(NULLIF(c.approved_places,0), NULLIF(c.capacity,0))"; // for queries that alias centres as c
+function placesFor(centre) {
+  if (!centre) return null;
+  const approved = Number(centre.approved_places);
+  if (Number.isFinite(approved) && approved > 0) return approved;
+  const rooms = Number(centre.capacity);
+  return Number.isFinite(rooms) && rooms > 0 ? rooms : null;
+}
+// Licensed places for one centre id — for the aggregates over daily_metrics, whose own capacity column is
+// the historical room sum and must not be used as a denominator.
+function placesOf(ownaId) {
+  return placesFor(db.prepare(`SELECT approved_places, capacity FROM centres WHERE owna_id = ?`).get(ownaId));
+}
+// pct() answers 0 for an unusable denominator, which would print "0%" for a centre that has no licence.
+const pctOrNull = (num, den) => (den > 0 ? pct(num, den) : null);
+
 // "Today" is always the Sydney date (services/calendar.js owns the zone), never the UTC one:
 // toISOString is UTC regardless of TZ, so before 10am Sydney it reads a day behind.
 const todayStr = () => cal.today();
@@ -41,7 +69,9 @@ function overview(from, to) {
   const today = todayStr();
   const opDays = JSON.stringify(cal.operatingDayList(from, to));
   const rows = db.prepare(`
-    SELECT c.owna_id, c.name, c.alias, c.suburb, c.capacity, c.enrolled,
+    SELECT c.owna_id, c.name, c.alias, c.suburb, c.capacity, c.approved_places,
+           ${PLACES_SQL_C}                    AS places,
+           c.enrolled,
            COUNT(DISTINCT d.metric_date)      AS days,
            COALESCE(SUM(d.booked),0)          AS booked,
            COALESCE(SUM(d.casual),0)          AS casual,
@@ -64,14 +94,16 @@ function overview(from, to) {
   `).all({ from, to, today, opDays });
 
   return rows.map((r) => {
-    const denom = r.capacity * r.op_days; // capacity-days available on operating days in the range
+    // Licensed places × operating days in the range. A centre with no approved places and no room sum has
+    // no denominator, so its occupancy is null (rendered "—"), never a percentage of zero.
+    const denom = r.places == null ? null : r.places * r.op_days;
     return {
       ...r,
       fee_total: round(r.fee_total),
       fee_past: round(r.fee_past),
       fee_future: round(r.fee_future),
       future_days: r.days - r.past_days,
-      occupancy: pct(r.op_booked, denom),       // booked child-days / capacity-days, operating days only (incl. booked ahead)
+      occupancy: denom == null ? null : pct(r.op_booked, denom), // booked child-days / place-days, operating days only (incl. booked ahead)
       attendance_rate: pct(r.attended, r.past_booked), // past days only
       avg_daily_booked: r.days ? Math.round(r.booked / r.days) : 0,
     };
@@ -80,14 +112,19 @@ function overview(from, to) {
 
 function totals(rows) {
   const t = rows.reduce((a, r) => {
-    a.capacity += r.capacity; a.enrolled += r.enrolled;
+    // `capacity`/`capacity_days` stay the raw OWNA room sum (what the snapshot measured); `places` and the
+    // *_places_days denominators are the licensed count the percentages are judged against. A centre with
+    // no licensed places contributes nothing to the denominator rather than a zero that flatters it.
+    a.capacity += r.capacity; a.places += r.places || 0; a.enrolled += r.enrolled;
     a.booked += r.booked; a.attended += r.attended; a.absent += r.absent;
     a.casual += r.casual; a.fee_total += r.fee_total;
     a.capacity_days += r.capacity * r.days;
+    a.places_days += (r.places || 0) * r.days;
     a.days = Math.max(a.days, r.days);
     // Occupancy ratio: operating days only (see overview) — booked/days/capacity_days stay raw for the child-day tiles.
     a.op_booked += r.op_booked || 0;
     a.op_capacity_days += r.capacity * (r.op_days || 0);
+    a.op_places_days += (r.places || 0) * (r.op_days || 0);
     a.op_days = Math.max(a.op_days, r.op_days || 0);
     // Past/future split (see overview): attendance is judged on past days only.
     a.past_booked += r.past_booked || 0; a.future_booked += r.future_booked || 0;
@@ -95,15 +132,16 @@ function totals(rows) {
     a.past_days = Math.max(a.past_days, r.past_days || 0);
     a.future_days = Math.max(a.future_days, r.future_days || 0);
     return a;
-  }, { capacity: 0, enrolled: 0, booked: 0, attended: 0, absent: 0, casual: 0, fee_total: 0, capacity_days: 0, days: 0,
-       op_booked: 0, op_capacity_days: 0, op_days: 0,
+  }, { capacity: 0, places: 0, enrolled: 0, booked: 0, attended: 0, absent: 0, casual: 0, fee_total: 0,
+       capacity_days: 0, places_days: 0, days: 0,
+       op_booked: 0, op_capacity_days: 0, op_places_days: 0, op_days: 0,
        past_booked: 0, future_booked: 0, fee_past: 0, fee_future: 0, past_days: 0, future_days: 0 });
   return {
     ...t,
     fee_total: round(t.fee_total),
     fee_past: round(t.fee_past),
     fee_future: round(t.fee_future),
-    occupancy: pct(t.op_booked, t.op_capacity_days),
+    occupancy: pct(t.op_booked, t.op_places_days),
     attendance_rate: pct(t.attended, t.past_booked),
   };
 }
@@ -114,6 +152,9 @@ function centre(ownaId) {
 
 // Per-day series for one centre.
 function centreDaily(ownaId, from, to) {
+  // The row's own `capacity` is the room sum recorded on that day and is left alone; the day's occupancy is
+  // judged against the centre's licensed places, like every other percentage on the dashboard.
+  const places = placesOf(ownaId);
   const rows = db.prepare(`
     SELECT metric_date, capacity, booked, attended, absent, casual, fee_total
     FROM daily_metrics
@@ -122,8 +163,9 @@ function centreDaily(ownaId, from, to) {
   `).all(ownaId, from, to);
   return rows.map((r) => ({
     ...r,
+    places,
     fee_total: round(r.fee_total),
-    occupancy: pct(r.booked, r.capacity),
+    occupancy: pctOrNull(r.booked, places),
     attendance_rate: pct(r.attended, r.booked),
   }));
 }
@@ -131,12 +173,12 @@ function centreDaily(ownaId, from, to) {
 // Monthly occupancy trend for one centre (past months only), most recent `months` back.
 function occupancyTrend(ownaId, months = 18) {
   const today = todayStr();
+  const places = placesOf(ownaId); // licensed places, not the month's room sum
   const rows = db.prepare(`
     SELECT substr(metric_date,1,7) AS month,
            COALESCE(SUM(booked),0) AS booked,
            COALESCE(SUM(attended),0) AS attended,
            COALESCE(SUM(fee_total),0) AS fee_total,
-           MAX(capacity) AS capacity,
            COUNT(DISTINCT metric_date) AS days
     FROM daily_metrics
     WHERE owna_id = ? AND metric_date <= ?
@@ -144,7 +186,7 @@ function occupancyTrend(ownaId, months = 18) {
   `).all(ownaId, today);
   return rows.map((r) => ({
     month: r.month,
-    occupancy: pct(r.booked, r.capacity * r.days),
+    occupancy: places == null ? null : pct(r.booked, places * r.days),
     attendance_rate: pct(r.attended, r.booked),
     fee_total: round(r.fee_total),
     days: r.days,
@@ -159,8 +201,8 @@ function occupancyTrendGroup(months = 18) {
            COALESCE(SUM(d.booked),0) AS booked,
            COALESCE(SUM(d.attended),0) AS attended,
            COALESCE(SUM(d.fee_total),0) AS fee_total,
-           SUM(d.capacity) AS cap_days
-    FROM daily_metrics d
+           SUM(${PLACES_SQL_C}) AS cap_days
+    FROM daily_metrics d JOIN centres c ON c.owna_id = d.owna_id
     WHERE d.metric_date <= ?
     GROUP BY month ORDER BY month
   `).all(today);
@@ -177,10 +219,11 @@ function occupancyTrendGroup(months = 18) {
 function occupancyTrendGroupFwd(pastMonths = 12, fwdMonths = 2) {
   const now = todayStr().slice(0, 7);
   const rows = db.prepare(`
-    SELECT substr(metric_date,1,7) AS month,
-           COALESCE(SUM(booked),0) AS booked, COALESCE(SUM(attended),0) AS attended,
-           COALESCE(SUM(fee_total),0) AS fee, SUM(capacity) AS cap_days
-    FROM daily_metrics GROUP BY month ORDER BY month`).all();
+    SELECT substr(d.metric_date,1,7) AS month,
+           COALESCE(SUM(d.booked),0) AS booked, COALESCE(SUM(d.attended),0) AS attended,
+           COALESCE(SUM(d.fee_total),0) AS fee, SUM(${PLACES_SQL_C}) AS cap_days
+    FROM daily_metrics d JOIN centres c ON c.owna_id = d.owna_id
+    GROUP BY month ORDER BY month`).all();
   const [y, mo] = now.split("-").map(Number);
   const lo = new Date(Date.UTC(y, mo - 1 - pastMonths, 1)).toISOString().slice(0, 7);
   const hi = new Date(Date.UTC(y, mo - 1 + fwdMonths, 1)).toISOString().slice(0, 7);
@@ -342,16 +385,16 @@ function forwardOccupancyByCentre(days = 30) {
   const today = todayStr();
   const to = cal.addDays(today, days);
   const rows = db.prepare(`
-    SELECT owna_id, capacity,
-           COALESCE(SUM(booked),0) AS booked,
-           COUNT(DISTINCT metric_date) AS days
-    FROM daily_metrics
-    WHERE metric_date > ? AND metric_date <= ?
-    GROUP BY owna_id
+    SELECT d.owna_id, ${PLACES_SQL_C} AS places,
+           COALESCE(SUM(d.booked),0) AS booked,
+           COUNT(DISTINCT d.metric_date) AS days
+    FROM daily_metrics d JOIN centres c ON c.owna_id = d.owna_id
+    WHERE d.metric_date > ? AND d.metric_date <= ?
+    GROUP BY d.owna_id
   `).all(today, to);
   const map = {};
   rows.forEach((r) => {
-    map[r.owna_id] = { occupancy: pct(r.booked, r.capacity * r.days), days: r.days, booked: r.booked };
+    map[r.owna_id] = { occupancy: r.places == null ? null : pct(r.booked, r.places * r.days), days: r.days, booked: r.booked };
   });
   return map;
 }
@@ -582,7 +625,9 @@ function pipelineTargetProgress(today = todayStr()) {
 // the days OWNA returned attendance records for, so a missing day is missing snapshot coverage, never a zero-booked day.
 // Dividing by the whole month would count a pull gap as fully empty places. `days_with_rows` < `operating_days` marks a
 // month whose coverage is incomplete, so callers can flag or drop it.
-function placesByMonth(ownaId, capacity, fromMonth, toMonth) {
+// `places` is the licensed count (services/metrics.js placesFor) — callers must pass approved places, not
+// the OWNA room sum. A centre with none (null) gets nulls for unused places and utilisation, never zeros.
+function placesByMonth(ownaId, places, fromMonth, toMonth) {
   const rows = db.prepare(`SELECT metric_date, booked FROM daily_metrics WHERE owna_id = ? AND substr(metric_date,1,7) BETWEEN ? AND ?`).all(ownaId, fromMonth, toMonth);
   const sums = new Map();
   for (const r of rows) {
@@ -598,10 +643,10 @@ function placesByMonth(ownaId, capacity, fromMonth, toMonth) {
     const opDays = cal.operatingDays(`${month}-01`, `${month}-${String(last).padStart(2, "0")}`);
     const avg = s.days ? s.booked / s.days : null;
     return {
-      month, booked: s.booked, operating_days: opDays, days_with_rows: s.days, places: capacity,
+      month, booked: s.booked, operating_days: opDays, days_with_rows: s.days, places,
       avg_booked: avg == null ? null : Math.round(avg * 10) / 10,
-      unused_places: avg == null ? null : Math.round((capacity - avg) * 10) / 10,
-      utilisation: pct(s.booked, capacity * s.days),
+      unused_places: (avg == null || places == null) ? null : Math.round((places - avg) * 10) / 10,
+      utilisation: places == null ? null : pct(s.booked, places * s.days),
     };
   });
 }
@@ -619,6 +664,38 @@ function saveLabourBudget(ehCentre, weekEnding, budget) {
     VALUES (?,?,?,?,?,?)
     ON CONFLICT(eh_centre, week_ending) DO UPDATE SET budget_wages=excluded.budget_wages, budget_hours=excluded.budget_hours, budget_occ=excluded.budget_occ, budget_support=excluded.budget_support
   `).run(ehCentre, weekEnding, budget.wages, budget.hours, budget.occ, budget.support);
+}
+
+// ===== Approved places (admin maintenance) =====
+// Nothing automated can fill this in: OWNA does not hold the licensed count, so it comes off the service
+// approval on the ACECQA National Register and is typed in at /admin/places. Every centre is listed,
+// pre-opening ones included, with the OWNA room sum beside the licensed count so that a discrepancy
+// (Austral: 124 approved places, 122 room capacity) is visible instead of silently wrong.
+const MAX_APPROVED_PLACES = 500; // a guard against a typo like 1240, not a regulatory limit
+const ACECQA_SERVICE_URL = "https://www.acecqa.gov.au/resources/national-registers/services/";
+function placesAdminRows() {
+  return db.prepare(`SELECT owna_id, name, capacity, approved_places, approval_no, opening, opening_year, opening_month
+    FROM centres ORDER BY COALESCE(opening, 0), name`).all().map((c) => ({
+    ...c,
+    places: placesFor(c),
+    // Only meaningful once both numbers exist: null means "nothing to compare", not "they agree".
+    discrepancy: (c.approved_places != null && c.capacity) ? c.approved_places - c.capacity : null,
+    register_url: c.approval_no ? ACECQA_SERVICE_URL + encodeURIComponent(c.approval_no) : null,
+  }));
+}
+// Parse one submitted value: "" (blank) clears it, otherwise a positive integer up to MAX_APPROVED_PLACES.
+// Returns { value } or { error } — rubbish is rejected outright rather than silently coerced to 0, which is
+// the whole failure this field exists to stop.
+function parseApprovedPlaces(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (s === "") return { value: null };
+  if (!/^\d+$/.test(s)) return { error: "must be a whole number of places" };
+  const n = Number(s);
+  if (n < 1 || n > MAX_APPROVED_PLACES) return { error: `must be between 1 and ${MAX_APPROVED_PLACES}` };
+  return { value: n };
+}
+function saveApprovedPlaces(ownaId, places) {
+  db.prepare("UPDATE centres SET approved_places = ? WHERE owna_id = ?").run(places, ownaId);
 }
 
 // ===== Enrolment projection (scenario) =====
@@ -639,7 +716,7 @@ function projection(scope = "likely", days = 90) {
   const today = todayStr();
   const to = cal.addDays(today, days);
 
-  const centres = db.prepare(`SELECT owna_id, name, capacity FROM centres WHERE ll_id IS NOT NULL AND capacity > 0`).all();
+  const centres = db.prepare(`SELECT owna_id, name, capacity, ${PLACES_SQL} AS places FROM centres WHERE ll_id IS NOT NULL AND ${PLACES_SQL} > 0`).all();
 
   // Base future bookings per centre per date.
   const baseRows = db.prepare(`
@@ -684,14 +761,14 @@ function projection(scope = "likely", days = 90) {
       if (!w) { w = { week: wk, baseBooked: 0, projBooked: 0, days: 0 }; weeks.set(wk, w); }
       w.baseBooked += d.booked; w.projBooked += d.booked + adds; w.days += 1;
     }
-    const capDays = c.capacity * base.length;
+    const capDays = c.places * base.length; // licensed places × days in the horizon
     const weekly = [...weeks.values()].map((w) => ({
       week: w.week,
-      base_occ: pct(w.baseBooked, c.capacity * w.days),
-      proj_occ: pct(w.projBooked, c.capacity * w.days),
+      base_occ: pct(w.baseBooked, c.places * w.days),
+      proj_occ: pct(w.projBooked, c.places * w.days),
     }));
     return {
-      owna_id: c.owna_id, name: c.name, capacity: c.capacity, days: base.length,
+      owna_id: c.owna_id, name: c.name, capacity: c.capacity, places: c.places, days: base.length,
       pipeline_children: starts.length,
       base_occ: pct(baseBooked, capDays),
       proj_occ: pct(projBooked, capDays),
@@ -738,15 +815,15 @@ function yearRange(kind, today = todayStr()) {
 // sum of booked on operating days ÷ operating days in the range that have any bookings.
 function seatsFilled(from, to) {
   const rows = db.prepare(`
-    SELECT d.owna_id, c.name, c.capacity, d.metric_date, d.booked
+    SELECT d.owna_id, c.name, c.capacity, ${PLACES_SQL_C} AS places, d.metric_date, d.booked
     FROM daily_metrics d JOIN centres c ON c.owna_id = d.owna_id
-    WHERE d.metric_date BETWEEN ? AND ? AND (c.opening IS NULL OR c.opening = 0) AND c.capacity > 0
+    WHERE d.metric_date BETWEEN ? AND ? AND (c.opening IS NULL OR c.opening = 0) AND ${PLACES_SQL_C} > 0
   `).all(from, to);
   const byCentre = new Map(); const groupDays = new Set(); let groupBooked = 0;
   for (const r of rows) {
     if (!(r.booked > 0) || !cal.isOperatingDay(r.metric_date)) continue;
     let c = byCentre.get(r.owna_id);
-    if (!c) { c = { owna_id: r.owna_id, name: r.name, capacity: r.capacity, booked: 0, days: 0 }; byCentre.set(r.owna_id, c); }
+    if (!c) { c = { owna_id: r.owna_id, name: r.name, capacity: r.capacity, places: r.places, booked: 0, days: 0 }; byCentre.set(r.owna_id, c); }
     c.booked += r.booked; c.days += 1;
     groupBooked += r.booked; groupDays.add(r.metric_date);
   }
@@ -769,8 +846,8 @@ function utilisationYtd(kind = "fy", today = todayStr()) {
   const yr = yearRange(kind, today);
   const to = today > yr.end ? yr.end : today;
   const centreRows = db.prepare(`
-    SELECT owna_id, name, capacity FROM centres
-    WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name
+    SELECT owna_id, name, capacity, ${PLACES_SQL} AS places FROM centres
+    WHERE (opening IS NULL OR opening = 0) AND ${PLACES_SQL} > 0 ORDER BY name
   `).all();
   const bookedRows = db.prepare(`SELECT owna_id, metric_date, booked FROM daily_metrics WHERE metric_date BETWEEN ? AND ?`).all(yr.start, to);
   const sum = new Map();
@@ -782,17 +859,19 @@ function utilisationYtd(kind = "fy", today = todayStr()) {
   const opDaysYear = cal.operatingDays(yr.start, yr.end);
   const rows = centreRows.map((c) => {
     const booked = sum.get(c.owna_id) || 0;
-    const capDays = c.capacity * opDaysYtd;
-    return { ...c, booked, cap_days: capDays, utilisation: pct(booked, capDays), annual_child_days: c.capacity * opDaysYear };
+    const capDays = c.places * opDaysYtd; // licensed places × operating days to date
+    return { ...c, booked, cap_days: capDays, utilisation: pct(booked, capDays), annual_child_days: c.places * opDaysYear };
   });
   const byOwna = {}; rows.forEach((r) => { byOwna[r.owna_id] = r; });
-  const places = rows.reduce((s, r) => s + r.capacity, 0);
+  const places = rows.reduce((s, r) => s + r.places, 0);
   const gBooked = rows.reduce((s, r) => s + r.booked, 0);
   const gCap = places * opDaysYtd;
   return {
     ...yr, today: to,
     operating_days_ytd: opDaysYtd, operating_days_year: opDaysYear,
     places, rows, byOwna,
+    // group.capacity keeps its name for callers, but it is now the sum of APPROVED PLACES — the group's
+    // licensed total (501 across the four operating services), not the sum of OWNA room capacities (499).
     group: { booked: gBooked, cap_days: gCap, utilisation: pct(gBooked, gCap), capacity: places, annual_child_days: places * opDaysYear },
     annual_child_days: places * opDaysYear,
     unknownYears: cal.unknownHolidayYears(yr.start, yr.end),
@@ -1411,14 +1490,15 @@ function labourWeeks(limit = 16) {
 function ownaWeek(ownaId, weekEnding) {
   if (!ownaId) return { revenue: 0, occupancy: null, child_days: 0, op_days: 0 };
   const from = cal.addDays(weekEnding, -6); // Monday of the Mon..weekEnding week
+  const places = placesOf(ownaId); // licensed places, not the week's room sum
   const r = db.prepare(`
-    SELECT COALESCE(SUM(fee_total),0) rev, COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) days
+    SELECT COALESCE(SUM(fee_total),0) rev, COALESCE(SUM(booked),0) booked, COUNT(DISTINCT metric_date) days
     FROM daily_metrics WHERE owna_id = ? AND metric_date BETWEEN ? AND ?
   `).get(ownaId, from, weekEnding);
   let child_days = 0; const opDates = new Set();
   db.prepare(`SELECT metric_date, booked FROM daily_metrics WHERE owna_id = ? AND metric_date BETWEEN ? AND ?`).all(ownaId, from, weekEnding)
     .forEach((d) => { if (cal.isOperatingDay(d.metric_date)) { child_days += d.booked || 0; opDates.add(d.metric_date); } });
-  return { revenue: round(r.rev), occupancy: r.days ? pct(r.booked, r.cap * r.days) : null, child_days, op_days: opDates.size };
+  return { revenue: round(r.rev), occupancy: (r.days && places) ? pct(r.booked, places * r.days) : null, child_days, op_days: opDates.size };
 }
 
 // Full labour table for one week (per centre) with revenue, occupancy and margin.
@@ -1532,10 +1612,11 @@ const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function centreDowOccupancy(ownaId, days = 56) {
   const today = todayStr();
   const from = cal.addDays(today, -days);
+  const places = placesOf(ownaId); // licensed places, not the room sum the days were snapshotted with
   const rows = db.prepare(`
     SELECT CAST(strftime('%w', metric_date) AS INTEGER) AS dow,
            COALESCE(SUM(booked),0) AS booked, COALESCE(SUM(casual),0) AS casual,
-           MAX(capacity) AS cap, COUNT(DISTINCT metric_date) AS d
+           COUNT(DISTINCT metric_date) AS d
     FROM daily_metrics
     WHERE owna_id = ? AND metric_date BETWEEN ? AND ?
     GROUP BY dow`).all(ownaId, from, today);
@@ -1544,7 +1625,7 @@ function centreDowOccupancy(ownaId, days = 56) {
   for (let wd = 1; wd <= 5; wd++) {
     const r = byDow[wd];
     if (!r || !r.d) { out.push({ dow: DOW_NAMES[wd], occupancy: null, avg_booked: null, avg_casual: null, days: 0 }); continue; }
-    out.push({ dow: DOW_NAMES[wd], occupancy: pct(r.booked, r.cap * r.d), avg_booked: Math.round(r.booked / r.d), avg_casual: Math.round(r.casual / r.d), days: r.d, capacity: r.cap });
+    out.push({ dow: DOW_NAMES[wd], occupancy: places == null ? null : pct(r.booked, places * r.d), avg_booked: Math.round(r.booked / r.d), avg_casual: Math.round(r.casual / r.d), days: r.d, places });
   }
   return out;
 }
@@ -1592,7 +1673,7 @@ function rankCompareSeries(series, cfg, dashFrom) {
 }
 function compareTrend(metric = "occupancy", n) {
   const cfg = COMPARE_METRICS[metric] || COMPARE_METRICS.occupancy;
-  const centres = db.prepare("SELECT owna_id, name, capacity FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+  const centres = db.prepare(`SELECT owna_id, name, capacity, ${PLACES_SQL} AS places FROM centres WHERE (opening IS NULL OR opening = 0) AND ${PLACES_SQL} > 0 ORDER BY name`).all();
   if (cfg.cadence === "week") {
     const weeks = labourWeeks(n || 16).slice().reverse();
     const series = centres.map((ct) => {
@@ -1613,10 +1694,10 @@ function compareTrend(metric = "occupancy", n) {
   const series = centres.map((ct) => {
     const map = {}; // months absent from the map render as null (a gap), never zero
     if (metric === "occupancy") {
-      db.prepare("SELECT substr(metric_date,1,7) month, COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) days FROM daily_metrics WHERE owna_id=? GROUP BY month")
-        .all(ct.owna_id).forEach((r) => { map[r.month] = pct(r.booked, r.cap * r.days); });
+      db.prepare("SELECT substr(metric_date,1,7) month, COALESCE(SUM(booked),0) booked, COUNT(DISTINCT metric_date) days FROM daily_metrics WHERE owna_id=? GROUP BY month")
+        .all(ct.owna_id).forEach((r) => { map[r.month] = pct(r.booked, ct.places * r.days); });
     } else if (fromBookings) {
-      placesByMonth(ct.owna_id, ct.capacity, axis[0], axis[axis.length - 1]).forEach((r) => { map[r.month] = r[metric]; });
+      placesByMonth(ct.owna_id, ct.places, axis[0], axis[axis.length - 1]).forEach((r) => { map[r.month] = r[metric]; });
     } else { const pt = pcTrend(ct.owna_id, 24); pt.axis.forEach((mo2, i) => { map[mo2] = pt.series[metric] ? pt.series[metric][i] : null; }); }
     return { owna_id: ct.owna_id, name: ct.name.replace("Futuro Childcare & Education - ", ""), points: axis.map((mo2) => (map[mo2] == null ? null : map[mo2])) };
   });
@@ -1625,15 +1706,16 @@ function compareTrend(metric = "occupancy", n) {
 }
 
 // How many new bookings of each day-pattern lift weekly occupancy by each target (pp).
-function occupancyCalculator(capacity, occupancyNow, targets = [5, 10]) {
+// `places` is the licensed count (approved places), the same denominator the occupancy figure came from.
+function occupancyCalculator(places, occupancyNow, targets = [5, 10]) {
   const patterns = [2, 3, 4, 5];
-  const free = occupancyNow != null ? Math.max(0, Math.round(capacity * (1 - occupancyNow / 100))) : null;
+  const free = occupancyNow != null ? Math.max(0, Math.round(places * (1 - occupancyNow / 100))) : null;
   return targets.map((delta) => ({
     delta,
     target_occ: occupancyNow != null ? Math.round((occupancyNow + delta) * 10) / 10 : null,
     reachable: occupancyNow == null || occupancyNow + delta <= 100,
     perPattern: patterns.map((d) => {
-      const extraChildDays = delta / 100 * capacity * 5; // extra booked child-days/week for +delta pp
+      const extraChildDays = delta / 100 * places * 5; // extra booked child-days/week for +delta pp
       return { days: d, count: Math.ceil(extraChildDays / d) };
     }),
     free,
@@ -1641,7 +1723,8 @@ function occupancyCalculator(capacity, occupancyNow, targets = [5, 10]) {
 }
 
 // Rule-based, data-driven improvement tips for a centre. Each rule only fires when the data warrants it.
-function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
+// `places` is the licensed count (approved places); with none recorded there is no growth calculator to show.
+function centreInsights(ownaId, places, occupancyNow, pipeline, labour) {
   const dow = centreDowOccupancy(ownaId);
   const valid = dow.filter((d) => d.occupancy != null);
   const tips = [];
@@ -1653,10 +1736,10 @@ function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
   // Recent 28-day actuals (past only): occupancy, attendance, avg daily fee, absences.
   const recent = db.prepare(`
     SELECT COALESCE(SUM(booked),0) booked, COALESCE(SUM(attended),0) attended, COALESCE(SUM(absent),0) absent,
-           COALESCE(SUM(fee_total),0) fee, MAX(capacity) cap, COUNT(DISTINCT metric_date) d
+           COALESCE(SUM(fee_total),0) fee, COUNT(DISTINCT metric_date) d
     FROM daily_metrics WHERE owna_id=? AND metric_date BETWEEN ? AND ?`).get(ownaId, ago(28), today);
   const avgDailyFee = recent.booked ? recent.fee / recent.booked : null; // $ per child-day
-  const recentOcc = (recent.cap && recent.d) ? pct(recent.booked, recent.cap * recent.d) : occupancyNow;
+  const recentOcc = (places && recent.d) ? pct(recent.booked, places * recent.d) : occupancyNow;
 
   // 1) Day-of-week balance, with the $ opportunity of closing the gap folded in.
   if (valid.length >= 2) {
@@ -1673,7 +1756,7 @@ function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
 
   // Waitlist vs free places.
   if (pipeline && pipeline.waitlist > 0) {
-    const free = capacity && recentOcc != null ? Math.round(capacity * (1 - recentOcc / 100)) : null;
+    const free = places && recentOcc != null ? Math.round(places * (1 - recentOcc / 100)) : null;
     if (free && free > 0) tips.push(`You have ${pipeline.waitlist} on the waitlist and roughly ${free} place${free === 1 ? "" : "s"} free on an average day — converting waitlist families into permanent bookings is the fastest occupancy win.`);
   }
 
@@ -1692,10 +1775,10 @@ function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
 
   // 3) Forward-booking dip: next 4 weeks scheduled vs recent actual.
   const fwd = db.prepare(`
-    SELECT COALESCE(SUM(booked),0) booked, MAX(capacity) cap, COUNT(DISTINCT metric_date) d
+    SELECT COALESCE(SUM(booked),0) booked, COUNT(DISTINCT metric_date) d
     FROM daily_metrics WHERE owna_id=? AND metric_date > ? AND metric_date <= ?`).get(ownaId, today, ahead(28));
-  if (fwd.d >= 5 && fwd.cap && recentOcc != null) {
-    const fwdOcc = pct(fwd.booked, fwd.cap * fwd.d);
+  if (fwd.d >= 5 && places && recentOcc != null) {
+    const fwdOcc = pct(fwd.booked, places * fwd.d);
     const dip = Math.round((recentOcc - fwdOcc) * 10) / 10;
     if (dip >= 4) tips.push(`Bookings for the next 4 weeks average ${fwdOcc}%, ${dip}pp below your recent ${recentOcc}% — a casual drive or re-enrolment push would close the gap.`);
   }
@@ -1725,8 +1808,8 @@ function centreInsights(ownaId, capacity, occupancyNow, pipeline, labour) {
     tips.push(`Educator wages are ${labour.wage_pct}% of revenue (target ≤65%). Lifting occupancy on quiet days, or trimming roster hours there, would restore margin.`);
   }
 
-  const calc = capacity ? occupancyCalculator(capacity, occupancyNow) : [];
-  return { dow, tips, calc, occupancyNow, capacity };
+  const calc = places ? occupancyCalculator(places, occupancyNow) : [];
+  return { dow, tips, calc, occupancyNow, places };
 }
 
 // ===== Rostering (OWNA weekly roster) + rostered-vs-paid reconciliation =====
@@ -1872,14 +1955,14 @@ function coeOutlook() {
     return out;
   };
 
-  const operating = db.prepare("SELECT owna_id, name, capacity, enrolled FROM centres WHERE (opening IS NULL OR opening=0) AND capacity>0 ORDER BY name").all();
+  const operating = db.prepare(`SELECT owna_id, name, capacity, ${PLACES_SQL} AS places, enrolled FROM centres WHERE (opening IS NULL OR opening=0) AND ${PLACES_SQL}>0 ORDER BY name`).all();
   const centres = operating.map((c) => {
     const runDays = runRow.get(c.owna_id, runWeek.from, runWeek.to).booked;
     const avgDays = c.enrolled ? runDays / c.enrolled : 0;   // average booked days per child per week
     const exits = exitsBy[c.owna_id] || [], starts = startsBy[c.owna_id] || [];
     const rows = months.map((mo) => {
       const start = mo.month + "-01", end = coeMonthEnd(mo.month);
-      const available = c.capacity * mo.operating_days;
+      const available = c.places * mo.operating_days; // licensed places × operating days
       const runRate = runDays * (mo.operating_days / 5);
       // Leavers are cumulative: a child who finished in an earlier month is gone for the whole of this one.
       let leaverDays = 0, toDate = 0, inMonth = 0;
@@ -1904,7 +1987,7 @@ function coeOutlook() {
           firmKids: bf.firm_children, unknown: bf.days_unknown, allUnknown: bf.all_days_unknown },
       };
     });
-    return { owna_id: c.owna_id, name: c.name, places: c.capacity, enrolled: c.enrolled,
+    return { owna_id: c.owna_id, name: c.name, places: c.places, enrolled: c.enrolled,
       run_week_days: runDays, avg_days_per_child: Math.round(avgDays * 100) / 100, months: rows };
   });
 
@@ -1932,7 +2015,7 @@ function coeOutlook() {
 
   // Pre-opening centres that open inside the window: no run rate and no licensed places, so no percentage.
   const lastIdx = Number(keys[keys.length - 1].slice(0, 4)) * 12 + Number(keys[keys.length - 1].slice(5, 7));
-  const opening = db.prepare("SELECT owna_id, name, capacity, opening_year, opening_month FROM centres WHERE opening=1 AND opening_year IS NOT NULL AND opening_month IS NOT NULL ORDER BY opening_year, opening_month, name")
+  const opening = db.prepare("SELECT owna_id, name, capacity, approved_places, opening_year, opening_month FROM centres WHERE opening=1 AND opening_year IS NOT NULL AND opening_month IS NOT NULL ORDER BY opening_year, opening_month, name")
     .all().filter((c) => c.opening_year * 12 + c.opening_month <= lastIdx).map((c) => {
       const starts = startsBy[c.owna_id] || [];
       const mix = {}; COE_WEEKDAYS.forEach((w) => { mix[w] = 0; });
@@ -1942,7 +2025,8 @@ function coeOutlook() {
         if (days.length) mixFamilies += 1;
         days.forEach((x) => { mix[x] += 1; });
       }
-      return { owna_id: c.owna_id, name: c.name, places: c.capacity, opening_year: c.opening_year, opening_month: c.opening_month,
+      // No service approval on the register yet, so places is null (unknown) — never 0, and never a percentage of 0.
+      return { owna_id: c.owna_id, name: c.name, places: placesFor(c), opening_year: c.opening_year, opening_month: c.opening_month,
         months: months.map((mo) => { const bf = backfill(starts, mo);
           return { month: mo.month, operating_days: mo.operating_days, firm_children: bf.firm_children, firm_days: d1(bf.firm_days),
             all_children: bf.all_children, all_days: d1(bf.all_days), days_unknown: bf.days_unknown, all_days_unknown: bf.all_days_unknown }; }),
@@ -1985,7 +2069,7 @@ function coeSnapshotDate(meta) {
 
 function coeMeasured(keys = coeMonthKeys()) {
   // Read the operating centres first: they decide WHICH night to read, not just which rows to keep.
-  const meta = db.prepare("SELECT owna_id, name, capacity FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+  const meta = db.prepare(`SELECT owna_id, name, capacity, ${PLACES_SQL} AS places FROM centres WHERE (opening IS NULL OR opening = 0) AND ${PLACES_SQL} > 0 ORDER BY name`).all();
   const date = coeSnapshotDate(meta);
   if (!date) return null;
   const cont = db.prepare("SELECT * FROM coe_continuing WHERE snapshot_date = ? ORDER BY owna_id, month").all(date);
@@ -2004,16 +2088,16 @@ function coeMeasured(keys = coeMonthKeys()) {
         continuing_days: r.continuing_days, not_confirmed_days: r.not_confirmed_days, leaving_days: r.leaving_days,
         beyond_horizon: !!r.beyond_horizon,
         continuing_pct: pct(r.continuing, r.enrolled),
-        available_days: c.capacity * r.operating_days }));
+        available_days: c.places * r.operating_days })); // licensed places × operating days
     const mix = (mixBy[c.owna_id] || []).map((r) => ({ days_per_week: r.days_per_week, children: r.children, child_days: r.child_days }));
     const children = mix.reduce((a, b) => a + b.children, 0);
     const childDays = mix.reduce((a, b) => a + b.child_days, 0);
-    return { owna_id: c.owna_id, name: c.name, places: c.capacity,
+    return { owna_id: c.owna_id, name: c.name, places: c.places,
       enrolled: h.enrolled != null ? h.enrolled : (rows[0] ? rows[0].enrolled : 0),
       months: rows, mix, mix_children: children, mix_child_days: childDays,
       avg_days_per_child: children ? Math.round(childDays / children * 100) / 100 : 0,
-      places_filled_pct: pct(children, c.capacity),           // one child holds one place
-      days_filled_pct: pct(childDays, c.capacity * 5),        // …but only for the days they book
+      places_filled_pct: pctOrNull(children, c.places),       // one child holds one licensed place
+      days_filled_pct: pctOrNull(childDays, c.places * 5),    // …but only for the days they book
       week: { from: h.week_from || null, to: h.week_to || null },
       last_booking_date: h.last_booking_date || null,
       horizon_children: h.horizon_children || 0,
@@ -2055,7 +2139,7 @@ function coeMeasured(keys = coeMonthKeys()) {
     centres_expected: meta.length, centres_missing: missing, partial: missing.length > 0,
     group: { places, months, mix, mix_children: mixChildren, mix_child_days: mixChildDays,
       avg_days_per_child: mixChildren ? Math.round(mixChildDays / mixChildren * 100) / 100 : 0,
-      places_filled_pct: pct(mixChildren, places), days_filled_pct: pct(mixChildDays, places * 5) },
+      places_filled_pct: pctOrNull(mixChildren, places), days_filled_pct: pctOrNull(mixChildDays, places * 5) },
     centres, stops: centres.filter((c) => c.stops_early) };
 }
 
@@ -2064,6 +2148,7 @@ module.exports = {
   centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
   rosterWeeks, rosterForWeek, rosterCentre, latestReconciledRosterWeek,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
+  placesFor, placesOf, placesAdminRows, parseApprovedPlaces, saveApprovedPlaces, MAX_APPROVED_PLACES, ACECQA_SERVICE_URL,
   llPipeline, llLatestDate, llForCentre, llByOwnaCentre, todayStr, pipelineTrend, pipelineCentres, waitlistJoins,
   exitsSummary, exitReasons, centreExits, exitsLatestDate, exitsByMonth, exitsByYear, upcomingExitsByMonth, tenureByCentre, churnByRoom,
   forwardOccupancyByCentre, projection, centrePipelineDetail,

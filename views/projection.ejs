@@ -3,9 +3,10 @@
   const shortName = (n) => (n||'').replace('Futuro Childcare & Education - ','').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
   const occClass = (p) => p >= 85 ? 'good' : p >= 70 ? 'warn' : 'bad';
   const p = proj;
-  const tBaseCapDays = p.rows.reduce((s,r)=>s + r.capacity*r.days, 0);
-  const tBaseBooked = p.rows.reduce((s,r)=>s + Math.round(r.base_occ/100*r.capacity*r.days), 0);
-  const tProjBooked = p.rows.reduce((s,r)=>s + Math.round(r.proj_occ/100*r.capacity*r.days), 0);
+  // `places` = approved places on the service approval (the licensed count), not the OWNA room sum.
+  const tBaseCapDays = p.rows.reduce((s,r)=>s + r.places*r.days, 0);
+  const tBaseBooked = p.rows.reduce((s,r)=>s + Math.round(r.base_occ/100*r.places*r.days), 0);
+  const tProjBooked = p.rows.reduce((s,r)=>s + Math.round(r.proj_occ/100*r.places*r.days), 0);
   const tFamilies = p.rows.reduce((s,r)=>s + r.pipeline_children, 0);
   const baseAll = tBaseCapDays ? Math.round(tBaseBooked/tBaseCapDays*1000)/10 : 0;
   const projAll = tBaseCapDays ? Math.round(tProjBooked/tBaseCapDays*1000)/10 : 0;
@@ -61,7 +62,7 @@
       <% p.rows.forEach(function(r){ var up = Math.round((r.proj_occ-r.base_occ)*10)/10; %>
         <tr>
           <td><a class="row-link" href="/centre/<%= r.owna_id %>"><%= shortName(r.name) %></a></td>
-          <td class="num"><%= r.capacity %></td>
+          <td class="num"><%= r.places %></td>
           <td>
             <div class="bar-wrap" title="now <%= r.base_occ %>% → projected <%= r.proj_occ %>%">
               <div class="bar <%= occClass(r.proj_occ) %>" style="width:<%= Math.min(r.proj_occ,100) %>%; opacity:.4;"></div>
@@ -78,7 +79,7 @@
     </tbody>
     <tfoot>
       <tr class="total-row">
-        <td>All centres</td><td class="num"><%= p.rows.reduce((s,r)=>s+r.capacity,0) %></td><td></td>
+        <td>All centres</td><td class="num"><%= p.rows.reduce((s,r)=>s+r.places,0) %></td><td></td>
         <td class="num"><%= baseAll %>%</td><td class="num"><%= projAll %>%</td>
         <td class="num" style="color:var(--berry);">+<%= Math.round((projAll-baseAll)*10)/10 %></td>
         <td class="num"><%= tFamilies %></td>

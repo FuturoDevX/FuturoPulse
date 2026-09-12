@@ -39,7 +39,7 @@
   <div class="card stat"><div class="n <%= utilRow ? occClass(utilRow.utilisation) + '-text' : '' %>"><%= utilRow ? utilRow.utilisation + '%' : '—' %></div><div class="l">Utilisation <%= util.ytdLabel %> · <%= util.label %><span class="cap"><%= dLbl(util.start) %> → <%= dLbl(util.today) %> · <%= plural(util.operating_days_ytd, 'operating day') %> · <a href="<%= yearQS('fy') %>" class="<%= util.kind === 'fy' ? 'on' : '' %>" title="Financial year (from 1 July)">FY</a> | <a href="<%= yearQS('cy') %>" class="<%= util.kind === 'cy' ? 'on' : '' %>" title="Calendar year (from 1 January)">CY</a></span></div></div>
   <div class="card stat"><div class="n"><%= money(totals.fee_total) %></div><div class="l"><% if (hasFuture) { %>Fees: billed to date + booked ahead<span class="cap ahead"><%= money(totals.fee_past) %> billed to date · <%= money(totals.fee_future) %> booked ahead</span><% } else { %>Fees billed<% } %></div></div>
   <div class="card stat"><div class="n"><%= totals.casual.toLocaleString('en-AU') %></div><div class="l">Casual days<% if (hasFuture) { %><span class="cap ahead">incl. casual bookings ahead</span><% } %></div></div>
-  <div class="card stat"><div class="n"><%= totals.capacity %></div><div class="l">Total places</div></div>
+  <div class="card stat"><div class="n"><%= totals.places ? totals.places : '—' %></div><div class="l">Total places<span class="cap">approved places on the service approvals</span></div></div>
 </div>
 
 <%
@@ -137,7 +137,7 @@
   <table>
     <thead>
       <tr>
-        <th>Centre</th><th>Places</th><th class="num" title="Booked child-days ÷ days with data in the range">Avg/day</th>
+        <th>Centre</th><th title="Approved places on the service approval (ACECQA National Register)">Places</th><th class="num" title="Booked child-days ÷ days with data in the range">Avg/day</th>
         <th class="num" title="Seats filled: average booked children per operating day (weekdays excluding NSW public holidays)">Seats</th>
         <th style="width:160px;" title="<%= hasFuture ? 'Includes days booked ahead — departures not yet deducted, so this overstates' : 'Booked child-days on operating days ÷ (places × operating days)' %>">Occupancy<% if (hasFuture) { %> <span class="th-cap">booked ahead</span><% } %></th>
         <th class="num" title="Projected occupancy over the next 30 days from scheduled bookings">Fcast 30d</th>
@@ -151,12 +151,12 @@
       <% rows.forEach(function(r){ %>
         <tr>
           <td><a class="row-link" href="/centre/<%= r.owna_id %>?<%= rangeQS %>"><%= shortName(r.name) %></a></td>
-          <td><%= r.capacity %></td>
+          <td><%= r.places != null ? r.places : '—' %></td>
           <td class="num"><%= r.avg_daily_booked %></td>
           <% var sr = seats.byOwna[r.owna_id]; %>
           <td class="num"><%= sr && sr.days ? sr.seats : '—' %></td>
           <td>
-            <% if (r.op_days) { %>
+            <% if (r.op_days && r.occupancy != null) { %>
             <div class="bar-wrap" title="<%= r.op_booked %> booked child-days over <%= plural(r.op_days, 'operating day') %>">
               <div class="bar <%= occClass(r.occupancy) %>" style="width:<%= Math.min(r.occupancy,100) %>%;"></div>
               <span class="bar-val"><%= r.occupancy %>%</span>
@@ -164,7 +164,7 @@
             <% } else { %><span class="muted">—</span><% } %>
           </td>
           <% var f = fcast[r.owna_id]; %>
-          <td class="num"><% if (f && f.days) { %><span class="<%= occClass(f.occupancy) %>-text" style="font-weight:600;"><%= f.occupancy %>%</span><% } else { %><span class="muted">—</span><% } %></td>
+          <td class="num"><% if (f && f.days && f.occupancy != null) { %><span class="<%= occClass(f.occupancy) %>-text" style="font-weight:600;"><%= f.occupancy %>%</span><% } else { %><span class="muted">—</span><% } %></td>
           <td class="num"><%= r.past_days ? r.attendance_rate + '%' : '—' %></td>
           <td class="num"><%= r.casual %></td>
           <td class="num"><% if (hasFuture) { %><%= money(r.fee_past) %><br><span class="muted fee-ahead">+ <%= money(r.fee_future) %> ahead</span><% } else { %><%= money(r.fee_total) %><% } %></td>
@@ -177,10 +177,10 @@
     </tbody>
     <tfoot>
       <% var llTotWait=0, llTotUp=0; Object.values(llMap).forEach(function(x){llTotWait+=x.waitlist;llTotUp+=x.starts_future;});
-         var fB=0, fCD=0; rows.forEach(function(r){ var f=fcast[r.owna_id]; if(f&&f.days){ fB+=f.booked; fCD+=r.capacity*f.days; } });
+         var fB=0, fCD=0; rows.forEach(function(r){ var f=fcast[r.owna_id]; if(f&&f.days&&r.places!=null){ fB+=f.booked; fCD+=r.places*f.days; } });
          var fcastAll = fCD ? Math.round(fB/fCD*1000)/10 : 0; %>
       <tr class="total-row">
-        <td>All centres</td><td><%= totals.capacity %></td><td class="num">—</td>
+        <td>All centres</td><td><%= totals.places ? totals.places : '—' %></td><td class="num">—</td>
         <td class="num"><%= seatsRow && seatsRow.days ? seatsRow.seats : '—' %></td>
         <td><% if (totals.op_days) { %><div class="bar-wrap"><div class="bar <%= occClass(totals.occupancy) %>" style="width:<%= Math.min(totals.occupancy,100) %>%;"></div><span class="bar-val"><%= totals.occupancy %>%</span></div><% } else { %><span class="muted">—</span><% } %></td>
         <td class="num"><span class="<%= occClass(fcastAll) %>-text"><%= fcastAll %>%</span></td>
@@ -196,11 +196,14 @@
 </div>
 
 <p class="footnote">
-  Occupancy = booked child-days ÷ (places × operating days). Fees billed = sum of session fees (gross, before CCS subsidy).
+  Occupancy = booked child-days ÷ (places × operating days). <strong>Places</strong> means the approved places on each
+  service approval (the ACECQA National Register), kept up to date on the Approved places admin page — not the sum of the
+  OWNA room capacities, which is a different number. Fees billed = sum of session fees (gross, before CCS subsidy).
   <% if (hasFuture) { %>This range ends after today (<%= dLbl(today) %>): booked, occupancy, seats and casual figures include days booked ahead, and departures are not yet deducted; attendance uses past days only.<% } %>
   Seats filled = booked children on operating days ÷ operating days with bookings in the range. Operating day = weekday excluding NSW public holidays; the booking rows OWNA keeps on public holidays (centre closed) are ignored by occupancy, seats and utilisation alike.
   <% // Never fall back to group figures: on a centre-scoped page a centre with no utilisation row (pre-opening, no licensed places) must not be told the group's places or child-days.
-     if (utilRow) { var uCap = utilRow.capacity; var uCapDays = utilRow.cap_days; var uAnnual = utilRow.annual_child_days; %>
+     // A per-centre row carries `places`; the group row carries the same licensed total under `capacity`.
+     if (utilRow) { var uCap = utilRow.places != null ? utilRow.places : utilRow.capacity; var uCapDays = utilRow.cap_days; var uAnnual = utilRow.annual_child_days; %>
   Utilisation <%= util.ytdLabel %> (<%= util.label %>) = booked child-days on operating days <%= dLbl(util.start) %> → <%= dLbl(util.today) %> ÷ (<%= uCap %> places × <%= util.operating_days_ytd %> operating days = <%= uCapDays.toLocaleString('en-AU') %> child-days).
   Annual denominator <%= util.label %> = <%= util.operating_days_year %> operating days (<%= dLbl(util.start) %> → <%= dLbl(util.end) %>) × <%= uCap %> places = <%= uAnnual.toLocaleString('en-AU') %> child-days.<% } else { %>No licensed places recorded for your centre yet, so utilisation cannot be calculated.<% } %><%= util.kind === 'cy' ? ' Showing calendar year (?year=cy); the default is the financial year.' : '' %>
   <% var unk = [...new Set([...(seats.unknownYears || []), ...(util.unknownYears || [])])]; if (unk.length) { %>No NSW public-holiday list is loaded for <%= unk.join(', ') %> — weekdays only for those years.<% } %>

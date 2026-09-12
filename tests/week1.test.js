@@ -627,7 +627,10 @@ test('Week 1 batch 1',async(t)=>{
   // Pre-opening centres: the one opening inside the window, with firm vs all-pipeline days and the requested weekday mix.
   assert.deepEqual(o.opening.map(c=>c.owna_id),['open']);                     // Centre Far (2028) is beyond the window
   const op=o.opening[0];
-  assert.equal(op.places,0);assert.equal(op.opening_year,2026);assert.equal(op.opening_month,11);
+  // A pre-opening centre has no service approval, so its licensed places are UNKNOWN, not zero: the figure
+  // is null and the page prints "—" rather than a place count it could take a percentage of. (This
+  // expectation was 0 before approved places became a field of their own.)
+  assert.equal(op.places,null);assert.equal(op.opening_year,2026);assert.equal(op.opening_month,11);
   assert.deepEqual(op.mix,{mo:2,tu:2,we:1,th:1,fr:1});assert.equal(op.mix_families,2);
   assert.deepEqual(op.months.map(x=>x.days_unknown),[0,0,0,0,0,0]);          // every start at this centre has its days recorded
   assert.equal(op.months[0].firm_days,20.3);assert.equal(op.months[0].all_days,20.3);assert.equal(op.months[0].firm_children,1); // 5 × 4.2 × 29/30

@@ -19,7 +19,7 @@
     <h1><%= shortName(centre.name) %></h1>
     <p class="sub">
       <%= centre.suburb ? centre.suburb + ', ' : '' %><%= centre.state || '' %>
-      · <%= centre.capacity %> places · <%= centre.enrolled %> enrolled
+      · <% if (places != null) { %><%= places %> approved places<% } else { %><span class="muted" title="No approved places recorded for this service yet — add them at /admin/places">places not recorded</span><% } %> · <%= centre.enrolled %> enrolled
       <% if (centre.approval_no) { %> · <%= centre.approval_no %><% } %>
     </p>
   </div>
@@ -42,7 +42,7 @@
   <% if (to > today) { %><div class="fwd-links"><span class="fwd-note">Showing scheduled bookings past today (<%= today %>)</span></div><% } %>
 
   <div class="grid kpis">
-    <div class="card stat"><div class="n <%= occClass(summary.occupancy) %>-text"><%= summary.occupancy %>%</div><div class="l">Occupancy</div></div>
+    <div class="card stat"><div class="n <%= summary.occupancy != null ? occClass(summary.occupancy) + '-text' : '' %>"><%= summary.occupancy != null ? summary.occupancy + '%' : '—' %></div><div class="l">Occupancy<% if (summary.occupancy == null) { %><span class="cap">no approved places recorded</span><% } %></div></div>
     <div class="card stat"><div class="n"><%= summary.attendance_rate %>%</div><div class="l">Attendance rate</div></div>
     <div class="card stat"><div class="n"><%= summary.avg_daily_booked %></div><div class="l">Avg booked / day</div></div>
     <div class="card stat"><div class="n"><%= summary.casual %></div><div class="l">Casual days</div></div>
@@ -66,8 +66,8 @@
   </div>
   <% } %>
 
-  <% if (occTrend && occTrend.length > 1) {
-       const mMax = Math.max(100, ...occTrend.map(t => t.occupancy));
+  <% if (occTrend && occTrend.length > 1 && occTrend.some(function(t){ return t.occupancy != null; })) {
+       const mMax = Math.max(100, ...occTrend.map(t => t.occupancy || 0));
        const mth = (m) => { const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-AU',{month:'short',year:'2-digit'}); };
   %>
   <div class="card">
@@ -80,7 +80,7 @@
         </div>
       <% }); %>
     </div>
-    <p class="footnote">Occupancy = booked child-days ÷ (places × operating days) each month. History is backfilled from OWNA.</p>
+    <p class="footnote">Occupancy = booked child-days ÷ (places × operating days) each month, where places is this service's approved places<%= places != null ? ' (' + places + ')' : '' %> — the licensed count on the service approval, not the OWNA room sum. History is backfilled from OWNA.</p>
   </div>
   <% } %>
 
@@ -95,7 +95,7 @@
           <tr class="<%= fut ? 'future-row' : '' %>">
             <td><%= dow(d.metric_date) %> <%= d.metric_date %><%= fut ? ' ·' : '' %><% if(fut){ %><span class="tag-fut">scheduled</span><% } %></td>
             <td class="num"><%= d.booked %></td>
-            <td><div class="bar-wrap"><div class="bar <%= occClass(d.occupancy) %>" style="width:<%= Math.min(d.occupancy,100) %>%;"></div><span class="bar-val"><%= d.occupancy %>%</span></div></td>
+            <td><% if (d.occupancy != null) { %><div class="bar-wrap"><div class="bar <%= occClass(d.occupancy) %>" style="width:<%= Math.min(d.occupancy,100) %>%;"></div><span class="bar-val"><%= d.occupancy %>%</span></div><% } else { %><span class="muted">—</span><% } %></td>
             <td class="num"><%= fut ? '—' : d.attended %></td>
             <td class="num"><%= fut ? '—' : d.absent %></td>
             <td class="num"><%= fut ? '—' : d.attendance_rate + '%' %></td>
@@ -143,7 +143,7 @@
     <% } %>
     <% if (insights.calc.length) { %>
     <h3 class="card-sub">What it takes to grow</h3>
-    <p class="sub" style="margin:0 0 10px;">Current occupancy <strong><%= insights.occupancyNow %>%</strong> across <%= insights.capacity %> places. New permanent enrolments needed to lift it:</p>
+    <p class="sub" style="margin:0 0 10px;">Current occupancy <strong><%= insights.occupancyNow %>%</strong> across <%= insights.places %> approved places. New permanent enrolments needed to lift it:</p>
     <div style="overflow-x:auto;"><table>
       <thead><tr><th>Lift occupancy by</th><th class="num">2-day places</th><th class="num">3-day</th><th class="num">4-day</th><th class="num">5-day</th></tr></thead>
       <tbody>

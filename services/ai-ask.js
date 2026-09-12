@@ -25,7 +25,7 @@ function gatherContext(scopedOwnaId) {
     const pc = pcBy[r.owna_id] || {};
     return {
       centre: short(r.name), suburb: r.suburb || null,
-      capacity: r.capacity, enrolled: r.enrolled,
+      licensed_places: r.places, enrolled: r.enrolled,   // approved places on the service approval
       occupancy_pct: r.occupancy, attendance_pct: r.attendance_rate, revenue_this_week: r.fee_total,
       labour_week: lab.week || null,
       wages_pct_of_revenue: numOrNull(lab.wage_pct), margin_pct_after_wages: numOrNull(lab.margin_pct), total_wages_this_week: numOrNull(lab.all_wages),

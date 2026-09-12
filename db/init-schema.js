@@ -20,6 +20,7 @@ function initSchema(db) {
   addColumnIfMissing("centres", "opening", "INTEGER DEFAULT 0");
   addColumnIfMissing("centres", "opening_year", "INTEGER");
   addColumnIfMissing("centres", "opening_month", "INTEGER");
+  addColumnIfMissing("centres", "approved_places", "INTEGER");
   addColumnIfMissing("users", "location_id", "TEXT");
   addColumnIfMissing("labour_weekly", "cleaning_h", "REAL DEFAULT 0");
   addColumnIfMissing("labour_weekly", "cleaning_amt", "REAL DEFAULT 0");
@@ -31,6 +32,37 @@ function initSchema(db) {
   addColumnIfMissing("qc_actions", "term", "TEXT");
   addColumnIfMissing("incidents_monthly", "illness", "INTEGER DEFAULT 0");
   addColumnIfMissing("incidents_monthly", "serious", "INTEGER DEFAULT 0");
+
+  // ---- Approved places: the licensed count on each service approval (ACECQA National Register) ----
+  // centres.capacity is the SUM OF OWNA ROOM CAPACITIES and the nightly snapshot rewrites it every night,
+  // so it can never hold the licensed figure — Austral runs 124 approved places against a 122 room sum.
+  // Seed the four operating services with the register's "Approved Places", plus the service approval
+  // number OWNA does not return for Heath Rd (SE-00018172, "Futuro Childcare & Education - Leppington
+  // Heath Road", 201 Heath Rd, Leppington NSW 2179). ONLY where the value is still NULL: /admin/places is
+  // the maintained source from here on, so an admin's later correction must survive every reboot.
+  // Cobbitty, Oran Park and Park Rd have no service approval yet and stay NULL — unknown, never 0.
+  const APPROVED_PLACES = [
+    { name: "Austral", approval_no: "SE-00017004", places: 124 },
+    { name: "Bardia", approval_no: "SE-00016692", places: 122 },
+    { name: "Gledswood", approval_no: "SE-40025191", places: 119 },
+    { name: "Heath", approval_no: "SE-00018172", places: 136 },
+  ];
+  const seedApprovalNo = db.prepare(`UPDATE centres SET approval_no = @approval_no
+    WHERE approval_no IS NULL AND (opening IS NULL OR opening = 0) AND name LIKE @like`);
+  const seedApprovedPlaces = db.prepare(`UPDATE centres SET approved_places = @places
+    WHERE approved_places IS NULL AND (opening IS NULL OR opening = 0)
+      AND (approval_no = @approval_no OR name LIKE @like)`);
+  let placesSeeded = 0, approvalsSeeded = 0;
+  for (const c of APPROVED_PLACES) {
+    const args = { approval_no: c.approval_no, places: c.places, like: `%${c.name}%` };
+    approvalsSeeded += seedApprovalNo.run(args).changes; // first, so the places update can match on it
+    placesSeeded += seedApprovedPlaces.run(args).changes;
+  }
+  if (placesSeeded || approvalsSeeded) {
+    console.log(`[init] seeded approved places for ${placesSeeded} centre(s)`
+      + (approvalsSeeded ? ` and a service approval number for ${approvalsSeeded}` : "")
+      + " — maintain them at /admin/places");
+  }
 
   addColumnIfMissing("action_plan_items", "start_date", "TEXT");
   addColumnIfMissing("action_plan_items", "due_date", "TEXT");

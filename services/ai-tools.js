@@ -57,10 +57,15 @@ function occupancyForPeriod({ centre, from, to, group_by }, scoped) {
   const c = resolveCentre(centre, scoped); if (c.error) return bad(c.error);
   const today = m.todayStr();
   const params = [from, to];
-  let where = "metric_date BETWEEN ? AND ?";
-  if (c.one) { where += " AND owna_id = ?"; params.push(c.one.owna_id); }
-  const rows = db.prepare(`SELECT owna_id, metric_date, capacity, booked, attended, casual, fee_total
-    FROM daily_metrics WHERE ${where} ORDER BY metric_date`).all(...params);
+  let where = "d.metric_date BETWEEN ? AND ?";
+  if (c.one) { where += " AND d.owna_id = ?"; params.push(c.one.owna_id); }
+  // capacity_days is LICENSED places (approved places on the service approval), not daily_metrics.capacity,
+  // which is the OWNA room sum recorded on the day.
+  const rows = db.prepare(`SELECT d.owna_id, d.metric_date,
+      COALESCE(NULLIF(ct.approved_places,0), NULLIF(ct.capacity,0)) AS places,
+      d.booked, d.attended, d.casual, d.fee_total
+    FROM daily_metrics d JOIN centres ct ON ct.owna_id = d.owna_id
+    WHERE ${where} ORDER BY d.metric_date`).all(...params);
   if (!rows.length) return { note: "No booking rows exist for that period — it is outside the data window.", from, to };
 
   const names = {}; db.prepare("SELECT owna_id, name FROM centres").all().forEach((r) => { names[r.owna_id] = short(r.name); });
@@ -71,7 +76,7 @@ function occupancyForPeriod({ centre, from, to, group_by }, scoped) {
     const k = (c.one ? "" : names[r.owna_id] + "|") + key;
     let b = buckets.get(k);
     if (!b) { b = { centre: names[r.owna_id] || r.owna_id, period: key, capacity_days: 0, booked: 0, attended: 0, casual: 0, revenue: 0, days: 0, future_days: 0 }; buckets.set(k, b); }
-    b.capacity_days += r.capacity; b.booked += r.booked; b.attended += r.attended; b.casual += r.casual;
+    b.capacity_days += (r.places || 0); b.booked += r.booked; b.attended += r.attended; b.casual += r.casual;
     b.revenue += r.fee_total || 0; b.days++; if (r.metric_date > today) b.future_days++;
   }
   const out = [...buckets.values()].map((b) => ({
@@ -145,7 +150,7 @@ function projectedOccupancy({ scope, days }, scoped) {
   let rows = (res && res.rows) || res || [];
   if (scoped && Array.isArray(rows)) rows = rows.filter((r) => r.owna_id === scoped);
   const trimmed = (Array.isArray(rows) ? rows : []).map((r) => ({
-    centre: short(r.name || ""), capacity: r.capacity,
+    centre: short(r.name || ""), licensed_places: r.places,
     base_occupancy_pct: r.baseOcc != null ? r.baseOcc : r.base_occ, projected_occupancy_pct: r.projOcc != null ? r.projOcc : r.proj_occ,
     added_child_days: r.addedChildDays != null ? r.addedChildDays : r.added_child_days,
   }));
@@ -170,9 +175,10 @@ function currentState(_input, scoped) {
 }
 
 function centresList(_input, scoped) {
-  const rows = db.prepare("SELECT owna_id, name, capacity, enrolled, opening, opening_year, opening_month FROM centres WHERE capacity > 0 OR opening = 1 ORDER BY name").all()
+  // licensed_places = approved places on the service approval; null for a service not licensed yet.
+  const rows = db.prepare("SELECT owna_id, name, capacity, approved_places, enrolled, opening, opening_year, opening_month FROM centres WHERE capacity > 0 OR approved_places > 0 OR opening = 1 ORDER BY name").all()
     .filter((r) => !scoped || r.owna_id === scoped)
-    .map((r) => ({ centre: short(r.name), licensed_places: r.capacity, enrolled: r.enrolled, status: r.opening ? ("pre-opening" + (r.opening_year ? ", expected " + (r.opening_month ? ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][r.opening_month - 1] + " " : "") + r.opening_year : "")) : "operating" }));
+    .map((r) => ({ centre: short(r.name), licensed_places: m.placesFor(r), enrolled: r.enrolled, status: r.opening ? ("pre-opening" + (r.opening_year ? ", expected " + (r.opening_month ? ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][r.opening_month - 1] + " " : "") + r.opening_year : "")) : "operating" }));
   const dm = db.prepare("SELECT MIN(metric_date) mn, MAX(metric_date) mx FROM daily_metrics").get();
   return { today: m.todayStr(), centres: rows, booking_data_available: { earliest: dm.mn, latest: dm.mx } };
 }

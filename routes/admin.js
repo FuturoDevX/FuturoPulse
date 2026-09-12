@@ -51,6 +51,35 @@ router.post("/wage-budget", requireAdminOrOps, (req, res) => {
   res.redirect("/admin/wage-budget?saved=1");
 });
 
+// Approved places per centre — the licensed count on the service approval (ACECQA National Register).
+// OWNA cannot supply it (its room capacities are how the rooms are configured, not what the service is
+// licensed for), so it is maintained here and every licensed-places denominator divides by it.
+router.get("/places", requireAdminOrOps, (req, res) => {
+  res.render("admin-places", {
+    title: "Approved Places",
+    rows: m.placesAdminRows(),
+    max: m.MAX_APPROVED_PLACES,
+    saved: req.query.saved, err: req.query.err,
+    lastRun: lastRun(),
+  });
+});
+router.post("/places", requireAdminOrOps, (req, res) => {
+  const rows = m.placesAdminRows();
+  const errors = [];
+  const writes = [];
+  for (const c of rows) {
+    if (!Object.prototype.hasOwnProperty.call(req.body, "places_" + c.owna_id)) continue; // field not on the form
+    const parsed = m.parseApprovedPlaces(req.body["places_" + c.owna_id]);
+    if (parsed.error) { errors.push(`${c.name}: ${parsed.error}`); continue; }
+    if (parsed.value !== c.approved_places) writes.push([c.owna_id, parsed.value]);
+  }
+  // Reject the whole submission on a bad value rather than saving half of it: a partly applied form leaves
+  // the user unsure which centres took and which did not.
+  if (errors.length) return res.redirect("/admin/places?err=" + encodeURIComponent(errors.join(" · ")));
+  db.transaction(() => { writes.forEach(([id, v]) => m.saveApprovedPlaces(id, v)); })();
+  res.redirect("/admin/places?saved=" + writes.length);
+});
+
 // Monthly lead & tour targets per centre (standing 'default' month), one row per centre incl. pre-opening centres.
 router.get("/pipeline-targets", requireAdminOrOps, (req, res) => {
   res.render("admin-pipeline-targets", { title: "Pipeline Targets", centres: m.centres(), targets: m.pipelineTargets(), saved: req.query.saved, lastRun: lastRun() });
