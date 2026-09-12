@@ -406,7 +406,9 @@ CREATE TABLE IF NOT EXISTS source_sync (
 -- PRIVACY: a row is personal information under APP 11 — `sess` is the session JSON, which carries the
 -- signed-in user's id, email, name and role (never a password, and never a child or family). Rows expire
 -- eight hours after the last request and the store sweeps expired rows every fifteen minutes, so this
--- table does not accumulate and needs no separate purge.
+-- table does not accumulate and needs no separate purge. The sweep only removes rows already past their
+-- expiry, so it does not cover a restore: `scripts/restore-db.js` clears this table on the restored file,
+-- or a backup younger than eight hours would reinstate every login that was live when it was taken.
 CREATE TABLE IF NOT EXISTS sessions (
   sid    TEXT NOT NULL PRIMARY KEY,
   sess   JSON NOT NULL,             -- the serialised session; see the privacy note above

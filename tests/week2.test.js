@@ -669,3 +669,63 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
  });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+// ===== Batch F — a restore must not reinstate the logins that were live when the backup was taken =====
+// docs/outstanding.md asserted that a restored backup's session rows were "expired and swept on the first
+// start". They are not. `expire` is the last request + 8h, and the boot sweep (the vendored
+// clearExpiredSessions, DELETE ... WHERE datetime('now') > datetime(expire)) removes only rows already
+// past it — so every row in a backup younger than eight hours outlives the sweep, which is exactly the
+// "back up at 11:00, bad import at 12:30, restore at 13:00" case the command exists for. Worse, logging
+// out deletes the row but not the browser cookie (routes/auth.js destroys the session without
+// res.clearCookie), so a resurrected row signs a logged-out user back in. scripts/restore-db.js now
+// clears the table on the restored file.
+test('Week 2 batch F — restore clears the sessions the backup was carrying',async(t)=>{
+ const Database=require('better-sqlite3'), {execFileSync}=require('child_process');
+ const bdir=fs.mkdtempSync(path.join(os.tmpdir(),'pulse-week2-restore-'));
+ const src=path.join(bdir,'source.db'), enc=path.join(bdir,'backup.db.enc'), restored=path.join(bdir,'restored.db');
+ const PASS='week2-restore-fixture-passphrase';
+ const SWEEP="DELETE FROM sessions WHERE datetime('now') > datetime(expire)"; // the boot sweep, verbatim
+ try{
+  // A database as it stands at backup time: one centre row, and two logins written the way the store
+  // writes them (expire = now + the eight-hour cookie, ISO-8601).
+  const live=new Database(src);
+  live.exec('CREATE TABLE sessions (sid TEXT NOT NULL PRIMARY KEY, sess JSON NOT NULL, expire TEXT NOT NULL);'
+           +'CREATE TABLE centres (owna_id TEXT PRIMARY KEY, name TEXT)');
+  live.prepare('INSERT INTO centres VALUES(?,?)').run('a','Centre Alpha');
+  const ins=live.prepare('INSERT INTO sessions(sid,sess,expire) VALUES(?,?,?)');
+  const sess=(id,email)=>JSON.stringify({cookie:{maxAge:8*60*60*1000},user:{id,email,role:'centre'}});
+  ins.run('live-sid',sess(3,'director@example.test'),new Date(Date.now()+8*60*60*1000).toISOString());
+  ins.run('logged-out-sid',sess(4,'relief@example.test'),new Date(Date.now()+7*60*60*1000).toISOString());
+  await require('../services/backup').backup(live,enc,PASS);
+  // The backup is minutes old, so the boot sweep would not touch either row: nothing but an explicit
+  // clear on the restored file removes them. If this ever stops holding the assertions below prove less.
+  assert.equal(live.prepare(SWEEP).run().changes,0,'the boot sweep must be unable to expire a fresh backup');
+  live.close();
+
+  // Someone logs out after the backup — the row goes, the browser keeps the signed sid.
+  const after=new Database(src);after.prepare('DELETE FROM sessions WHERE sid=?').run('logged-out-sid');after.close();
+
+  const out=execFileSync(process.execPath,[path.join(__dirname,'..','scripts','restore-db.js'),enc,restored],
+    {env:{...process.env,BACKUP_PASSPHRASE:PASS},encoding:'utf8'});
+  assert.match(out,/integrity check passed/);
+
+  const d=new Database(restored,{readonly:true});
+  try{
+   assert.equal(d.pragma('integrity_check',{simple:true}),'ok');
+   assert.equal(d.prepare('SELECT COUNT(*) n FROM centres').get().n,1,'the restore must still restore the data');
+   assert.equal(d.prepare('SELECT COUNT(*) n FROM sessions').get().n,0,'a restore must not carry logins back in');
+   // The store's own read, for the cookie the logged-out user still holds: no row, so no sign-in.
+   assert.equal(d.prepare("SELECT sess FROM sessions WHERE sid=? AND datetime('now') < datetime(expire)").get('live-sid'),undefined);
+  } finally {d.close();}
+
+  // A backup from before the sessions table existed still restores; there is simply nothing to clear.
+  const old=path.join(bdir,'old.db'), oldEnc=path.join(bdir,'old.db.enc'), oldOut=path.join(bdir,'old-restored.db');
+  const o=new Database(old);o.exec('CREATE TABLE centres (owna_id TEXT PRIMARY KEY, name TEXT)');
+  o.prepare('INSERT INTO centres VALUES(?,?)').run('b','Centre Beta');
+  await require('../services/backup').backup(o,oldEnc,PASS);o.close();
+  execFileSync(process.execPath,[path.join(__dirname,'..','scripts','restore-db.js'),oldEnc,oldOut],
+    {env:{...process.env,BACKUP_PASSPHRASE:PASS},encoding:'utf8'});
+  const od=new Database(oldOut,{readonly:true});
+  try{assert.equal(od.prepare('SELECT COUNT(*) n FROM centres').get().n,1);}finally{od.close();}
+ } finally {fs.rmSync(bdir,{recursive:true,force:true});}
+});
