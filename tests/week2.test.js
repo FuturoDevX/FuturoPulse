@@ -595,5 +595,66 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.doesNotMatch(html,/Delta: its forward bookings stop/,'two days short of the window is not a cliff');
   for(const bad of ['Fixture Child','2022-04-05']) assert.ok(!html.includes(bad),'/coe printed '+bad);
  });
+
+ // ===== Batch F: a snapshot night that reached only SOME of the centres =====
+ // runCoeSnapshot commits per centre and carries on past a failure (and past a centre OWNA returns no
+ // children for), so a night that failed for three of four centres still writes rows for the fourth, and
+ // step() only raises a problem when every centre fails. coeMeasured() then took MAX(snapshot_date) and
+ // read that night alone: /coe silently became a quarter of the group — the headline continuing count,
+ // the licensed places, the booking mix — with the previous complete night still sitting in the table and
+ // not one caveat on the page. These assertions mutate the COE tables, so this batch runs last.
+ await t.test('a partial night does not replace the last complete one, and a partial page says so',async()=>{
+  const NIGHT2='2026-09-13';
+  const before=freeze(FROZEN,()=>m.coeMeasured());
+  assert.equal(before.snapshot_date,SYD);assert.equal(before.centres.length,4);assert.equal(before.group.places,400);
+  // Night 2: OWNA refuses the pull for Beta, Gamma and Delta, so only Alpha's rows are written.
+  for(const table of ['coe_continuing','coe_booking_mix','coe_forward_horizon']){
+   const rows=db.prepare('SELECT * FROM '+table+" WHERE snapshot_date=? AND owna_id='a'").all(SYD);
+   assert.ok(rows.length,table+' has no Alpha rows to copy');
+   const cols=Object.keys(rows[0]);
+   const ins=db.prepare('INSERT INTO '+table+' ('+cols.join(',')+') VALUES ('+cols.map(()=>'?').join(',')+')');
+   for(const r of rows) ins.run(cols.map(c=>c==='snapshot_date'?NIGHT2:r[c]));
+  }
+  assert.equal(db.prepare('SELECT MAX(snapshot_date) d FROM coe_continuing').get().d,NIGHT2);
+  assert.equal(db.prepare('SELECT COUNT(DISTINCT owna_id) n FROM coe_continuing WHERE snapshot_date=?').get(NIGHT2).n,1);
+
+  // The page stays on the last night that covered every centre, unchanged, rather than following the
+  // newest snapshot_date down to one centre.
+  const after=freeze(FROZEN,()=>m.coeMeasured());
+  assert.equal(after.snapshot_date,SYD,'a 1-of-4 night must not replace the complete one');
+  assert.equal(after.partial,false);assert.equal(after.centres_expected,4);assert.equal(after.centres.length,4);
+  assert.deepEqual(after.centres_missing,[]);
+  assert.equal(after.group.places,400);assert.equal(after.group.mix_children,before.group.mix_children);
+  assert.deepEqual(after.months,before.months,'every measured month must be identical to the complete night');
+  const cookie=await login('viewer');
+  let html=await freeze(FROZEN,()=>page('/coe',cookie));
+  assert.match(html,/Measured continuing count as at 12 Sept? 2026/,'the badge must carry the complete night');
+  assert.match(html,/All measured centres/);
+  assert.doesNotMatch(html,/centres measured/,'nothing is partial while a complete night is available');
+
+  // Now no night covers every centre: Delta's rows are gone from the complete night too, so the newest
+  // partial one is all there is. It may still be shown — but never as the group.
+  db.prepare("DELETE FROM coe_continuing WHERE snapshot_date=? AND owna_id='d'").run(SYD);
+  const part=freeze(FROZEN,()=>m.coeMeasured());
+  assert.equal(part.snapshot_date,NIGHT2);
+  assert.equal(part.partial,true);assert.equal(part.centres_expected,4);assert.equal(part.centres.length,1);
+  // Ordered by centre name, as the page lists them: Beta, Delta, Gamma.
+  assert.deepEqual(part.centres_missing.map(c=>[c.owna_id,c.last_measured]),[['b',SYD],['d',null],['c',SYD]]);
+  assert.equal(part.group.places,100);                           // a quarter of the group's licensed places…
+  const feb=part.months.find(x=>x.month==='2027-02');
+  assert.equal(feb.centres_measured,1);assert.equal(feb.enrolled,4); // …and a quarter of the children
+
+  html=await freeze(FROZEN,()=>page('/coe',cookie));
+  assert.match(html,/Measured continuing count as at 13 Sept? 2026 · 1 of 4 centres measured/);
+  assert.match(html,/Those counts cover 1 of 4 centres measured, not the whole group/,'limit 1 must not state a quarter of the group as fact');
+  assert.doesNotMatch(html,/All measured centres/,'the group row must name its coverage instead');
+  assert.match(html,/did not reach every centre/);
+  assert.match(html,/Beta last measured 12 Sept? 2026/);
+  assert.match(html,/Gamma last measured 12 Sept? 2026/);
+  assert.match(html,/Delta never measured/);
+  assert.ok((html.match(/1 of 4 centres measured/g)||[]).length>=4,'the coverage must be stated wherever the measured figures are printed');
+  assert.match(html,/Month by month/);                           // the run-rate half is untouched
+  for(const bad of ['Fixture Child','2022-04-05']) assert.ok(!html.includes(bad),'/coe printed '+bad);
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

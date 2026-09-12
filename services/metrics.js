@@ -1964,8 +1964,29 @@ function coeOutlook() {
 // at face value, so months its roll does not reach are marked beyond_horizon and reported as "not measurable",
 // never as leavers. Those centre-months are also kept out of the group totals, which say how many centres
 // they cover.
+
+// A snapshot night that fails for some centres — or that OWNA reports no children for — still writes rows
+// for the ones it reached (services/snapshot.js runCoeSnapshot counts them and carries on), so the newest
+// snapshot_date can cover a fraction of the group. Taking MAX(snapshot_date) blindly let a 1-of-4 night
+// replace a complete one and shrink every measured figure on the page with no caveat at all. Prefer the
+// most recent night that covered every operating centre; fall back to the newest partial night, which the
+// page must then label "n of m centres measured" rather than report as the whole group.
+function coeSnapshotDate(meta) {
+  if (meta.length) {
+    const marks = meta.map(() => "?").join(",");
+    const full = db.prepare(
+      `SELECT snapshot_date AS d FROM coe_continuing WHERE owna_id IN (${marks})
+        GROUP BY snapshot_date HAVING COUNT(DISTINCT owna_id) = ? ORDER BY snapshot_date DESC LIMIT 1`
+    ).get(...meta.map((c) => c.owna_id), meta.length);
+    if (full && full.d) return full.d;
+  }
+  return (db.prepare("SELECT MAX(snapshot_date) AS d FROM coe_continuing").get() || {}).d || null;
+}
+
 function coeMeasured(keys = coeMonthKeys()) {
-  const date = (db.prepare("SELECT MAX(snapshot_date) AS d FROM coe_continuing").get() || {}).d;
+  // Read the operating centres first: they decide WHICH night to read, not just which rows to keep.
+  const meta = db.prepare("SELECT owna_id, name, capacity FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+  const date = coeSnapshotDate(meta);
   if (!date) return null;
   const cont = db.prepare("SELECT * FROM coe_continuing WHERE snapshot_date = ? ORDER BY owna_id, month").all(date);
   if (!cont.length) return null;
@@ -1974,7 +1995,6 @@ function coeMeasured(keys = coeMonthKeys()) {
   const byId = (rows) => rows.reduce((a, r) => { (a[r.owna_id] = a[r.owna_id] || []).push(r); return a; }, {});
   const contBy = byId(cont), mixBy = byId(mixRows);
   const horizonBy = horizons.reduce((a, r) => { a[r.owna_id] = r; return a; }, {});
-  const meta = db.prepare("SELECT owna_id, name, capacity FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
 
   const centres = meta.filter((c) => contBy[c.owna_id]).map((c) => {
     const h = horizonBy[c.owna_id] || {};
@@ -2026,7 +2046,13 @@ function coeMeasured(keys = coeMonthKeys()) {
   const mixChildDays = mix.reduce((a, b) => a + b.child_days, 0);
   const places = centres.reduce((a, c) => a + c.places, 0);
 
+  // The centres this night did NOT reach, with the night each was last measured on, so the page can say
+  // "3 of 4 centres measured, Alpha last measured 12 Sep" instead of reporting a fraction as the whole.
+  const missing = meta.filter((c) => !contBy[c.owna_id]).map((c) => ({ owna_id: c.owna_id, name: c.name,
+    last_measured: (db.prepare("SELECT MAX(snapshot_date) AS d FROM coe_continuing WHERE owna_id = ?").get(c.owna_id) || {}).d || null }));
+
   return { snapshot_date: date, months,
+    centres_expected: meta.length, centres_missing: missing, partial: missing.length > 0,
     group: { places, months, mix, mix_children: mixChildren, mix_child_days: mixChildDays,
       avg_days_per_child: mixChildren ? Math.round(mixChildDays / mixChildren * 100) / 100 : 0,
       places_filled_pct: pct(mixChildren, places), days_filled_pct: pct(mixChildDays, places * 5) },

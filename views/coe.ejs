@@ -21,13 +21,18 @@
   const ms = coe.measured;
   const mi = ms ? ms.months.findIndex((x) => x.month === am.month) : -1;
   const mm = mi >= 0 ? ms.months[mi] : null;
+  // A snapshot night that failed for some centres covers only the ones it reached. Every measured figure
+  // below is then a part of the group, not the group, and has to say so wherever it is printed.
+  const msPartial = !!(ms && ms.partial);
+  const msCover = ms ? ms.centres.length + ' of ' + ms.centres_expected + ' centres measured' : '';
+  const msMissing = ms ? (ms.centres_missing || []).map((c) => shortName(c.name) + (c.last_measured ? ' last measured ' + dLong(c.last_measured) : ' never measured')).join(', ') : '';
   const mixBand = (o, d) => (o.mix.find((x) => x.days_per_week === d) || { children: 0, child_days: 0 });
 %>
 
 <div class="page-head">
   <div>
     <h1>Continuation of Enrolment
-      <% if (ms) { %><span class="badge">Measured continuing count as at <%= dLong(ms.snapshot_date) %></span>
+      <% if (ms) { %><span class="badge<%= msPartial ? ' warn' : '' %>">Measured continuing count as at <%= dLong(ms.snapshot_date) %><%= msPartial ? ' · ' + msCover : '' %></span>
       <% } else { %><span class="badge warn">First release — continuing count and booking mix follow</span><% } %>
     </h1>
     <p class="sub">The 2027 campaign view · <%= mLong(coe.window.first) %> – <%= mLong(coe.window.last) %> · child-days booked against child-days available, per centre · counts only, no child, family or staff names</p>
@@ -38,7 +43,7 @@
   <h2 style="margin-top:0;">Read these three limits before you read the numbers</h2>
   <ol class="coe-limits">
     <% if (mm) { %>
-    <li><strong>The run rate assumes every family without a finish date continues, so it is a ceiling — the measured count beside it does not.</strong> Nobody has told us they are staying, so the run rate only counts who has not told us they are leaving. As at <%= dLong(ms.snapshot_date) %>, of the <%= fmt(mm.enrolled) %> children enrolled today, <strong><%= fmt(mm.continuing) %> hold bookings that reach <%= mLong(am.month) %></strong>, <%= fmt(mm.not_confirmed) %> have none that far out yet and <%= fmt(mm.leaving) %> have a finish date before it. Read the percentages in this section as the best case and the measured count below as what is actually booked.</li>
+    <li><strong>The run rate assumes every family without a finish date continues, so it is a ceiling — the measured count beside it does not.</strong> Nobody has told us they are staying, so the run rate only counts who has not told us they are leaving. As at <%= dLong(ms.snapshot_date) %><%= msPartial ? ' (' + msCover + ')' : '' %>, of the <%= fmt(mm.enrolled) %> children enrolled today<%= msPartial ? ' at the measured centres' : '' %>, <strong><%= fmt(mm.continuing) %> hold bookings that reach <%= mLong(am.month) %></strong>, <%= fmt(mm.not_confirmed) %> have none that far out yet and <%= fmt(mm.leaving) %> have a finish date before it. Read the percentages in this section as the best case and the measured count below as what is actually booked.<% if (msPartial) { %> <strong>Those counts cover <%= msCover %>, not the whole group — <%= msMissing %>.</strong> No night has yet reached every centre, and the run rate above still covers all of them, so the two halves of this page do not add up to the same group of children.<% } %></li>
     <% } else { %>
     <li><strong>The run rate assumes every family without a finish date continues, so it is a ceiling.</strong> Nobody has told us they are staying — we have only counted who has not told us they are leaving. The measured per-child continuing count starts accumulating from the first nightly run (2:15am Sydney, or on demand with <code>npm run coe-snapshot</code>) and appears on this page from then on; until then treat every percentage as the best case.</li>
     <% } %>
@@ -117,7 +122,7 @@
   <h2 style="margin-top:0;">The measured continuing count <span class="muted" style="font-weight:400;font-size:13px;">· counted from the bookings themselves, not from the run rate</span></h2>
   <p class="sub" style="margin-bottom:14px;">Of the children enrolled today, how many hold bookings that reach into each campaign month. <strong>Continuing</strong> holds at least one booked day in the month. <strong>Not yet confirmed</strong> has none that far out and no finish date — that is the campaign's working list, not a prediction that they leave. <strong>Leaving</strong> has a finish date before the month starts. Counts of children, taken from the snapshot of <%= dLong(ms.snapshot_date) %>.</p>
   <div class="grid kpis" style="margin-bottom:18px;">
-    <div class="card stat"><div class="n"><%= fmt(mm.continuing) %></div><div class="l">Children continuing into <%= mLong(am.month) %><span class="cap"><%= mm.continuing_pct %>% of the <%= fmt(mm.enrolled) %> enrolled today<%= mm.centres_beyond ? ' · ' + mm.centres_beyond + ' centre(s) excluded, bookings stop earlier' : '' %></span></div></div>
+    <div class="card stat"><div class="n"><%= fmt(mm.continuing) %></div><div class="l">Children continuing into <%= mLong(am.month) %><span class="cap"><%= mm.continuing_pct %>% of the <%= fmt(mm.enrolled) %> enrolled today<%= msPartial ? ' · ' + msCover : '' %><%= mm.centres_beyond ? ' · ' + mm.centres_beyond + ' centre(s) excluded, bookings stop earlier' : '' %></span></div></div>
     <div class="card stat"><div class="n warn-text"><%= fmt(mm.not_confirmed) %></div><div class="l">Not yet confirmed<span class="cap">no bookings recorded that far out and no finish date · worth about <%= fmt(mm.not_confirmed_days) %> child-days at their own booking pattern</span></div></div>
     <div class="card stat"><div class="n bad-text"><%= fmt(mm.leaving) %></div><div class="l">Leaving before <%= mLong(am.month) %><span class="cap">finish date already set in OWNA · <%= fmt(mm.leaving_days) %> child-days at their own pattern, not the centre average</span></div></div>
     <div class="card stat"><div class="n"><%= fmt(mm.continuing_days) %></div><div class="l">Child-days already booked in <%= mLong(am.month) %><span class="cap">of <%= fmt(mm.available_days) %> available · the run rate projects <%= fmt(ga.projected_days) %></span></div></div>
@@ -146,7 +151,7 @@
     </tbody>
     <tfoot>
       <tr class="total-row">
-        <td>All measured centres</td>
+        <td><%= msPartial ? msCover : 'All measured centres' %></td>
         <td class="num"><%= fmt(ms.months[0] ? ms.months[0].enrolled : 0) %></td>
         <% ms.months.forEach(function(x){ %>
           <td class="num" title="<%= x.continuing %> continuing · <%= x.not_confirmed %> not yet confirmed · <%= x.leaving %> leaving"><strong><%= fmt(x.continuing) %></strong><br><span class="muted" style="font-size:11.5px;"><%= x.continuing_pct %>%<%= x.centres_beyond ? ' · ' + x.centres_measured + ' of ' + (x.centres_measured + x.centres_beyond) : '' %></span></td>
@@ -154,6 +159,11 @@
       </tr>
     </tfoot>
   </table></div>
+  <% if (msPartial) { %>
+    <p class="footnote" style="border-left:3px solid var(--warn);padding-left:10px;">
+      <strong>This is <%= msCover %> — <%= msMissing %>.</strong> The snapshot of <%= dLong(ms.snapshot_date) %> did not reach every centre (OWNA refused the pull, or returned no children), and no earlier night covers them all either, so every measured figure in this section and the booking mix below — the enrolled count, the continuing count, the child-days and the licensed places they are measured against — is the sum of the centres above and no others. It is not a fall in enrolments. The run rate and the projection higher up the page are unaffected: they come from the nightly occupancy pull, not from this one.
+    </p>
+  <% } %>
   <% ms.stops.forEach(function(c){ %>
     <p class="footnote" style="border-left:3px solid var(--warn);padding-left:10px;">
       <strong><%= shortName(c.name) %>: its forward bookings stop on <%= dLong(c.last_booking_date) %></strong><%= c.stops_together ? ' — ' + fmt(c.horizon_children) + ' of its ' + fmt(c.enrolled) + ' children have their last booking in that final week' : '' %>. That is how the centre sets recurring bookings in OWNA, not <%= fmt(c.enrolled) %> families leaving: OWNA rolls recurring bookings forward indefinitely for most centres, and a centre that ends them on a fixed date has nothing to count after it. Months its bookings do not cover — including one it stops part-way into — are shown as “—”, are left out of the group row, and stay on the run-rate projection until the centre director confirms how the bookings are set (outstanding item 7).
@@ -167,7 +177,7 @@
   <p class="sub" style="margin-bottom:14px;">A child on three days a week fills one place but only three fifths of that place's week. This is why places filled and days filled are different numbers, and why the second one is the one the campaign has to move. Measured over <%= dLong(ms.centres[0].week.from) %> – <%= dLong(ms.centres[0].week.to) %>.</p>
   <div class="two-col" style="margin-bottom:18px;">
     <div>
-      <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);">All operating centres <span class="muted" style="font-weight:400;">· <%= fmt(ms.group.mix_children) %> children, <%= fmt(ms.group.mix_child_days) %> child-days a week</span></h3>
+      <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);"><%= msPartial ? msCover : 'All operating centres' %> <span class="muted" style="font-weight:400;">· <%= fmt(ms.group.mix_children) %> children, <%= fmt(ms.group.mix_child_days) %> child-days a week</span></h3>
       <% var gmax = Math.max.apply(null, ms.group.mix.map(function(b){ return b.children; }).concat([1])); %>
       <div class="coe-mix">
         <% ms.group.mix.forEach(function(b){ %><div style="height:<%= Math.round(b.children / gmax * 100) %>%;" title="<%= b.children %> children booked <%= b.days_per_week %> day<%= b.days_per_week === 1 ? '' : 's' %> a week"></div><% }); %>
@@ -206,7 +216,7 @@
     </tbody>
     <tfoot>
       <tr class="total-row">
-        <td>All operating centres</td>
+        <td><%= msPartial ? msCover : 'All operating centres' %></td>
         <td class="num"><%= fmt(ms.group.places) %></td>
         <td class="num"><%= fmt(ms.group.mix_children) %></td>
         <% ms.group.mix.forEach(function(b){ %><td class="num"><%= fmt(b.children) %><br><span class="muted" style="font-size:11.5px;"><%= fmt(b.child_days) %> days</span></td><% }); %>
