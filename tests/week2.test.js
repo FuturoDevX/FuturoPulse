@@ -325,7 +325,12 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.match(html,/The measured continuing count/);
   assert.match(html,/Booking mix/);
   assert.match(html,/Not yet confirmed/);
-  assert.match(html,/Places filled against days filled/);
+  assert.match(html,/The roll against the week/);
+  // Children share a place across the week, so children ÷ places is a ratio above 1, never a
+  // percentage of places "filled" — that phrasing read as a licence breach to anyone senior.
+  assert.match(html,/children<\/strong> share the [\d,]+ licensed places/);
+  assert.match(html,/Children per place/);
+  assert.doesNotMatch(html,/places (are )?filled|Places filled|of the [\d,]+ licensed places are held/i);
   assert.doesNotMatch(html,/no snapshot of forward bookings has been taken/i);
   // Limit 1 now carries the measured figures instead of promising them.
   assert.match(html,/the measured count beside it does not/);

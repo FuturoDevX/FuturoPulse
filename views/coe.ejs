@@ -174,7 +174,7 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Booking mix <span class="muted" style="font-weight:400;font-size:13px;">· how many days a week each family is booked, and what that does to days filled</span></h2>
-  <p class="sub" style="margin-bottom:14px;">A child on three days a week fills one place but only three fifths of that place's week. This is why places filled and days filled are different numbers, and why the second one is the one the campaign has to move. Measured over <%= dLong(ms.centres[0].week.from) %> – <%= dLong(ms.centres[0].week.to) %>.</p>
+  <p class="sub" style="margin-bottom:14px;">A child on three days a week fills a place on three days and leaves it free on two. This is why the number of children on the roll and the share of the week actually filled are different numbers, and why the second one is the one the campaign has to move. Measured over <%= dLong(ms.centres[0].week.from) %> – <%= dLong(ms.centres[0].week.to) %>.</p>
   <div class="two-col" style="margin-bottom:18px;">
     <div>
       <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);"><%= msPartial ? msCover : 'All operating centres' %> <span class="muted" style="font-weight:400;">· <%= fmt(ms.group.mix_children) %> children, <%= fmt(ms.group.mix_child_days) %> child-days a week</span></h3>
@@ -187,8 +187,8 @@
       </div>
     </div>
     <div>
-      <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);">Places filled against days filled</h3>
-      <p style="font-size:13px;margin:0 0 8px;"><strong><%= ms.group.places_filled_pct %>%</strong> of the <%= fmt(ms.group.places) %> licensed places are held by a child, but those children book <strong><%= fmt(ms.group.mix_child_days) %></strong> of the <%= fmt(ms.group.places * 5) %> child-days a week those places could carry — <strong class="<%= tone(ms.group.days_filled_pct) + '-text' %>"><%= ms.group.days_filled_pct %>%</strong> of the week.</p>
+      <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);">The roll against the week</h3>
+      <p style="font-size:13px;margin:0 0 8px;"><strong><%= fmt(ms.group.mix_children) %> children</strong> share the <%= fmt(ms.group.places) %> licensed places, because most attend part-time — <strong><%= (ms.group.places_filled_pct / 100).toFixed(2) %></strong> children to a place. Together they book <strong><%= fmt(ms.group.mix_child_days) %></strong> of the <%= fmt(ms.group.places * 5) %> child-days a week those places could carry — <strong class="<%= tone(ms.group.days_filled_pct) + '-text' %>"><%= ms.group.days_filled_pct %>%</strong> of the week.</p>
       <p style="font-size:13px;margin:0;">The group averages <strong><%= ms.group.avg_days_per_child.toFixed(2) %> days per child per week</strong>. Every extra day a week taken by an existing family is worth as much as <%= ms.group.avg_days_per_child >= 1 ? (1 / ms.group.avg_days_per_child).toFixed(2) : '—' %> of a new enrolment, and costs no marketing.</p>
     </div>
   </div>
@@ -197,7 +197,7 @@
       <tr>
         <th>Centre</th><th class="num">Places</th><th class="num">Children</th>
         <% [1,2,3,4,5].forEach(function(d){ %><th class="num"><%= d %> day<%= d === 1 ? '' : 's' %></th><% }); %>
-        <th class="num">Child-days / week</th><th class="num">Avg days</th><th class="num">Places filled</th><th class="num">Days filled</th>
+        <th class="num">Child-days / week</th><th class="num">Avg days</th><th class="num">Children per place</th><th class="num">Days filled</th>
       </tr>
     </thead>
     <tbody>
@@ -209,7 +209,7 @@
           <% [1,2,3,4,5].forEach(function(d){ var b = mixBand(c, d); %><td class="num"><%= fmt(b.children) %><br><span class="muted" style="font-size:11.5px;"><%= fmt(b.child_days) %> days</span></td><% }); %>
           <td class="num"><strong><%= fmt(c.mix_child_days) %></strong></td>
           <td class="num"><%= c.avg_days_per_child.toFixed(2) %></td>
-          <td class="num"><%= c.places_filled_pct %>%</td>
+          <td class="num"><%= (c.places_filled_pct / 100).toFixed(2) %></td>
           <td class="num coe-pct <%= tone(c.days_filled_pct) %>"><%= c.days_filled_pct %>%</td>
         </tr>
       <% }); %>
@@ -222,12 +222,12 @@
         <% ms.group.mix.forEach(function(b){ %><td class="num"><%= fmt(b.children) %><br><span class="muted" style="font-size:11.5px;"><%= fmt(b.child_days) %> days</span></td><% }); %>
         <td class="num"><%= fmt(ms.group.mix_child_days) %></td>
         <td class="num"><%= ms.group.avg_days_per_child.toFixed(2) %></td>
-        <td class="num"><%= ms.group.places_filled_pct %>%</td>
+        <td class="num"><%= (ms.group.places_filled_pct / 100).toFixed(2) %></td>
         <td class="num coe-pct <%= tone(ms.group.days_filled_pct) %>"><%= ms.group.days_filled_pct %>%</td>
       </tr>
     </tfoot>
   </table></div>
-  <p class="footnote" style="margin-bottom:0;"><strong>Days per week</strong> is each child's own distinct booked days in the reference week, so it is what OWNA holds rather than what a family once asked for. A family booked fortnightly counts at the days of that week only. <strong>Places filled</strong> = children ÷ licensed places; <strong>days filled</strong> = child-days a week ÷ (licensed places × 5). Where a centre books above its licensed places, both read over 100% — that is known data problem 2, not a calculation fault.</p>
+  <p class="footnote" style="margin-bottom:0;"><strong>Days per week</strong> is each child's own distinct booked days in the reference week, so it is what OWNA holds rather than what a family once asked for. A family booked fortnightly counts at the days of that week only. <strong>Children per place</strong> = children on the roll ÷ licensed places. It is above 1 wherever families attend part-time and share a place across the week, which is normal and not a breach; a centre is over its licence only if more children attend on the same day than it is licensed for. <strong>Days filled</strong> = child-days a week ÷ (licensed places × 5), and it is the number the campaign has to move.</p>
 </div>
 <% } else { %>
 <div class="card" style="border-left:3px solid var(--muted);">
@@ -369,7 +369,7 @@
     <p><strong>Why the projection above does not simply add up OWNA's forward bookings:</strong> recurring bookings are rolled forward different distances for each family, so a raw forward month reads as demand when it is really an artefact of how far ahead the roll has run. The run-rate model avoids that. The measured count below it reports the same bookings honestly instead: it says how many children are booked into a month and how many are not yet confirmed, rather than treating the gap as demand that has gone.</p>
     <% if (ms) { %>
     <p><strong>Measured continuing count</strong> = of the children enrolled today at a centre, how many hold at least one booked operating day in the month. <strong>Enrolled today</strong> is the children with a booking in the reference week (the Mon–Fri week with the most children booked in the forward pull, so a holiday week cannot read as a collapse). <strong>Not yet confirmed</strong> holds no booking in that month and has no finish date; <strong>leaving</strong> has a finish date before the month starts. The child-days for those two groups are each child's own days per week scaled to the month's operating days — not the centre average the run-rate model uses.</p>
-    <p><strong>Booking mix</strong> = how many children are booked 1, 2, 3, 4 or 5 days a week in that same reference week, and the child-days a week each band represents. It is what separates <em>places filled</em> (children ÷ licensed places) from <em>days filled</em> (child-days a week ÷ places × 5).</p>
+    <p><strong>Booking mix</strong> = how many children are booked 1, 2, 3, 4 or 5 days a week in that same reference week, and the child-days a week each band represents. It is what separates <em>children per place</em> (children on the roll ÷ licensed places, normally above 1 because part-time families share a place) from <em>days filled</em> (child-days a week ÷ places × 5).</p>
     <p><strong>A centre whose forward bookings stop dead on one date</strong> has not lost its families: OWNA rolls recurring bookings indefinitely for most centres, and a centre that ends them on a fixed date (31 December, say) simply has nothing to count past it. Months after that date are shown as “—”, excluded from the group row, and left to the run-rate projection. Outstanding item 7 asks the centre directors which way each centre sets them.</p>
     <p><strong>Stored as counts only.</strong> The nightly snapshot writes numbers — children per month, children per band, child-days — and no name, date of birth or child id, not even a hashed one. OWNA stays the record of who the children are.</p>
     <% } else { %>
