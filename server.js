@@ -1,10 +1,10 @@
 require("dotenv").config();
 const path = require("path");
 const express = require("express");
-const session = require("express-session");
 const cron = require("node-cron");
 
 const { requireLogin } = require("./middleware/auth");
+const { sessionMiddleware } = require("./middleware/session");
 const { runSnapshot, errSummary } = require("./services/snapshot");
 
 const app = express();
@@ -24,12 +24,9 @@ app.use(express.json({ limit: "256kb" })); // for the "Ask your data" fetch API
 app.use(express.static(path.join(__dirname, "public")));
 
 if (isProd) app.set("trust proxy", 1);
-app.use(session({
-  secret: process.env.SESSION_SECRET || "dev-secret",
-  resave: false,
-  saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: "lax", secure: isProd, maxAge: 1000 * 60 * 60 * 8 },
-}));
+// Sessions are kept in the app's own SQLite file, so a deploy or restart no longer signs everyone out.
+// Cookie flags, the expiry and the store's pruning all live in middleware/session.js.
+app.use(sessionMiddleware({ secure: isProd }));
 
 // Expose a flash-style message + helpers to all views.
 app.use((req, res, next) => {

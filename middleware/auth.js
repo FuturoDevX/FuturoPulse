@@ -1,4 +1,13 @@
+const crypto = require("crypto");
 const db = require("../db/db");
+
+// A session is invalidated when the account's password changes or the account goes. The session carries
+// a fingerprint of the stored password hash rather than the hash itself: sessions are now rows on disk
+// (middleware/session.js), and the password verifier should not be copied into a second table to do a
+// job a one-way digest does just as well. Same comparison, same behaviour.
+function authVersion(passwordHash) {
+  return crypto.createHash("sha256").update(String(passwordHash)).digest("hex").slice(0, 32);
+}
 
 // Roles:
 //   viewer       read-only, all centres, AGGREGATES ONLY (no named children/families/staff) — the demo/trial role
@@ -13,7 +22,7 @@ function requireLogin(req, res, next) {
   if (!req.session.user) return res.redirect("/login");
   const current = db.prepare("SELECT id, email, name, role, location_id, password_hash FROM users WHERE id = ?").get(req.session.user.id);
   if (!current || ![...SEE_ALL_ROLES, "centre"].includes(current.role) ||
-      (req.session.authVersion && req.session.authVersion !== current.password_hash)) {
+      (req.session.authVersion && req.session.authVersion !== authVersion(current.password_hash))) {
     return req.session.destroy(() => res.redirect("/login"));
   }
   if (current.role === "centre" && (!current.location_id || !db.prepare("SELECT 1 FROM centres WHERE owna_id = ?").get(current.location_id))) {
@@ -21,7 +30,7 @@ function requireLogin(req, res, next) {
   }
   const { password_hash, ...user } = current;
   req.session.user = user;
-  req.session.authVersion = password_hash;
+  req.session.authVersion = authVersion(password_hash);
   res.locals.user = user;
   res.locals.scopedOwnaId = scopedOwnaId(req); // null = all centres
   res.locals.canSeeIdentified = canSeeIdentified(req);
@@ -67,4 +76,4 @@ function blockScoped(req, res, next) {
   next();
 }
 
-module.exports = { requireLogin, requireAdmin, requireAdminOrOps, requireIdentified, canSeeIdentified, scopedOwnaId, blockScoped, SEE_ALL_ROLES, WRITE_ROLES };
+module.exports = { requireLogin, requireAdmin, requireAdminOrOps, requireIdentified, canSeeIdentified, scopedOwnaId, blockScoped, authVersion, SEE_ALL_ROLES, WRITE_ROLES };

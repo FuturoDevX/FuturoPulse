@@ -363,5 +363,120 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
    }
   assert.deepEqual(bad,[],'these lines still derive a calendar date from UTC: '+bad.join(', '));
  });
+
+ // ===== Batch C: a session store that survives a restart =====
+ // express-session's MemoryStore signed every user out on every deploy and grew without bound. Sessions
+ // are now rows in this same SQLite file (middleware/session.js), so what follows is about a login
+ // outliving the process that minted it — without outliving its expiry, a password reset or a deletion.
+ const ROOT=path.join(__dirname,'..');
+ const {spawnSync}=require('child_process');
+ const sessionMod=require('../middleware/session'), authMod=require('../middleware/auth');
+ db.prepare('INSERT INTO users(email,name,password_hash,role) VALUES(?,?,?,?)').run('restart@example.test','Restart Fixture',bcrypt.hashSync(pass,4),'ops_manager');
+ db.prepare('INSERT INTO users(email,name,password_hash,role) VALUES(?,?,?,?)').run('deleted@example.test','Deleted Fixture',bcrypt.hashSync(pass,4),'exec');
+ const loginAs=async(email,at)=>{const r=await fetch((at||base)+'/login',{method:'POST',body:new URLSearchParams({email,password:pass}),redirect:'manual'});assert.equal(r.status,302);return r.headers.get('set-cookie');};
+ const cookieOf=(setCookie)=>setCookie.split(';')[0];
+ const sidOf=(setCookie)=>{const v=cookieOf(setCookie);return decodeURIComponent(v.slice(v.indexOf('=')+1)).slice(2).split('.')[0];}; // "s:<sid>.<signature>"
+ const get=(at,url,cookie)=>fetch(at+url,{headers:{cookie},redirect:'manual'});
+ const rows=(sid)=>db.prepare('SELECT COUNT(*) n FROM sessions WHERE sid=?').get(sid).n;
+ // Rebuild the app from disk the way a restart does: every file of this project is dropped from the
+ // require cache, so server.js, db/db.js and the session store are all constructed afresh against the
+ // same DB_PATH. restore() puts the original modules back, so the tests keep the app they started with.
+ function restartApp(){
+  const inProject=(k)=>k.startsWith(ROOT+path.sep)&&!k.includes(path.sep+'node_modules'+path.sep)&&k!==__filename;
+  const saved=new Map();
+  for(const k of Object.keys(require.cache)) if(inProject(k)){saved.set(k,require.cache[k]);delete require.cache[k];}
+  const fresh={app:require('../server'),db:require('../db/db'),store:require('../middleware/session').store};
+  fresh.restore=()=>{
+   for(const k of Object.keys(require.cache)) if(inProject(k)&&!saved.has(k)) delete require.cache[k];
+   for(const [k,v] of saved) require.cache[k]=v;
+  };
+  return fresh;
+ }
+
+ await t.test('a login is a row in the database, and that row is not a password',async()=>{
+  const sc=await loginAs('restart@example.test'), sid=sidOf(sc);
+  // The cookie keeps every property it had before the store went in, and carries the expiry.
+  assert.match(sc,/HttpOnly/i);assert.match(sc,/SameSite=Lax/i);assert.doesNotMatch(sc,/Secure/i); // not production here
+  assert.equal(sessionMod.MAX_AGE_MS,1000*60*60*8);
+  const cookieMs=new Date(sc.match(/Expires=([^;]+)/)[1]).getTime()-Date.now();
+  assert.ok(cookieMs>1000*60*60*7.5&&cookieMs<=1000*60*60*8,'the cookie should expire about eight hours out, was '+cookieMs+'ms');
+  const row=db.prepare('SELECT sess,expire FROM sessions WHERE sid=?').get(sid);
+  assert.ok(row,'the login belongs in SQLite, not in the process');
+  const sess=JSON.parse(row.sess);
+  assert.equal(sess.user.email,'restart@example.test');assert.equal(sess.user.role,'ops_manager');
+  // The recheck token is a digest of the password hash, so the verifier itself never reaches a second table.
+  assert.doesNotMatch(row.sess,/\$2[aby]\$/,'no bcrypt hash may be written into the sessions table');
+  assert.equal(sess.authVersion,authMod.authVersion(db.prepare('SELECT password_hash h FROM users WHERE email=?').get('restart@example.test').h));
+  // Every row has an expiry, which is what stops the table growing for ever.
+  const ms=new Date(row.expire).getTime()-Date.now();
+  assert.ok(ms>1000*60*60*7.5&&ms<=1000*60*60*8,'expire should be about eight hours out, was '+ms+'ms');
+  // The eight hours run from the LAST request, not from login: wind the row back and watch a request push it out again.
+  db.prepare('UPDATE sessions SET expire=? WHERE sid=?').run(new Date(Date.now()+1000*60*60).toISOString(),sid);
+  assert.equal((await get(base,'/',cookieOf(sc))).status,200);
+  const pushed=new Date(db.prepare('SELECT expire FROM sessions WHERE sid=?').get(sid).expire).getTime()-Date.now();
+  assert.ok(pushed>1000*60*60*7.5,'a request should push the expiry back out to eight hours, was '+pushed+'ms');
+ });
+
+ await t.test('a logged-in session survives a restart, and an invalidated one is still refused after one',async()=>{
+  const keep=cookieOf(await loginAs('restart@example.test'));
+  const doomedSc=await loginAs('deleted@example.test'), doomed=cookieOf(doomedSc), doomedSid=sidOf(doomedSc);
+  assert.equal((await get(base,'/',keep)).status,200);
+  const fresh=restartApp();
+  const s2=fresh.app.listen(0,'127.0.0.1');await new Promise(r=>s2.once('listening',r));
+  const b2='http://127.0.0.1:'+s2.address().port;
+  try{
+   assert.notEqual(fresh.db,db,'the restart opens its own connection to the same file');
+   assert.notEqual(fresh.store,sessionMod.store,'and builds its own store');
+   // The cookie was minted by a process that, as far as this instance is concerned, is gone.
+   const r1=await get(b2,'/',keep);
+   assert.equal(r1.status,200,'the session did not survive the restart');
+   assert.match(await r1.text(),/badge role-ops_manager/,'and it is still the same login');
+   // A cookie for a session that was never stored is not a login.
+   assert.equal((await get(b2,'/','connect.sid=s%3Anot-a-real-session.signature')).status,302);
+   // The authVersion recheck has to keep biting now that the session outlives the process.
+   db.prepare('UPDATE users SET password_hash=? WHERE email=?').run(bcrypt.hashSync('AnotherFixturePassword!',4),'restart@example.test');
+   assert.equal((await get(b2,'/',keep)).status,302,'a password reset must invalidate a session that survived a restart');
+   assert.equal((await get(b2,'/',doomed)).status,200);
+   db.prepare('DELETE FROM users WHERE email=?').run('deleted@example.test');
+   assert.equal((await get(b2,'/',doomed)).status,302,'a deleted account must invalidate its surviving session');
+   assert.equal(rows(doomedSid),0,'an invalidated session is destroyed, not merely refused');
+  } finally { fresh.store.stopPruning();await new Promise(r=>s2.close(r));fresh.db.close();fresh.restore(); }
+ });
+
+ await t.test('an expired session is refused, and the store sweeps it off disk',async()=>{
+  const sc=await loginAs('exec@example.test'), c=cookieOf(sc), sid=sidOf(sc);
+  assert.equal((await get(base,'/',c)).status,200);
+  db.prepare('UPDATE sessions SET expire=? WHERE sid=?').run(new Date(Date.now()-60*1000).toISOString(),sid);
+  assert.equal((await get(base,'/',c)).status,302,'an expired session is not a login');
+  assert.equal(rows(sid),1,'refused on read, but still on disk until the sweep');
+  sessionMod.store.clearExpiredSessions();
+  assert.equal(rows(sid),0,'expired rows must be pruned, or the table grows for ever');
+  const live=cookieOf(await loginAs('exec@example.test'));
+  sessionMod.store.clearExpiredSessions();
+  assert.equal((await get(base,'/',live)).status,200,'the sweep must leave live sessions alone');
+  // The sweep runs on its own, on a timer that must not hold a process open (see the spawn below).
+  assert.equal(sessionMod.PRUNE_INTERVAL_MS,1000*60*15);
+  assert.ok(sessionMod.store.pruneTimer,'the store should be sweeping on a timer');
+  assert.equal(sessionMod.store.pruneTimer.hasRef(),false,"the prune timer must be unref'd");
+ });
+
+ await t.test('logging out deletes the row, and the production start-up guards are unchanged',async()=>{
+  const sc=await loginAs('exec@example.test'), c=cookieOf(sc), sid=sidOf(sc);
+  assert.equal(rows(sid),1);
+  const out=await fetch(base+'/logout',{method:'POST',headers:{cookie:c,'content-type':'application/x-www-form-urlencoded'},body:'',redirect:'manual'});
+  assert.equal(out.status,302);
+  assert.equal(rows(sid),0,'logging out must delete the stored session');
+  assert.equal((await get(base,'/',c)).status,302);
+  // The cookie is only marked secure in production, and the placeholder-secret guard still refuses to start.
+  assert.match(fs.readFileSync(path.join(ROOT,'server.js'),'utf8'),/sessionMiddleware\(\{ secure: isProd \}\)/);
+  const env={...process.env,NODE_ENV:'production',DB_PATH:':memory:'};
+  const boot=(secret)=>spawnSync(process.execPath,['-e',"require('./server')"],{cwd:ROOT,env:{...env,SESSION_SECRET:secret},encoding:'utf8',timeout:30000});
+  const bad=boot('change-me');
+  assert.equal(bad.status,1);assert.match(bad.stderr,/SESSION_SECRET/);
+  // A real secret boots — and the process still exits, which is the proof that the prune timer is unref'd.
+  const good=boot('a-real-production-secret-value');
+  assert.equal(good.signal,null,'requiring the app in production must not hang');
+  assert.equal(good.status,0,good.stderr);
+ });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

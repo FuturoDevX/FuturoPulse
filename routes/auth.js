@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const db = require("../db/db");
+const { authVersion } = require("../middleware/auth");
 const router = express.Router();
 
 router.get("/login", (req, res) => {
@@ -17,7 +18,7 @@ router.post("/login", (req, res, next) => {
   req.session.regenerate((err) => {
     if (err) return next(err);
     req.session.user = { id: user.id, email: user.email, name: user.name, role: user.role, location_id: user.location_id };
-    req.session.authVersion = user.password_hash;
+    req.session.authVersion = authVersion(user.password_hash);
     req.session.save((err) => err ? next(err) : res.redirect("/"));
   });
 });

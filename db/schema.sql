@@ -398,3 +398,17 @@ CREATE TABLE IF NOT EXISTS source_sync (
   rows         INTEGER,             -- rows written by the last SUCCESSFUL run
   meta_json    TEXT                 -- small JSON kept from the last SUCCESSFUL run, e.g. {"weeks":16,"latest_period":"2026-09-06"}
 );
+
+-- ===== Logged-in sessions (express-session, see middleware/session.js) =====
+-- Kept here so the app survives a restart without signing everyone out. The store
+-- (better-sqlite3-session-store) creates this table itself with exactly this definition; it is written
+-- out here as well so the schema file stays the full picture of what this database holds.
+-- PRIVACY: a row is personal information under APP 11 — `sess` is the session JSON, which carries the
+-- signed-in user's id, email, name and role (never a password, and never a child or family). Rows expire
+-- eight hours after the last request and the store sweeps expired rows every fifteen minutes, so this
+-- table does not accumulate and needs no separate purge.
+CREATE TABLE IF NOT EXISTS sessions (
+  sid    TEXT NOT NULL PRIMARY KEY,
+  sess   JSON NOT NULL,             -- the serialised session; see the privacy note above
+  expire TEXT NOT NULL              -- ISO-8601 UTC instant; compared with datetime('now'), i.e. in UTC
+);
