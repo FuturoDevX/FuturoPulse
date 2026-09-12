@@ -330,9 +330,67 @@ CREATE TABLE IF NOT EXISTS ai_briefings (
   created_at  TEXT
 );
 
+-- ===== Continuation of Enrolment: the MEASURED continuing count and booking mix =====
+-- Counts only. The nightly step reads each centre's current children and their forward bookings from
+-- OWNA and writes nothing but numbers: no name, no date of birth, and no child id — not even a hashed
+-- one, because a per-child row is not needed to answer "how many are continuing". Child identity stays
+-- in OWNA, where the record belongs. Re-running a day overwrites that day's rows (the primary keys
+-- carry snapshot_date), so the step is safe to run by hand as well as at 2:15am.
+
+-- Per centre, per campaign month: the split of the children enrolled NOW into continuing (they hold
+-- bookings in that month), not yet confirmed (no bookings there, no finish date) and leaving (a finish
+-- date before the month), with the child-days each group represents.
+CREATE TABLE IF NOT EXISTS coe_continuing (
+  snapshot_date      TEXT NOT NULL,       -- Sydney date of the run
+  owna_id            TEXT NOT NULL,
+  month              TEXT NOT NULL,       -- YYYY-MM of the campaign window
+  enrolled           INTEGER NOT NULL DEFAULT 0,  -- children counted at this centre on the snapshot date
+  continuing         INTEGER NOT NULL DEFAULT 0,
+  not_confirmed      INTEGER NOT NULL DEFAULT 0,
+  leaving            INTEGER NOT NULL DEFAULT 0,
+  continuing_days    REAL NOT NULL DEFAULT 0,     -- booked child-days in the month (operating days only)
+  not_confirmed_days REAL NOT NULL DEFAULT 0,     -- what those children would be worth at their own pattern
+  leaving_days       REAL NOT NULL DEFAULT 0,     -- what the leavers take with them, at their own pattern
+  operating_days     INTEGER NOT NULL DEFAULT 0,  -- NSW operating days in the month, for the reader
+  beyond_horizon     INTEGER NOT NULL DEFAULT 0,  -- 1 = the centre's bookings do not reach this month at all
+  updated_at         TEXT,
+  PRIMARY KEY (snapshot_date, owna_id, month)
+);
+CREATE INDEX IF NOT EXISTS idx_coecont_month ON coe_continuing(month);
+
+-- Per centre, per snapshot date: how many children are booked 1, 2, 3, 4 or 5 days a week, and the
+-- child-days a week each band represents. This is what separates places filled from days filled.
+CREATE TABLE IF NOT EXISTS coe_booking_mix (
+  snapshot_date TEXT NOT NULL,
+  owna_id       TEXT NOT NULL,
+  days_per_week INTEGER NOT NULL,             -- 1..5
+  children      INTEGER NOT NULL DEFAULT 0,
+  child_days    REAL NOT NULL DEFAULT 0,      -- children × days_per_week, i.e. child-days a week
+  updated_at    TEXT,
+  PRIMARY KEY (snapshot_date, owna_id, days_per_week)
+);
+
+-- Per centre, per snapshot date: how far OWNA's recurring bookings actually run forward. OWNA rolls
+-- them indefinitely for most centres, but a centre that ends them on a fixed date (Heath Rd appears to
+-- stop at 31 December — outstanding.md item 7) would otherwise read as "every family is leaving" in
+-- every month after it. last_booking_date is where the roll stops; horizon_children is how many of the
+-- centre's children have their last booking on exactly that day.
+CREATE TABLE IF NOT EXISTS coe_forward_horizon (
+  snapshot_date     TEXT NOT NULL,
+  owna_id           TEXT NOT NULL,
+  enrolled          INTEGER NOT NULL DEFAULT 0,
+  week_from         TEXT,                     -- the reference week the booking mix was measured over
+  week_to           TEXT,
+  window_to         TEXT,                     -- last date the forward pull asked for
+  last_booking_date TEXT,                     -- latest forward booking found, or NULL if there are none
+  horizon_children  INTEGER NOT NULL DEFAULT 0,
+  updated_at        TEXT,
+  PRIMARY KEY (snapshot_date, owna_id)
+);
+
 -- ===== Per-source sync health: what the nightly snapshot last did for each upstream =====
 CREATE TABLE IF NOT EXISTS source_sync (
-  source       TEXT PRIMARY KEY,    -- owna | lineleader | eh_labour | exits | incidents | roster
+  source       TEXT PRIMARY KEY,    -- owna | lineleader | eh_labour | exits | incidents | roster | coe
   last_attempt TEXT,
   last_success TEXT,
   status       TEXT,                -- ok | error | skipped

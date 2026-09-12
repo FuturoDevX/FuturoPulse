@@ -172,6 +172,185 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.match(render,/key: TZ\n\s+value: Australia\/Sydney/);
  });
 
+ // ===== Batch B: the nightly COE snapshot — measured continuing count + booking mix =====
+ // Fixtures are inserted here, last, so no earlier batch is affected. The OWNA client is stubbed by
+ // replacing the methods on the shared `owna` object (services/snapshot.js destructured the same object
+ // at require time, so it sees these): no test ever calls the real API.
+ const COE_KIDS={
+  // Alpha: one family rolled forward to the end of the window, one that stops at 31 December, one
+  // leaving on 20 November (an OWNA local-midnight-in-UTC finish date), one booked only this month.
+  a:[['a-child-771','mo,tu,we','2026-09-14','2027-04-30',null],
+     ['a-child-772','th,fr','2026-09-14','2026-12-31',null],
+     ['a-child-773','mo,tu,we,th,fr','2026-09-14','2026-11-20','2026-11-19T13:00:00Z'],
+     ['a-child-774','mo','2026-09-14','2026-09-30',null]],
+  // Beta: every family's recurring bookings stop dead on 31 December — the Heath Rd pattern. All three
+  // are booked on a Thursday, so all three end on exactly that day.
+  b:[['b-child-881','th,fr','2026-09-14','2026-12-31',null],
+     ['b-child-882','tu,we,th','2026-09-14','2026-12-31',null],
+     ['b-child-883','mo,tu,we,th','2026-09-14','2026-12-31',null]],
+ };
+ const DOW={mo:1,tu:2,we:3,th:4,fr:5};
+ const coeDays=(csv,from,to)=>{const want=new Set(csv.split(',').map(d=>DOW[d]));return cal.operatingDayList(from,to).filter(d=>want.has(new Date(d+'T00:00:00Z').getUTCDay()));};
+ const COE_FIX={};
+ for(const [id,kids] of Object.entries(COE_KIDS)){
+  const children=kids.map(([cid,,,,finish])=>({id:cid,firstname:'Fixture',surname:'Child '+cid,dob:'2022-04-05T14:00:00Z',finishDate:finish,room:'Room 1'}));
+  const attendance=[];
+  for(const [cid,csv,from,to] of kids)
+   for(const d of coeDays(csv,from,to)) attendance.push({attendanceDate:d+'T00:00:00',childId:cid,child:'Fixture Child '+cid,room:'Room 1',attending:true,fee:110});
+  // Three rows the step must ignore: a repeat of a booking OWNA already returned, a booking on Christmas
+  // Day (OWNA keeps rows on public holidays), and one before today.
+  attendance.push({...attendance[0]});
+  attendance.push({attendanceDate:'2026-12-25T00:00:00',childId:kids[0][0],child:'Fixture Child',attending:false,fee:0});
+  attendance.push({attendanceDate:'2026-09-10T00:00:00',childId:kids[0][0],child:'Fixture Child',attending:true,fee:110});
+  COE_FIX[id]={children,attendance};
+ }
+ const ownaClient=require('../services/owna').owna;
+ ownaClient.listChildren=async(id)=>(COE_FIX[id]||{children:[]}).children;
+ ownaClient.attendance=async(id,from,to)=>(COE_FIX[id]||{attendance:[]}).attendance.filter(r=>r.attendanceDate.slice(0,10)>=String(from).slice(0,10)&&r.attendanceDate.slice(0,10)<=String(to).slice(0,10));
+ const MONTHS=['2026-11','2026-12','2027-01','2027-02','2027-03','2027-04'];
+ const OPDAYS={'2026-11':21,'2026-12':21,'2027-01':19,'2027-02':20,'2027-03':21,'2027-04':22};
+ const monthEnd=(mo)=>{const [y,m2]=mo.split('-').map(Number);return mo+'-'+new Date(Date.UTC(y,m2,0)).getUTCDate();};
+ const contRow=(owna,mo)=>db.prepare('SELECT * FROM coe_continuing WHERE snapshot_date=? AND owna_id=? AND month=?').get(SYD,owna,mo);
+
+ await t.test('the COE page works, and says so, before any snapshot has been taken',async()=>{
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM coe_continuing').get().n,0);
+  const cookie=await login('viewer');
+  const html=await freeze(FROZEN,()=>page('/coe',cookie));
+  assert.match(html,/no snapshot of forward bookings has been taken/i);
+  assert.match(html,/npm run coe-snapshot/);
+  assert.match(html,/measured per-child continuing count starts accumulating/i);
+  assert.doesNotMatch(html,/Measured continuing count as at/);   // the badge only appears once it exists
+  assert.match(html,/run rate assumes every family without a finish date continues/); // limit 1 still stands
+  assert.match(html,/Month by month/);                           // and the run-rate projection is untouched
+ });
+
+ await t.test('the nightly step splits the children enrolled now into continuing, not yet confirmed and leaving',async()=>{
+  const r=await freeze(FROZEN,()=>snap.runCoeSnapshot());
+  assert.equal(r.ok,true);assert.equal(r.snapshot_date,SYD);assert.equal(r.failed,0);assert.equal(r.attempts,2);
+  assert.equal(r.rows,12);assert.equal(r.mix_rows,10);assert.equal(r.window_to,'2027-04-30');
+  // Alpha, month by month. Nov: the leaver is still booked, so she is continuing; from December she is gone.
+  const nov=contRow('a','2026-11');
+  assert.equal(nov.enrolled,4);assert.equal(nov.operating_days,21);assert.equal(nov.beyond_horizon,0);
+  assert.equal(nov.continuing,3);assert.equal(nov.not_confirmed,1);assert.equal(nov.leaving,0);
+  // Booked child-days are counted from the bookings themselves, over operating days only.
+  const novDays=coeDays('mo,tu,we','2026-11-01','2026-11-30').length+coeDays('th,fr','2026-11-01','2026-11-30').length+coeDays('mo,tu,we,th,fr','2026-11-01','2026-11-20').length;
+  assert.equal(nov.continuing_days,novDays);
+  assert.equal(nov.not_confirmed_days,4.2);                    // the one-day family: 1 × 21/5
+  assert.equal(nov.leaving_days,0);
+  const dec=contRow('a','2026-12');
+  assert.equal(dec.continuing,2);assert.equal(dec.not_confirmed,1);assert.equal(dec.leaving,1);
+  assert.equal(dec.leaving_days,21);                           // her OWN five days a week × 21/5, not the centre average
+  assert.equal(dec.continuing_days,coeDays('mo,tu,we','2026-12-01','2026-12-31').length+coeDays('th,fr','2026-12-01','2026-12-31').length);
+  for(const mo of ['2027-01','2027-02','2027-03','2027-04']){
+   const x=contRow('a',mo);
+   assert.equal(x.continuing,1,mo);                            // only the family rolled forward to April
+   assert.equal(x.not_confirmed,2,mo);                         // the 31-December family joins the working list
+   assert.equal(x.leaving,1,mo);
+   assert.equal(x.not_confirmed_days,Math.round(3*(OPDAYS[mo]/5)*10)/10,mo); // 2 days + 1 day a week
+   assert.equal(x.beyond_horizon,0,mo);                        // Alpha's own bookings do reach these months
+  }
+  assert.deepEqual(MONTHS.map(mo=>contRow('a',mo).continuing_days>0),[true,true,true,true,true,true]);
+  // Public holidays, repeated rows and past bookings are all out: Christmas Day adds nothing to December.
+  assert.equal(dec.continuing_days,coeDays('mo,tu,we','2026-12-01','2026-12-31').length+coeDays('th,fr','2026-12-01','2026-12-31').length);
+ });
+
+ await t.test('a centre whose forward bookings stop dead on one date is reported as that, not as a collapse',()=>{
+  const h=db.prepare('SELECT * FROM coe_forward_horizon WHERE snapshot_date=? AND owna_id=?').get(SYD,'b');
+  assert.equal(h.last_booking_date,'2026-12-31');
+  assert.equal(h.enrolled,3);assert.equal(h.horizon_children,3); // every child stops on the same day
+  assert.equal(h.window_to,'2027-04-30');assert.equal(h.week_from,'2026-09-14');assert.equal(h.week_to,'2026-09-18');
+  for(const mo of ['2026-11','2026-12']){const x=contRow('b',mo);assert.equal(x.beyond_horizon,0,mo);assert.equal(x.continuing,3,mo);assert.equal(x.leaving,0,mo);}
+  for(const mo of ['2027-01','2027-02','2027-03','2027-04']){
+   const x=contRow('b',mo);
+   assert.equal(x.beyond_horizon,1,mo);
+   assert.equal(x.leaving,0,mo);                                // nobody has a finish date: they are NOT leaving
+   assert.equal(x.not_confirmed,3,mo);
+  }
+  // Alpha's own bookings run to April, so it is never marked beyond the horizon.
+  const ha=db.prepare('SELECT * FROM coe_forward_horizon WHERE snapshot_date=? AND owna_id=?').get(SYD,'a');
+  assert.equal(ha.last_booking_date,'2027-04-28');assert.equal(ha.enrolled,4); // its last family books Mon–Wed
+  const ms=freeze(FROZEN,()=>m.coeMeasured());
+  const beta=ms.centres.find(c=>c.owna_id==='b'), alpha=ms.centres.find(c=>c.owna_id==='a');
+  assert.equal(beta.stops_early,true);assert.equal(beta.stops_together,true);
+  assert.equal(alpha.stops_early,false);
+  assert.deepEqual(ms.stops.map(c=>c.owna_id),['b']);
+  // The group row for a month Beta cannot reach covers Alpha only, and says so.
+  const jan=ms.months.find(x=>x.month==='2027-01');
+  assert.equal(jan.continuing,1);assert.equal(jan.enrolled,4);assert.equal(jan.centres_measured,1);assert.equal(jan.centres_beyond,1);
+  const novG=ms.months.find(x=>x.month==='2026-11');
+  assert.equal(novG.centres_beyond,0);assert.equal(novG.continuing,6);assert.equal(novG.enrolled,7);
+ });
+
+ await t.test('the booking mix counts children per band and the child-days a week each band represents',()=>{
+  const mix=(owna)=>db.prepare('SELECT days_per_week,children,child_days FROM coe_booking_mix WHERE snapshot_date=? AND owna_id=? ORDER BY days_per_week').all(SYD,owna);
+  assert.deepEqual(mix('a').map(r=>[r.days_per_week,r.children,r.child_days]),[[1,1,1],[2,1,2],[3,1,3],[4,0,0],[5,1,5]]);
+  assert.deepEqual(mix('b').map(r=>[r.days_per_week,r.children,r.child_days]),[[1,0,0],[2,1,2],[3,1,3],[4,1,4],[5,0,0]]);
+  const ms=freeze(FROZEN,()=>m.coeMeasured());
+  const alpha=ms.centres.find(c=>c.owna_id==='a');
+  assert.equal(alpha.mix_children,4);assert.equal(alpha.mix_child_days,11);
+  assert.equal(alpha.avg_days_per_child,2.75);
+  assert.equal(alpha.places_filled_pct,4);                      // 4 children of 100 licensed places
+  assert.equal(alpha.days_filled_pct,2.2);                      // but only 11 of the 500 child-days a week
+  assert.equal(ms.group.mix_children,7);assert.equal(ms.group.mix_child_days,20);
+  assert.deepEqual(ms.group.mix.map(b=>b.children),[1,2,2,1,1]);
+  assert.equal(ms.group.places,200);assert.equal(ms.group.places_filled_pct,3.5);assert.equal(ms.group.days_filled_pct,2);
+ });
+
+ await t.test('re-running the same day overwrites that day, and stores no name and no date of birth',async()=>{
+  const before=db.prepare('SELECT * FROM coe_continuing ORDER BY owna_id,month').all();
+  const mixBefore=db.prepare('SELECT * FROM coe_booking_mix ORDER BY owna_id,days_per_week').all();
+  await freeze(FROZEN,()=>snap.runCoeSnapshot());
+  await freeze(FROZEN,()=>snap.runCoeSnapshot());
+  const after=db.prepare('SELECT * FROM coe_continuing ORDER BY owna_id,month').all();
+  assert.equal(after.length,before.length);                     // 3 runs, still 12 rows — keyed by snapshot date
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM coe_booking_mix').get().n,mixBefore.length);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM coe_forward_horizon').get().n,2);
+  const strip=(rows)=>rows.map(r=>{const {updated_at,...rest}=r;return rest;});
+  assert.deepEqual(strip(after),strip(before));                 // and the counts are identical, not doubled
+  // Nothing that identifies a child may be in these tables: not a name, not a date of birth, not the
+  // OWNA child id that could be rejoined to one — in any column, in any row.
+  const dump=JSON.stringify([db.prepare('SELECT * FROM coe_continuing').all(),db.prepare('SELECT * FROM coe_booking_mix').all(),db.prepare('SELECT * FROM coe_forward_horizon').all()]);
+  for(const bad of ['Fixture','Child','2022-04-05','a-child-771','b-child-881','dob','firstname','surname'])
+   assert.ok(!dump.includes(bad),'the COE tables contain "'+bad+'"');
+  for(const table of ['coe_continuing','coe_booking_mix','coe_forward_horizon']){
+   const cols=db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name);
+   for(const c of cols) assert.ok(!/name|dob|birth|child_id|childid/.test(c),table+'.'+c+' looks like it holds a person');
+  }
+ });
+
+ await t.test('/coe shows the measured count and the booking mix beside the run rate, to a viewer',async()=>{
+  const cookie=await login('viewer');
+  const html=await freeze(FROZEN,()=>page('/coe',cookie));
+  assert.match(html,/Measured continuing count as at/);
+  assert.match(html,/The measured continuing count/);
+  assert.match(html,/Booking mix/);
+  assert.match(html,/Not yet confirmed/);
+  assert.match(html,/Places filled against days filled/);
+  assert.doesNotMatch(html,/no snapshot of forward bookings has been taken/i);
+  // Limit 1 now carries the measured figures instead of promising them.
+  assert.match(html,/the measured count beside it does not/);
+  assert.doesNotMatch(html,/continuing count arrives in the next build/);
+  // Beta's cliff is named on the page, with the date, instead of reading as three families leaving.
+  assert.match(html,/forward bookings stop on 31 Dec 2026/);
+  assert.match(html,/3 of its 3 children have their last booking on that one day/);
+  // Viewer-safe: counts only. No fixture child's name, id or date of birth reaches the page.
+  for(const bad of ['a-child-771','b-child-881','Fixture Child','2022-04-05']) assert.ok(!html.includes(bad),'/coe printed '+bad);
+  // The run-rate half of the page is still there, unchanged.
+  assert.match(html,/Month by month/);assert.match(html,/The working, group total by month/);
+ });
+
+ await t.test('the step is wired into the nightly run and can be taken on demand',()=>{
+  const src=fs.readFileSync(path.join(__dirname,'..','services','snapshot.js'),'utf8');
+  assert.match(src,/await step\("coe", "COE continuing count", \(\) => runCoeSnapshot/,'the nightly run must record the COE step through step()/recordSync');
+  const cli=fs.readFileSync(path.join(__dirname,'..','scripts','coe-snapshot.js'),'utf8');
+  assert.match(cli,/runCoeSnapshot/);assert.match(cli,/recordSync\("coe"/);
+  assert.match(JSON.parse(fs.readFileSync(path.join(__dirname,'..','package.json'),'utf8')).scripts['coe-snapshot'],/scripts\/coe-snapshot\.js/);
+  assert.match(fs.readFileSync(path.join(__dirname,'..','docs','outstanding.md'),'utf8'),/npm run coe-snapshot/);
+  // A failure has to be visible on the Wages-style status, like every other sub-step.
+  snap.recordSync('coe','error','fixture failure');
+  assert.equal(snap.sourceSyncFor('coe').status,'error');
+ });
+
  await t.test('no service or route computes a date from UTC any more',()=>{
   // The regression guard: `new Date()` / `Date.now()` sliced into a YYYY-MM(-DD) string is the bug.
   const bad=[];

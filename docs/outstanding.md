@@ -13,7 +13,7 @@ The full sequence and reasoning live in the work plan: https://claude.ai/code/ar
 | 4 | Reporting year: financial or calendar | CEO | Year-to-date figures everywhere (financial year is the current default) | Week 2 |
 | 5 | COE targets per centre: continuation % and backfill count | CEO + owner | Replaces the single 95% placeholder on /coe | Week 2 |
 | 6 | Licensed places for Cobbitty and Oran Park | Owner | Percentages for the two opening centres on /coe | Week 2 |
-| 7 | How each centre sets recurring bookings in OWNA: rolling, or ending 31 December | Centre directors | COE accuracy. Heath Rd appears to end them, which distorts every forward view for that centre | Week 2 |
+| 7 | How each centre sets recurring bookings in OWNA: rolling, or ending 31 December | Centre directors | COE accuracy. Heath Rd appears to end them, which distorts every forward view for that centre. The measured count now **detects** a centre whose forward bookings stop dead on one date and says so instead of reporting a collapse, but only the directors can say which centres are set which way | Week 2 |
 | 8 | Lead and tour targets per centre per month | Owner | The targets table on /pipeline exists and is empty | Week 2 |
 | 9 | Which Employment Hero termination reasons count as a managed exit | P&C | Talent pipeline build | Week 3 |
 | 10 | Retention period per data set | Owner | The retention purge job | Week 3 |
@@ -28,13 +28,13 @@ The full sequence and reasoning live in the work plan: https://claude.ai/code/ar
 ## Build work still to do
 
 ### Week 2
-- [ ] COE nightly snapshot: per-child continuing count and booking-mix distribution, counts only — **in progress**
+- [x] COE nightly snapshot: per-child continuing count and booking-mix distribution, counts only — **done**. `runCoeSnapshot` in `services/snapshot.js` reads each operating centre's current children and forward bookings from OWNA and writes counts only to `coe_continuing`, `coe_booking_mix` and `coe_forward_horizon` (no name, no date of birth, no child id). It runs as a sub-step of the nightly snapshot, reports to the Wages-style status as source `coe`, and a re-run of the same day overwrites that day's rows. **On demand: `npm run coe-snapshot`** (`scripts/coe-snapshot.js`) — use it so the first measurement does not have to wait for 2:15am. `/coe` shows the measured continuing count beside the run-rate projection and the booking mix as its own section; before the first run the page is unchanged and says the count starts accumulating from it
 - [x] Sydney-aware "today" throughout the app; time zone pinned in host config — **done**. `services/calendar.js` `today()` is the single source; the nightly cron pins `Australia/Sydney` in `server.js` as well as via `TZ` in `render.yaml`
 - [ ] Session store that survives a restart — **in progress**
 - [ ] Hosting move to an Australian region: container config, storage, restore, secrets, new address told to trial users, encryption at rest confirmed, backups re-pointed (2½ days) — blocked on #1, #2, #3
 
 ### Week 3
-- [ ] COE page second half: continuing count and booking mix on screen, per-centre targets table (1 day)
+- [ ] COE page per-centre targets table: continuation % and backfill count per centre, replacing the single 95% placeholder (½ day) — blocked on #5. The continuing count and booking mix are already on the page
 - [ ] Waitlist by age group; age band derived at import, date of birth never stored (1 day)
 - [ ] Talent pipeline: ECTs, educational leaders, casuals per centre; managed vs non-managed exits (2 days) — blocked on #9
 - [ ] Retention purge job for the tables that accumulate: roster leave detail, feedback, AI briefings, run notes, **and the names still held in `ll_pipeline_members`, `ll_pipeline_starts` and `ll_tours`** (1 day) — blocked on #10

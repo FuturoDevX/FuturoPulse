@@ -6,6 +6,7 @@ const { owna } = require("./owna");
 const { lineleader } = require("./lineleader");
 const { runLabourSnapshot } = require("./eh-labour");
 const cal = require("./calendar");
+const metrics = require("./metrics"); // read-model only (db + calendar); it never requires this file back
 
 const WINDOW_DAYS = parseInt(process.env.SNAPSHOT_WINDOW_DAYS || "120", 10);
 // How far FORWARD to pull scheduled/booked data (OWNA bookings + LineLeader expected starts).
@@ -245,6 +246,16 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
     // Weekly staff roster.
     await step("roster", "roster", () => runRoster({ log }),
       (r) => ({ problem: outage(r, "roster"), rows: r.rows ?? null, detail: `${r.rows} centre-weeks${coverage(r, "centre-weeks")}` }));
+
+    // Continuation of Enrolment: the measured continuing count and the booking mix (counts only).
+    await step("coe", "COE continuing count", () => runCoeSnapshot({ log }), (r) => ({
+      problem: outage(r, "children/attendance"),
+      rows: r.rows ?? null,
+      detail: `${r.rows} centre-months and ${r.mix_rows} mix bands over ${r.attempts - r.failed - r.empty} centres${coverage(r, "centres")}`
+        + (r.empty ? `, ${r.empty} with no children` : "")
+        + (r.stops.length ? `; forward bookings stop before the window ends at ${r.stops.map((s) => `${s.name} ${s.last_booking_date}`).join(", ")}` : ""),
+      meta: { snapshot_date: r.snapshot_date, centres: r.attempts - r.failed - r.empty, stops: r.stops.length },
+    }));
 
     const status = problems.length ? "partial" : "ok";
     db.prepare(
@@ -554,6 +565,209 @@ async function runExitReport({ log = console.log } = {}) {
   return { ok: true, total, matched, attempts: centres.length, failed, firstError };
 }
 
+// ===== Continuation of Enrolment: the measured continuing count and the booking mix =====
+//
+// The /coe page projects from a RUN RATE, which assumes every family without a finish date continues —
+// a ceiling, and the page says so. This step replaces the assumption with a measurement: for each
+// operating centre it reads the current children and their forward bookings from OWNA and asks, of the
+// children enrolled today, how many hold bookings that reach into each campaign month.
+//
+// PRIVACY: what it stores is counts. Names, dates of birth and OWNA child ids are used in memory for
+// the length of one centre's loop and never written — not even hashed. A count needs no per-child row,
+// and OWNA remains the record of who the children are.
+//
+// METHOD, in one place so the page can state it beside every figure:
+//   enrolled now   = children with at least one booking in the reference week (see below). This matches
+//                    OWNA's own per-centre "children" count far better than filtering the child list on
+//                    dates does: the list keeps long-departed records whose finish date was never set.
+//   reference week = the Mon–Fri week in the forward pull with the most children booked, out of the
+//                    first `weeksToTry`. Taking simply "next week" would read a Christmas shutdown or a
+//                    holiday week as a collapse in the booking mix.
+//   days per week  = that child's distinct booked days in the reference week (1–5), which is also the
+//                    booking-mix band.
+//   continuing     = holds at least one booked operating day in the month.
+//   leaving        = has a finish date before the month starts.
+//   not confirmed  = neither: no bookings that far out, and nobody has said they are going. This is the
+//                    campaign's working list, not a prediction that they leave.
+// Public holidays are excluded throughout: OWNA keeps booking rows on them (outstanding.md, data
+// problem 6) and the page's available child-days are operating days.
+const COE_MIX_MAX = 5;                 // bands are 1..5 days a week; 5 is full-time
+const COE_WEEKS_TO_TRY = 8;            // candidate reference weeks from today
+
+const coeMonthEnd = (ym) => {
+  const [y, mo] = ym.split("-").map(Number);
+  return `${ym}-${String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, "0")}`;
+};
+const d1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+
+// Mon–Fri weeks, starting with the first Monday on or after `from` (today itself if today is a Monday).
+function coeWeeksFrom(from, n = COE_WEEKS_TO_TRY) {
+  const dow = (new Date(from + "T00:00:00Z").getUTCDay() + 6) % 7; // 0 = Monday
+  let mon = dow === 0 ? from : cal.addDays(from, 7 - dow);
+  const out = [];
+  for (let i = 0; i < n; i++) { out.push({ from: mon, to: cal.addDays(mon, 4) }); mon = cal.addDays(mon, 7); }
+  return out;
+}
+
+const upsertCoeContinuing = db.prepare(`
+  INSERT INTO coe_continuing (snapshot_date, owna_id, month, enrolled, continuing, not_confirmed, leaving,
+    continuing_days, not_confirmed_days, leaving_days, operating_days, beyond_horizon, updated_at)
+  VALUES (@snapshot_date, @owna_id, @month, @enrolled, @continuing, @not_confirmed, @leaving,
+    @continuing_days, @not_confirmed_days, @leaving_days, @operating_days, @beyond_horizon, datetime('now'))
+  ON CONFLICT(snapshot_date, owna_id, month) DO UPDATE SET
+    enrolled=@enrolled, continuing=@continuing, not_confirmed=@not_confirmed, leaving=@leaving,
+    continuing_days=@continuing_days, not_confirmed_days=@not_confirmed_days, leaving_days=@leaving_days,
+    operating_days=@operating_days, beyond_horizon=@beyond_horizon, updated_at=datetime('now')
+`);
+const upsertCoeMix = db.prepare(`
+  INSERT INTO coe_booking_mix (snapshot_date, owna_id, days_per_week, children, child_days, updated_at)
+  VALUES (@snapshot_date, @owna_id, @days_per_week, @children, @child_days, datetime('now'))
+  ON CONFLICT(snapshot_date, owna_id, days_per_week) DO UPDATE SET
+    children=@children, child_days=@child_days, updated_at=datetime('now')
+`);
+const upsertCoeHorizon = db.prepare(`
+  INSERT INTO coe_forward_horizon (snapshot_date, owna_id, enrolled, week_from, week_to, window_to,
+    last_booking_date, horizon_children, updated_at)
+  VALUES (@snapshot_date, @owna_id, @enrolled, @week_from, @week_to, @window_to,
+    @last_booking_date, @horizon_children, datetime('now'))
+  ON CONFLICT(snapshot_date, owna_id) DO UPDATE SET
+    enrolled=@enrolled, week_from=@week_from, week_to=@week_to, window_to=@window_to,
+    last_booking_date=@last_booking_date, horizon_children=@horizon_children, updated_at=datetime('now')
+`);
+
+async function runCoeSnapshot({ log = console.log, weeksToTry = COE_WEEKS_TO_TRY, today = cal.today() } = {}) {
+  const keys = metrics.coeMonthKeys();                       // the campaign window, Nov 2026 → Apr 2027
+  const monthSet = new Set(keys);
+  const monthsMeta = keys.map((k) => {
+    const end = coeMonthEnd(k);
+    return { month: k, start: `${k}-01`, end, operating_days: cal.operatingDays(`${k}-01`, end) };
+  });
+  const windowTo = monthsMeta[monthsMeta.length - 1].end;
+  const weeks = coeWeeksFrom(today, weeksToTry);
+  const centres = db.prepare(
+    `SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name`
+  ).all();
+
+  let rows = 0, mixRows = 0, failed = 0, empty = 0, firstError = null;
+  const stops = [];
+  for (const c of centres) {
+    let kids, att;
+    try {
+      kids = await owna.listChildren(c.owna_id);
+      // A centre OWNA reports no children for has nothing to measure, and pulling six months of its
+      // bookings would only confirm that. Counted and reported rather than passed over silently.
+      if (!kids || !kids.length) { empty += 1; log(`[coe] ${c.name}: OWNA returned no children — nothing measured`); continue; }
+      att = await owna.attendance(c.owna_id, today, windowTo);
+    } catch (e) {
+      failed += 1; firstError = firstError || errSummary(e);
+      log(`[coe] ${c.name}: children/bookings pull failed: ${errSummary(e)}`);
+      continue;
+    }
+
+    // Finish dates keyed by OWNA child id. In memory, for this centre's loop only.
+    const finishById = new Map();
+    for (const k of kids || []) {
+      if (!k || k.id == null) continue;
+      const f = localDate(k.finishDate);
+      if (f) finishById.set(String(k.id), f);
+    }
+
+    const weekDays = weeks.map(() => new Map()); // per candidate week: child -> Set of booked dates
+    const monthDays = new Map();                 // child -> Map(month -> booked operating days)
+    const lastBooking = new Map();               // child -> latest forward booking date
+    const seen = new Set();                      // OWNA can repeat a booking row across pages
+    for (const r of att || []) {
+      const day = String((r && r.attendanceDate) || "").slice(0, 10);
+      const cid = r && r.childId != null ? String(r.childId) : null;
+      if (!cid || day < today || !cal.isOperatingDay(day)) continue;
+      const key = `${cid}|${day}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!lastBooking.has(cid) || day > lastBooking.get(cid)) lastBooking.set(cid, day);
+      weeks.forEach((w, i) => {
+        if (day < w.from || day > w.to) return;
+        const m = weekDays[i];
+        if (!m.has(cid)) m.set(cid, new Set());
+        m.get(cid).add(day);
+      });
+      const mo = day.slice(0, 7);
+      if (monthSet.has(mo)) {
+        let m = monthDays.get(cid);
+        if (!m) { m = new Map(); monthDays.set(cid, m); }
+        m.set(mo, (m.get(mo) || 0) + 1);
+      }
+    }
+
+    // The reference week: the candidate with the most children booked (earliest wins a tie).
+    let refIdx = 0;
+    for (let i = 1; i < weekDays.length; i++) if (weekDays[i].size > weekDays[refIdx].size) refIdx = i;
+    const refWeek = weeks[refIdx] || { from: null, to: null };
+    const cohort = weekDays[refIdx] || new Map();
+    const enrolled = cohort.size;
+
+    // How far the recurring bookings actually run, and how many children stop dead on that day.
+    let lastDate = null;
+    for (const d of lastBooking.values()) if (!lastDate || d > lastDate) lastDate = d;
+    let horizonChildren = 0;
+    for (const cid of cohort.keys()) if (lastDate && lastBooking.get(cid) === lastDate) horizonChildren += 1;
+    // "Stops early" means the roll leaves a campaign month with nothing in it at all — not merely that the
+    // last booking falls a day or two short of the window's final date, which every centre's pattern does.
+    if (lastDate && lastDate < monthsMeta[monthsMeta.length - 1].start) {
+      stops.push({ owna_id: c.owna_id, name: c.name, last_booking_date: lastDate, horizon_children: horizonChildren, enrolled });
+    }
+
+    const monthRows = monthsMeta.map((mo) => {
+      const r = {
+        snapshot_date: today, owna_id: c.owna_id, month: mo.month, enrolled,
+        continuing: 0, not_confirmed: 0, leaving: 0,
+        continuing_days: 0, not_confirmed_days: 0, leaving_days: 0,
+        operating_days: mo.operating_days,
+        beyond_horizon: lastDate && mo.start > lastDate ? 1 : 0,
+      };
+      for (const [cid, days] of cohort) {
+        const weekly = Math.min(COE_MIX_MAX, days.size) * (mo.operating_days / 5); // their own pattern, scaled
+        const finish = finishById.get(cid);
+        if (finish && finish < mo.start) { r.leaving += 1; r.leaving_days += weekly; continue; }
+        const booked = (monthDays.get(cid) || new Map()).get(mo.month) || 0;
+        if (booked > 0) { r.continuing += 1; r.continuing_days += booked; }
+        else { r.not_confirmed += 1; r.not_confirmed_days += weekly; }
+      }
+      r.continuing_days = d1(r.continuing_days);
+      r.not_confirmed_days = d1(r.not_confirmed_days);
+      r.leaving_days = d1(r.leaving_days);
+      return r;
+    });
+
+    const bands = new Map(); // days per week -> children
+    for (const days of cohort.values()) {
+      const b = Math.min(COE_MIX_MAX, days.size);
+      bands.set(b, (bands.get(b) || 0) + 1);
+    }
+
+    const write = db.transaction(() => {
+      for (const r of monthRows) { upsertCoeContinuing.run(r); rows += 1; }
+      for (let b = 1; b <= COE_MIX_MAX; b++) {
+        const n = bands.get(b) || 0;
+        upsertCoeMix.run({ snapshot_date: today, owna_id: c.owna_id, days_per_week: b, children: n, child_days: n * b });
+        mixRows += 1;
+      }
+      upsertCoeHorizon.run({
+        snapshot_date: today, owna_id: c.owna_id, enrolled,
+        week_from: refWeek.from, week_to: refWeek.to, window_to: windowTo,
+        last_booking_date: lastDate, horizon_children: horizonChildren,
+      });
+    });
+    write();
+
+    const anchor = monthRows[Math.min(3, monthRows.length - 1)];
+    log(`[coe] ${c.name}: ${enrolled} enrolled (week ${refWeek.from}), ${anchor.month} continuing ${anchor.continuing} / not confirmed ${anchor.not_confirmed} / leaving ${anchor.leaving}, bookings run to ${lastDate || "nowhere"}`);
+  }
+
+  log(`[coe] ${rows} centre-months, ${mixRows} mix bands${failed ? `, ${failed} of ${centres.length} centres failed` : ""}${empty ? `, ${empty} with no children` : ""}`);
+  return { ok: true, rows, mix_rows: mixRows, snapshot_date: today, window_to: windowTo,
+    attempts: centres.length, failed, empty, firstError, stops };
+}
+
 // ===== LineLeader pipeline snapshot =====
 
 const upsertLlCentre = db.prepare(`
@@ -781,4 +995,4 @@ function ensureOpeningCentres({ minPipeline = 1, log = console.log } = {}) {
   return { ok: true, n };
 }
 
-module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor, recentMondays };
+module.exports = { runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, runCoeSnapshot, coeWeeksFrom, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor, recentMondays };

@@ -1951,7 +1951,86 @@ function coeOutlook() {
 
   return { months, window: { first: keys[0], last: keys[keys.length - 1] }, as_at: today,
     run_week: runWeek, pipeline_from: pipelineFrom, target_pct: COE_TARGET_PCT,
-    centres, group, opening, unknown_holiday_years: cal.unknownHolidayYears(keys[0] + "-01", lastEnd) };
+    centres, group, opening, measured: coeMeasured(keys),
+    unknown_holiday_years: cal.unknownHolidayYears(keys[0] + "-01", lastEnd) };
+}
+
+// ===== The MEASURED half of COE: what the nightly snapshot counted (services/snapshot.js runCoeSnapshot)
+// Returns null until the first snapshot has run, so the page keeps working exactly as it did and says the
+// measured count starts accumulating from the first nightly run. Counts only — nothing here is per-child.
+//
+// A centre whose recurring bookings stop dead before the window ends (Heath Rd appears to end them on
+// 31 December rather than rolling them — outstanding.md item 7) reads as a total collapse if you take it
+// at face value, so months past that date are marked beyond_horizon and are reported as "not measurable",
+// never as leavers. Those centre-months are also kept out of the group totals, which say how many centres
+// they cover.
+function coeMeasured(keys = coeMonthKeys()) {
+  const date = (db.prepare("SELECT MAX(snapshot_date) AS d FROM coe_continuing").get() || {}).d;
+  if (!date) return null;
+  const cont = db.prepare("SELECT * FROM coe_continuing WHERE snapshot_date = ? ORDER BY owna_id, month").all(date);
+  if (!cont.length) return null;
+  const horizons = db.prepare("SELECT * FROM coe_forward_horizon WHERE snapshot_date = ?").all(date);
+  const mixRows = db.prepare("SELECT * FROM coe_booking_mix WHERE snapshot_date = ? ORDER BY owna_id, days_per_week").all(date);
+  const byId = (rows) => rows.reduce((a, r) => { (a[r.owna_id] = a[r.owna_id] || []).push(r); return a; }, {});
+  const contBy = byId(cont), mixBy = byId(mixRows);
+  const horizonBy = horizons.reduce((a, r) => { a[r.owna_id] = r; return a; }, {});
+  const meta = db.prepare("SELECT owna_id, name, capacity FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+
+  const centres = meta.filter((c) => contBy[c.owna_id]).map((c) => {
+    const h = horizonBy[c.owna_id] || {};
+    const rows = keys.map((k) => contBy[c.owna_id].find((r) => r.month === k) || null).filter(Boolean)
+      .map((r) => ({ month: r.month, operating_days: r.operating_days, enrolled: r.enrolled,
+        continuing: r.continuing, not_confirmed: r.not_confirmed, leaving: r.leaving,
+        continuing_days: r.continuing_days, not_confirmed_days: r.not_confirmed_days, leaving_days: r.leaving_days,
+        beyond_horizon: !!r.beyond_horizon,
+        continuing_pct: pct(r.continuing, r.enrolled),
+        available_days: c.capacity * r.operating_days }));
+    const mix = (mixBy[c.owna_id] || []).map((r) => ({ days_per_week: r.days_per_week, children: r.children, child_days: r.child_days }));
+    const children = mix.reduce((a, b) => a + b.children, 0);
+    const childDays = mix.reduce((a, b) => a + b.child_days, 0);
+    return { owna_id: c.owna_id, name: c.name, places: c.capacity,
+      enrolled: h.enrolled != null ? h.enrolled : (rows[0] ? rows[0].enrolled : 0),
+      months: rows, mix, mix_children: children, mix_child_days: childDays,
+      avg_days_per_child: children ? Math.round(childDays / children * 100) / 100 : 0,
+      places_filled_pct: pct(children, c.capacity),           // one child holds one place
+      days_filled_pct: pct(childDays, c.capacity * 5),        // …but only for the days they book
+      week: { from: h.week_from || null, to: h.week_to || null },
+      last_booking_date: h.last_booking_date || null,
+      horizon_children: h.horizon_children || 0,
+      // "Stops dead on a single date": the roll ends early enough to leave a campaign month with no
+      // bookings at all (not merely a day or two short of the window), and it ends for most of the centre
+      // at once. Reported as a data problem at source, not as families leaving.
+      stops_early: rows.some((r) => r.beyond_horizon),
+      stops_together: !!(h.last_booking_date && h.enrolled && h.horizon_children / h.enrolled >= 0.5),
+    };
+  });
+  if (!centres.length) return null;
+
+  const months = keys.map((k, i) => {
+    const rows = centres.map((c) => c.months[i]).filter((r) => r && r.month === k);
+    const live = rows.filter((r) => !r.beyond_horizon);
+    const sum = (f) => live.reduce((a, r) => a + (r[f] || 0), 0);
+    return { month: k, operating_days: rows.length ? rows[0].operating_days : 0,
+      enrolled: sum("enrolled"), continuing: sum("continuing"), not_confirmed: sum("not_confirmed"), leaving: sum("leaving"),
+      continuing_days: Math.round(sum("continuing_days") * 10) / 10,
+      not_confirmed_days: Math.round(sum("not_confirmed_days") * 10) / 10,
+      leaving_days: Math.round(sum("leaving_days") * 10) / 10,
+      continuing_pct: pct(sum("continuing"), sum("enrolled")),
+      available_days: live.reduce((a, r) => a + (r.available_days || 0), 0),
+      centres_measured: live.length, centres_beyond: rows.length - live.length };
+  });
+  const mix = [1, 2, 3, 4, 5].map((d) => ({ days_per_week: d,
+    children: centres.reduce((a, c) => a + ((c.mix.find((x) => x.days_per_week === d) || {}).children || 0), 0),
+    child_days: centres.reduce((a, c) => a + ((c.mix.find((x) => x.days_per_week === d) || {}).child_days || 0), 0) }));
+  const mixChildren = mix.reduce((a, b) => a + b.children, 0);
+  const mixChildDays = mix.reduce((a, b) => a + b.child_days, 0);
+  const places = centres.reduce((a, c) => a + c.places, 0);
+
+  return { snapshot_date: date, months,
+    group: { places, months, mix, mix_children: mixChildren, mix_child_days: mixChildDays,
+      avg_days_per_child: mixChildren ? Math.round(mixChildDays / mixChildren * 100) / 100 : 0,
+      places_filled_pct: pct(mixChildren, places), days_filled_pct: pct(mixChildDays, places * 5) },
+    centres, stops: centres.filter((c) => c.stops_early) };
 }
 
 module.exports = {
@@ -1969,5 +2048,5 @@ module.exports = {
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
   yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months, wagesPerChildDay, ownaWeek,
   funnelByCentre, funnelMonths, CONVERSION_STAGES, pipelineTargets, savePipelineTarget, deletePipelineTarget, pipelineTargetProgress, targetRag, placesByMonth,
-  coeOutlook, coeRunWeek, coeMonthKeys, COE_TARGET_PCT, COE_FIRM_STATUSES,
+  coeOutlook, coeMeasured, coeRunWeek, coeMonthKeys, COE_TARGET_PCT, COE_FIRM_STATUSES,
 };
