@@ -48,6 +48,7 @@ function sessionMiddleware({ secure = false } = {}) {
     store,
     secret: process.env.SESSION_SECRET || "dev-secret",
     resave: false,
+    rolling: true, // re-send the cookie on every response, or the browser drops it eight hours after LOGIN
     saveUninitialized: false, // only a real login writes a row, so the table cannot fill with drive-by requests
     cookie: { httpOnly: true, sameSite: "lax", secure, maxAge: MAX_AGE_MS },
   });

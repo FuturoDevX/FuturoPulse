@@ -412,9 +412,20 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.ok(ms>1000*60*60*7.5&&ms<=1000*60*60*8,'expire should be about eight hours out, was '+ms+'ms');
   // The eight hours run from the LAST request, not from login: wind the row back and watch a request push it out again.
   db.prepare('UPDATE sessions SET expire=? WHERE sid=?').run(new Date(Date.now()+1000*60*60).toISOString(),sid);
-  assert.equal((await get(base,'/',cookieOf(sc))).status,200);
+  await new Promise(r=>setTimeout(r,1100)); // Expires has one-second resolution, so let a second actually pass
+  const r2=await get(base,'/',cookieOf(sc));
+  assert.equal(r2.status,200);
   const pushed=new Date(db.prepare('SELECT expire FROM sessions WHERE sid=?').get(sid).expire).getTime()-Date.now();
   assert.ok(pushed>1000*60*60*7.5,'a request should push the expiry back out to eight hours, was '+pushed+'ms');
+  // Pushing the ROW out is only half of it: without `rolling`, the browser keeps the cookie it was
+  // given at login and drops it eight hours after login, mid-shift, while the row lingers on disk.
+  const sc2=r2.headers.get('set-cookie');
+  assert.ok(sc2,'every response must re-send the cookie, or the expiry the browser holds never moves');
+  assert.equal(sidOf(sc2),sid,'the refreshed cookie is the same session, not a new one');
+  assert.match(sc2,/HttpOnly/i);assert.match(sc2,/SameSite=Lax/i);
+  const before=new Date(sc.match(/Expires=([^;]+)/)[1]).getTime(), after=new Date(sc2.match(/Expires=([^;]+)/)[1]).getTime();
+  assert.ok(after>before,'the re-sent cookie must expire later than the login one, was '+(after-before)+'ms later');
+  assert.ok(after-Date.now()>1000*60*60*7.5,'and about eight hours out from this request, was '+(after-Date.now())+'ms');
  });
 
  await t.test('a logged-in session survives a restart, and an invalidated one is still refused after one',async()=>{
