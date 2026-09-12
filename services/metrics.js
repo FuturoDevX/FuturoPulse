@@ -1961,7 +1961,7 @@ function coeOutlook() {
 //
 // A centre whose recurring bookings stop dead before the window ends (Heath Rd appears to end them on
 // 31 December rather than rolling them — outstanding.md item 7) reads as a total collapse if you take it
-// at face value, so months past that date are marked beyond_horizon and are reported as "not measurable",
+// at face value, so months its roll does not reach are marked beyond_horizon and reported as "not measurable",
 // never as leavers. Those centre-months are also kept out of the group totals, which say how many centres
 // they cover.
 function coeMeasured(keys = coeMonthKeys()) {
@@ -1997,9 +1997,9 @@ function coeMeasured(keys = coeMonthKeys()) {
       week: { from: h.week_from || null, to: h.week_to || null },
       last_booking_date: h.last_booking_date || null,
       horizon_children: h.horizon_children || 0,
-      // "Stops dead on a single date": the roll ends early enough to leave a campaign month with no
-      // bookings at all (not merely a day or two short of the window), and it ends for most of the centre
-      // at once. Reported as a data problem at source, not as families leaving.
+      // "Stops dead": the roll ends early enough to leave a campaign month it does not cover — empty, or
+      // stopped inside it with more than a week of it uncounted (services/snapshot.js sets the flag) —
+      // and it ends for most of the centre in the same week. A data problem at source, not families leaving.
       stops_early: rows.some((r) => r.beyond_horizon),
       stops_together: !!(h.last_booking_date && h.enrolled && h.horizon_children / h.enrolled >= 0.5),
     };

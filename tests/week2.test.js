@@ -332,7 +332,7 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.doesNotMatch(html,/continuing count arrives in the next build/);
   // Beta's cliff is named on the page, with the date, instead of reading as three families leaving.
   assert.match(html,/forward bookings stop on 31 Dec 2026/);
-  assert.match(html,/3 of its 3 children have their last booking on that one day/);
+  assert.match(html,/3 of its 3 children have their last booking in that final week/);
   // Viewer-safe: counts only. No fixture child's name, id or date of birth reaches the page.
   for(const bad of ['a-child-771','b-child-881','Fixture Child','2022-04-05']) assert.ok(!html.includes(bad),'/coe printed '+bad);
   // The run-rate half of the page is still there, unchanged.
@@ -527,6 +527,73 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
     });
    }
   assert.deepEqual(bad,[],'these views must render sync timestamps through sydneyStamp(): '+bad.join(', '));
+ });
+
+ // ===== Batch E: a roll that stops INSIDE a campaign month =====
+ // Heath Rd's forward bookings stop on 2 April 2027 — one day into the LAST campaign month. Detection
+ // asked only "does the roll leave a whole campaign month empty?", which 2 April does not, so April read
+ // as a hard continuing count for that centre, was folded into the group row as fully measured, and drew
+ // no note at all: the false collapse this section exists to prevent, in the campaign's key month.
+ await t.test('a roll that stops part-way INTO a campaign month is reported, not read as a collapse',async()=>{
+  db.prepare('INSERT INTO centres(owna_id,name,capacity,opening) VALUES(?,?,?,0)').run('c','Centre Gamma',100);
+  db.prepare('INSERT INTO centres(owna_id,name,capacity,opening) VALUES(?,?,?,0)').run('d','Centre Delta',100);
+  // Gamma is Heath Rd: ten children on mixed Mon–Fri patterns, every one rolled only as far as Fri 2 Apr
+  // 2027. Only four are BOOKED on that Friday — the rest last appear on the Wednesday or Thursday, and
+  // the Monday-only child a week earlier, because Easter Monday 29 March is a public holiday.
+  const GAMMA=[['c-1','fr'],['c-2','fr'],['c-3','th'],['c-4','th'],['c-5','tu,we'],['c-6','tu,we'],
+               ['c-7','mo,tu,we,th,fr'],['c-8','mo,tu,we,th,fr'],['c-9','we'],['c-10','mo']];
+  // Delta is the case that must NOT trip it: the whole centre stops together two operating days short of
+  // the window's last date, which is what every centre's own pattern does at the edge of the pull.
+  const DELTA=[['d-1','mo,tu,we'],['d-2','mo,tu,we'],['d-3','mo,tu,we']];
+  const coeFixture=(kids,to)=>({
+   children:kids.map(([cid])=>({id:cid,firstname:'Fixture',surname:'Child '+cid,dob:'2022-04-05T14:00:00Z',finishDate:null,room:'Room 1'})),
+   attendance:kids.flatMap(([cid,csv])=>coeDays(csv,'2026-09-14',to).map(d=>({attendanceDate:d+'T00:00:00',childId:cid,child:'Fixture Child '+cid,room:'Room 1',attending:true,fee:110}))),
+  });
+  COE_FIX.c=coeFixture(GAMMA,'2027-04-02');
+  COE_FIX.d=coeFixture(DELTA,'2027-04-28');
+  const r=await freeze(FROZEN,()=>snap.runCoeSnapshot());
+  assert.equal(r.ok,true);assert.equal(r.failed,0);assert.equal(r.attempts,4);assert.equal(r.rows,24);
+
+  const hg=db.prepare('SELECT * FROM coe_forward_horizon WHERE snapshot_date=? AND owna_id=?').get(SYD,'c');
+  assert.equal(hg.last_booking_date,'2027-04-02');assert.equal(hg.enrolled,10);
+  // The cohort that stops with the roll is the whole Mon–Fri week it ends in. Counting only the children
+  // booked on the last day itself found four of ten, so a mid-week cliff read as a trickle, not a stop.
+  assert.equal(GAMMA.filter(([,csv])=>csv.split(',').includes('fr')).length,4);
+  assert.equal(hg.horizon_children,9);
+  for(const mo of ['2026-11','2026-12','2027-01','2027-02','2027-03']){
+   const x=contRow('c',mo);
+   assert.equal(x.beyond_horizon,0,mo);assert.equal(x.continuing,10,mo); // the roll does cover these in full
+  }
+  const apr=contRow('c','2027-04');
+  assert.equal(apr.beyond_horizon,1,'one booked day is not a measured April');
+  assert.equal(apr.leaving,0);                                   // nobody has a finish date: they are NOT leaving
+  assert.ok(apr.continuing_days>0,'April does hold that one day of bookings…');
+  assert.equal(apr.continuing,6);                                // …and at face value it reads as four of ten gone
+
+  // Delta stops together too, but only two operating days short of 30 April, so it stays fully measured.
+  const hd=db.prepare('SELECT * FROM coe_forward_horizon WHERE snapshot_date=? AND owna_id=?').get(SYD,'d');
+  assert.equal(hd.last_booking_date,'2027-04-28');assert.equal(hd.enrolled,3);assert.equal(hd.horizon_children,3);
+  for(const mo of MONTHS) assert.equal(contRow('d',mo).beyond_horizon,0,mo);
+  assert.equal(contRow('d','2027-04').continuing,3);
+
+  const ms=freeze(FROZEN,()=>m.coeMeasured());
+  const gamma=ms.centres.find(x=>x.owna_id==='c'), delta=ms.centres.find(x=>x.owna_id==='d');
+  assert.equal(gamma.stops_early,true);assert.equal(gamma.stops_together,true);
+  assert.equal(delta.stops_early,false);
+  assert.deepEqual(ms.stops.map(x=>x.owna_id).sort(),['b','c']);
+  assert.deepEqual(r.stops.map(x=>x.owna_id).sort(),['b','c']);  // and the run itself reports both
+  // Gamma is out of April's group row rather than dragging six of its ten children into it.
+  const aprG=ms.months.find(x=>x.month==='2027-04');
+  assert.equal(aprG.centres_measured,2);assert.equal(aprG.centres_beyond,2);
+  assert.equal(aprG.enrolled,7);assert.equal(aprG.continuing,4);  // Alpha's 1 of 4 and Delta's 3 of 3 only
+
+  const cookie=await login('viewer');
+  const html=await freeze(FROZEN,()=>page('/coe',cookie));
+  assert.match(html,/Gamma: its forward bookings stop on 2 Apr 2027/);
+  assert.match(html,/9 of its 10 children have their last booking in that final week/);
+  assert.match(html,/This centre has no bookings after 2 Apr 2027/,'April must render as “—”, not as a count');
+  assert.doesNotMatch(html,/Delta: its forward bookings stop/,'two days short of the window is not a cliff');
+  for(const bad of ['Fixture Child','2022-04-05']) assert.ok(!html.includes(bad),'/coe printed '+bad);
  });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

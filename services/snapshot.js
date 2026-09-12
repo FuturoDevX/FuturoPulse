@@ -593,6 +593,7 @@ async function runExitReport({ log = console.log } = {}) {
 // problem 6) and the page's available child-days are operating days.
 const COE_MIX_MAX = 5;                 // bands are 1..5 days a week; 5 is full-time
 const COE_WEEKS_TO_TRY = 8;            // candidate reference weeks from today
+const COE_TOGETHER_SHARE = 0.5;        // "the centre stopped together": same share metrics.js reports as stops_together
 
 const coeMonthEnd = (ym) => {
   const [y, mo] = ym.split("-").map(Number);
@@ -607,6 +608,13 @@ function coeWeeksFrom(from, n = COE_WEEKS_TO_TRY) {
   const out = [];
   for (let i = 0; i < n; i++) { out.push({ from: mon, to: cal.addDays(mon, 4) }); mon = cal.addDays(mon, 7); }
   return out;
+}
+
+// The Mon–Fri week a date falls in — how far a roll that ends mid-week reaches for the cohort count.
+function coeWeekOf(date) {
+  const dow = (new Date(date + "T00:00:00Z").getUTCDay() + 6) % 7; // 0 = Monday
+  const mon = cal.addDays(date, -dow);
+  return { from: mon, to: cal.addDays(mon, 4) };
 }
 
 const upsertCoeContinuing = db.prepare(`
@@ -705,14 +713,30 @@ async function runCoeSnapshot({ log = console.log, weeksToTry = COE_WEEKS_TO_TRY
     const cohort = weekDays[refIdx] || new Map();
     const enrolled = cohort.size;
 
-    // How far the recurring bookings actually run, and how many children stop dead on that day.
+    // How far the recurring bookings actually run, and how much of the roll stops with them. A roll that
+    // ends mid-week ends on a different weekday for each family — a three-day child's last booking is the
+    // Wednesday, a Friday-only child's the Friday — so the cohort is counted over the whole Mon–Fri week
+    // the last booking falls in. Counting only children whose last booking IS that date missed most of
+    // them, and with them the evidence that the centre stopped together.
     let lastDate = null;
     for (const d of lastBooking.values()) if (!lastDate || d > lastDate) lastDate = d;
+    const horizonWeek = lastDate ? coeWeekOf(lastDate) : null;
     let horizonChildren = 0;
-    for (const cid of cohort.keys()) if (lastDate && lastBooking.get(cid) === lastDate) horizonChildren += 1;
-    // "Stops early" means the roll leaves a campaign month with nothing in it at all — not merely that the
-    // last booking falls a day or two short of the window's final date, which every centre's pattern does.
-    if (lastDate && lastDate < monthsMeta[monthsMeta.length - 1].start) {
+    if (horizonWeek) for (const cid of cohort.keys()) {
+      const lb = lastBooking.get(cid);
+      if (lb && lb >= horizonWeek.from && lb <= horizonWeek.to) horizonChildren += 1;
+    }
+    // "Stops early" means the roll does not cover a campaign month: it either leaves the month empty, or
+    // it stops INSIDE it and leaves more than a week of it uncounted. Heath Rd's roll ends on 2 April, one
+    // day into the final campaign month, so keying this on an empty month read that month as a collapse —
+    // a hard continuing count, folded into the group row, with no note to say the roll simply ends there.
+    // A month the roll misses by only a day or two at the window's edge is still measured, as every
+    // centre's pattern falls a little short of the last date; and the part-month case counts only when
+    // most of the cohort stops in that same week, which is what a roll never rolled forward looks like.
+    const stopsTogether = !!(lastDate && enrolled && horizonChildren / enrolled >= COE_TOGETHER_SHARE);
+    const notCovered = (mo) => !!lastDate && lastDate < mo.end &&
+      (lastDate < mo.start || (stopsTogether && cal.operatingDays(cal.addDays(lastDate, 1), mo.end) > 5));
+    if (monthsMeta.some(notCovered)) {
       stops.push({ owna_id: c.owna_id, name: c.name, last_booking_date: lastDate, horizon_children: horizonChildren, enrolled });
     }
 
@@ -722,7 +746,7 @@ async function runCoeSnapshot({ log = console.log, weeksToTry = COE_WEEKS_TO_TRY
         continuing: 0, not_confirmed: 0, leaving: 0,
         continuing_days: 0, not_confirmed_days: 0, leaving_days: 0,
         operating_days: mo.operating_days,
-        beyond_horizon: lastDate && mo.start > lastDate ? 1 : 0,
+        beyond_horizon: notCovered(mo) ? 1 : 0,
       };
       for (const [cid, days] of cohort) {
         const weekly = Math.min(COE_MIX_MAX, days.size) * (mo.operating_days / 5); // their own pattern, scaled
