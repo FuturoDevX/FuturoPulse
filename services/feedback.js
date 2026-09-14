@@ -34,6 +34,13 @@ function counts() {
   return c;
 }
 function newCount() { return db.prepare("SELECT COUNT(*) n FROM feedback WHERE status='new'").get().n; }
-function setStatus(id, status) { db.prepare("UPDATE feedback SET status=? WHERE id=?").run(status, id); }
+// Triage. Stamp reviewed_at when the row leaves 'new', because the owner's retention period runs
+// twelve months from the REVIEW, not from the submission (services/retention.js). Sending a row back
+// to 'new' clears the stamp: it is waiting on a human again, and the clock restarts when it is next
+// dealt with. Re-reviewing an already-reviewed row restamps it, which only ever keeps it longer.
+function setStatus(id, status) {
+  db.prepare(`UPDATE feedback SET status=?, reviewed_at = CASE WHEN ?='new' THEN NULL ELSE datetime('now') END WHERE id=?`)
+    .run(status, status, id);
+}
 
 module.exports = { AREAS, CATEGORIES, CAT_LABEL, add, list, counts, newCount, setStatus };

@@ -41,6 +41,30 @@ services:
         value: 15 2 * * *          # 02:15 Australia/Sydney (zone pinned in server.js)
       - key: EXIT_LOOKBACK_DAYS
         value: 365
+      # ===== Retention periods — the owner's decision of 14 September 2026 =====
+      # Enforced by services/retention.js: the last step of the nightly snapshot, and `npm run purge`
+      # on demand. The numbers below ARE the approved periods; they live here so a period can be
+      # changed without a code change (services/retention.js holds the same values as its defaults, so
+      # an unset variable still purges to the approved period). A value that is not a positive whole
+      # number is ignored and the approved default stands — it is never read as "keep nothing".
+      # Occupancy, wages and incident numbers carry no personal data and are kept indefinitely; there
+      # is deliberately no variable for them. A signed-in session stays valid 8 hours from the last
+      # request, which middleware/session.js enforces and this job does not duplicate.
+      - key: RETAIN_AI_BRIEFINGS_MONTHS
+        value: 12                  # cached weekly AI briefings
+      - key: RETAIN_FEEDBACK_MONTHS
+        value: 12                  # staff feedback, measured from the REVIEW, and only once reviewed or
+                                   # dismissed — a row still marked 'new' is never deleted
+      - key: RETAIN_RUN_LOG_DAYS
+        value: 90                  # nightly snapshot_runs rows and their notes
+      - key: RETAIN_EXIT_DETAIL_MONTHS
+        value: 24                  # child_exits row-level detail (2 years)
+      - key: RETAIN_EXIT_AGGREGATE_MONTHS
+        value: 84                  # exits_monthly counts (7 years) — outlives the detail above
+      # Set to 0 only if the VACUUM that gives the deleted rows' pages back ever becomes too slow to
+      # sit inside the nightly run. The deletions themselves happen either way.
+      - key: RETENTION_RECLAIM
+        value: 1
       # LineLeader (ChildcareCRM)
       - key: LINELEADER_BASE_URL
         value: https://live.childcarecrm.com.au

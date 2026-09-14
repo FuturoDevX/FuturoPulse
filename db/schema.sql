@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS ccs_payments (
 );
 
 -- Audit log of snapshot runs.
+-- RETENTION: 90 days (owner's decision, 14 September 2026), enforced by services/retention.js as the
+-- last step of the nightly snapshot. The `note` below goes with the row. The single most recent run is
+-- always kept whatever its age, so the status page can still say when the data was last refreshed.
 CREATE TABLE IF NOT EXISTS snapshot_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   started_at  TEXT NOT NULL,
@@ -111,6 +114,8 @@ CREATE INDEX IF NOT EXISTS idx_llenrol_centre ON ll_enrolments(ll_id);
 -- departed child's name or date of birth. OWNA and LineLeader remain the records of identity. child_key
 -- only has to keep two children in a centre apart; it is a salted hash whose salt is never written to
 -- disk (see services/snapshot.js), so no name can be recovered from a row here.
+-- RETENTION: 2 years for this row-level detail (owner's decision, 14 September 2026), against 7 years for
+-- the exits_monthly aggregate below. services/retention.js enforces both, after the nightly fold-up.
 CREATE TABLE IF NOT EXISTS child_exits (
   owna_id      TEXT NOT NULL,
   child_key    TEXT NOT NULL,         -- salted hash of the normalised name|dob — opaque, not reversible
@@ -132,6 +137,8 @@ CREATE INDEX IF NOT EXISTS idx_exits_finish ON child_exits(finish_date);
 -- folds each rebuild into this table BEFORE the old rows go, which is what lets exits by year and tenure
 -- history keep accumulating. Counts only, no per-child rows: room is '' when OWNA recorded none, because
 -- SQLite would otherwise allow duplicate NULL keys.
+-- RETENTION: 7 years (owner's decision, 14 September 2026) — counts only, so it outlives the row-level
+-- child_exits detail above by five years. services/retention.js enforces both.
 CREATE TABLE IF NOT EXISTS exits_monthly (
   owna_id         TEXT NOT NULL,
   month           TEXT NOT NULL,         -- YYYY-MM of the finish date
@@ -327,6 +334,10 @@ CREATE TABLE IF NOT EXISTS incidents_monthly (
 );
 
 -- ===== Feedback from users trialling the dashboard =====
+-- RETENTION: 12 months AFTER REVIEW (owner's decision, 14 September 2026), enforced by
+-- services/retention.js. A row still marked 'new' is never deleted — it is waiting on a human. The
+-- period runs from `reviewed_at`, not from `created_at`: the owner set it to run from the review, and
+-- a row submitted long before it was triaged would otherwise be deleted the same night it was read.
 CREATE TABLE IF NOT EXISTS feedback (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at  TEXT,
@@ -336,11 +347,13 @@ CREATE TABLE IF NOT EXISTS feedback (
   rating      INTEGER,              -- optional overall 1-5
   message     TEXT NOT NULL,
   page        TEXT,                 -- path they came from
-  status      TEXT DEFAULT 'new'    -- new | reviewed | dismissed
+  status      TEXT DEFAULT 'new',   -- new | reviewed | dismissed
+  reviewed_at TEXT                  -- when it left 'new'; NULL while new, and cleared if it goes back
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
 
 -- ===== AI: cached weekly operations briefing (generated via the Claude API) =====
+-- RETENTION: 12 months (owner's decision, 14 September 2026), enforced by services/retention.js.
 CREATE TABLE IF NOT EXISTS ai_briefings (
   period_key  TEXT PRIMARY KEY,        -- "<from>..<to>" — one cached briefing per selected date range
   period_from TEXT,                    -- range start (YYYY-MM-DD)
@@ -410,7 +423,7 @@ CREATE TABLE IF NOT EXISTS coe_forward_horizon (
 
 -- ===== Per-source sync health: what the nightly snapshot last did for each upstream =====
 CREATE TABLE IF NOT EXISTS source_sync (
-  source       TEXT PRIMARY KEY,    -- owna | lineleader | eh_labour | exits | incidents | roster | coe
+  source       TEXT PRIMARY KEY,    -- owna | lineleader | eh_labour | exits | incidents | roster | coe | retention
   last_attempt TEXT,
   last_success TEXT,
   status       TEXT,                -- ok | error | skipped
@@ -426,8 +439,11 @@ CREATE TABLE IF NOT EXISTS source_sync (
 -- PRIVACY: a row is personal information under APP 11 — `sess` is the session JSON, which carries the
 -- signed-in user's id, email, name and role (never a password, and never a child or family). Rows expire
 -- eight hours after the last request and the store sweeps expired rows every fifteen minutes, so this
--- table does not accumulate and needs no separate purge. The sweep only removes rows already past their
--- expiry, so it does not cover a restore: `scripts/restore-db.js` clears this table on the restored file,
+-- table does not accumulate and needs no separate purge: the retention job (services/retention.js)
+-- deliberately leaves it alone rather than sweep it a second time, and records the eight hours as
+-- SESSION_HOURS so the documented period and the enforced one cannot drift apart. The sweep only
+-- removes rows already past their expiry, so it does not cover a restore: `scripts/restore-db.js`
+-- clears this table on the restored file,
 -- or a backup younger than eight hours would reinstate every login that was live when it was taken.
 CREATE TABLE IF NOT EXISTS sessions (
   sid    TEXT NOT NULL PRIMARY KEY,

@@ -63,6 +63,10 @@ function initSchema(db) {
   addColumnIfMissing("qc_actions", "term", "TEXT");
   addColumnIfMissing("incidents_monthly", "illness", "INTEGER DEFAULT 0");
   addColumnIfMissing("incidents_monthly", "serious", "INTEGER DEFAULT 0");
+  // The feedback retention period runs from the review, so the review needs a date. Rows triaged
+  // before this column existed keep a NULL here and are therefore never purged — services/retention.js
+  // deletes only what it can prove is past its period, and NULL proves nothing (see rule 2 there).
+  addColumnIfMissing("feedback", "reviewed_at", "TEXT");
 
   // ---- Approved places: the licensed count on each service approval (ACECQA National Register) ----
   // centres.capacity is the SUM OF OWNA ROOM CAPACITIES and the nightly snapshot rewrites it every night,

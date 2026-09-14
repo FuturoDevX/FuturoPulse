@@ -11,6 +11,7 @@
     "discover-forms": "node scripts/discover-forms.js",
     "backfill": "node db/backfill.js",
     "backup": "node scripts/backup-db.js",
+    "purge": "node scripts/purge-run.js",
     "test": "node --test tests/*.test.js",
     "restore": "node scripts/restore-db.js"
   },

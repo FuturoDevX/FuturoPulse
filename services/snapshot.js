@@ -8,6 +8,7 @@ const { runLabourSnapshot } = require("./eh-labour");
 const { leaveTotals } = require("../db/init-schema"); // one implementation, shared with the migration
 const cal = require("./calendar");
 const metrics = require("./metrics"); // read-model only (db + calendar); it never requires this file back
+const { runPurge } = require("./retention"); // retention periods + the nightly purge (db + calendar only, no cycle)
 
 const WINDOW_DAYS = parseInt(process.env.SNAPSHOT_WINDOW_DAYS || "120", 10);
 // How far FORWARD to pull scheduled/booked data (OWNA bookings + LineLeader expected starts).
@@ -266,6 +267,17 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
         + (r.empty ? `, ${r.empty} with no children` : "")
         + (r.stops.length ? `; forward bookings stop before the window ends at ${r.stops.map((s) => `${s.name} ${s.last_booking_date}`).join(", ")}` : ""),
       meta: { snapshot_date: r.snapshot_date, centres: r.attempts - r.failed - r.empty, stops: r.stops.length },
+    }));
+
+    // Retention purge: enforce the periods the owner approved on 14 September (services/retention.js).
+    // LAST, deliberately — the exit step above folds this night's departures into the monthly aggregate
+    // before the row-level detail is trimmed, so nothing is lost by trimming it here. Reports counts per
+    // table only, never what a removed row contained, and a failure marks the run partial like any other
+    // source rather than sinking the snapshot.
+    await step("retention", "retention purge", () => runPurge({ log }), (r) => ({
+      rows: r.total,
+      detail: r.detail,
+      meta: { at: r.at, removed: r.removed, cutoffs: r.cutoffs },
     }));
 
     const status = problems.length ? "partial" : "ok";
