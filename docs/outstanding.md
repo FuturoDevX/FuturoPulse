@@ -59,6 +59,10 @@ The full sequence and reasoning live in the work plan: https://claude.ai/code/ar
 - [ ] Xero or MYOB actuals replacing the fixed-cost entry (2–3 days)
 - [ ] OWNA sign-in/sign-out into Employment Hero timesheets — read-only proof of concept already done, scoped separately
 
+## Ask OWNA support
+
+- [ ] **Request forms scope on the OWNA API key** — the `FormSubmission` and `FormResponse` endpoint groups. A survey of the live tenant on 14 September found these are the only endpoints the key is refused on: every other endpoint answers normally, while both form endpoints return the permission error. OWNA reports a permission failure as HTTP 415, which reads like a malformed request and sends you chasing the wrong thing, so this cost real time to establish. Until the scope is granted no client-side work helps and we still do not know whether the centres use OWNA form templates at all. Once granted, `npm run discover-forms` answers it in one run (field names and fill rates only, never answers). Full detail: `docs/owna-forms-survey.md`
+
 ## Housekeeping, not code
 
 - [ ] Walk the CEO through the COE page and the mock
