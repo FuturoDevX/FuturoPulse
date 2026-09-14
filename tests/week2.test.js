@@ -1202,7 +1202,15 @@ test('Week 2 batch H — a same-site write survives a proxy; a cross-site one is
   const body=await evil.text();
   assert.match(body,/different web address/,'the refusal must explain itself');
   assert.doesNotMatch(body,/^Forbidden$/,'a bare "Forbidden" tells the reader nothing');
-  // An Origin that is not a URL at all is not a hostname match either.
+  // The header that caused all of this. Chrome ties the Origin header on a form submission to the
+  // page's referrer policy: under "no-referrer" it sends `Origin: null`, so the app's OWN forms
+  // looked cross-site and every write on the deployed site was refused. "same-origin" still stops a
+  // dashboard URL (which can name a centre) reaching another site, and keeps the Origin header.
+  const hdrs=(await fetch(b3+'/',{headers:{cookie},redirect:'manual'})).headers;
+  assert.equal(hdrs.get('referrer-policy'),'same-origin','no-referrer strips Origin from our own form posts');
+  assert.equal(hdrs.get('x-frame-options'),'DENY');
+  assert.equal(hdrs.get('cache-control'),'no-store');
+  // An opaque origin is still refused — but it should no longer be what our own browser sends.
   assert.equal((await post({origin:'null'})).status,403,'an opaque origin is not the site');
   // A GET is never checked: only writes carry this risk, and the cookie is SameSite=lax anyway.
   assert.equal((await fetch(b3+'/',{headers:{cookie,origin:'https://attacker.example'},redirect:'manual'})).status,200);

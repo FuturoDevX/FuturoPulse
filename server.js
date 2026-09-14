@@ -44,7 +44,11 @@ app.use("/", require("./routes/auth"));
 // Everything below requires a login
 app.use(requireLogin);
 app.use((req,res,next) => {
-  res.set("Cache-Control", "no-store"); res.set("Referrer-Policy", "no-referrer");
+  // "same-origin", not "no-referrer". The goal is that a dashboard URL — which can name a centre —
+  // never leaks to another site, and same-origin does that. no-referrer also stripped the Origin
+  // header from the browser's own form submissions (Chrome ties the two), which made every write on
+  // this site look cross-site to the guard below and refused it.
+  res.set("Cache-Control", "no-store"); res.set("Referrer-Policy", "same-origin");
   res.set("X-Content-Type-Options", "nosniff"); res.set("X-Frame-Options", "DENY");
   // Reject a write whose Origin is a genuinely different site. This is belt and braces — the session
   // cookie is already SameSite=lax, which is what actually stops a cross-site POST carrying a login.
@@ -73,6 +77,9 @@ app.use((req,res,next) => {
       return res.status(403).render("error", {
         message: "That form was submitted from a different web address than the one you are signed in to, so it was refused. " +
           "Reload the page and try again. If it keeps happening, tell your administrator the address shown in the browser bar.",
+        // Shown to admin and ops only (views/error.ejs), so the next refusal can be read off the
+        // screen rather than dug out of the host's logs. Hostnames and method only.
+        detail: `origin: ${originHost || "null / unparseable"}\npermitted: ${[...permitted].join(", ") || "none"}\nrequest: ${req.method} ${req.path}`,
       });
     }
   }
