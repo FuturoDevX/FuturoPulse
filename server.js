@@ -46,9 +46,35 @@ app.use(requireLogin);
 app.use((req,res,next) => {
   res.set("Cache-Control", "no-store"); res.set("Referrer-Policy", "no-referrer");
   res.set("X-Content-Type-Options", "nosniff"); res.set("X-Frame-Options", "DENY");
-  if (!["GET","HEAD","OPTIONS"].includes(req.method) && req.headers.origin) {
-    let host; try { host = new URL(req.headers.origin).host; } catch { return res.sendStatus(403); }
-    if (host !== req.get("host")) return res.sendStatus(403);
+  // Reject a write whose Origin is a genuinely different site. This is belt and braces — the session
+  // cookie is already SameSite=lax, which is what actually stops a cross-site POST carrying a login.
+  //
+  // It used to compare the Origin's host to the raw `Host` header, and that refused every write on
+  // the deployed site: this runs behind Cloudflare in front of Render, and the host a proxy forwards
+  // is not reliably the one the browser used (a port may be added or dropped, and the original may
+  // arrive only as X-Forwarded-Host). The result was a bare "Forbidden" on every form submission —
+  // saving places, generating a briefing — with nothing logged to explain it.
+  //
+  // So compare hostnames, and accept any hostname this request could legitimately have been made to.
+  // An attacker's origin matches none of them, which is the case this guard exists for.
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && req.headers.origin) {
+    const hostname = (v) => { try { return new URL(/^https?:\/\//.test(v) ? v : "https://" + v).hostname.toLowerCase(); } catch { return null; } };
+    const originHost = hostname(req.headers.origin);
+    const permitted = new Set([
+      req.hostname,                                  // honours X-Forwarded-Host when trust proxy is set
+      hostname(req.get("host")),                     // the raw Host header
+      hostname((req.get("x-forwarded-host") || "").split(",")[0].trim()), // first hop, if a proxy set it
+      hostname(process.env.PUBLIC_HOSTNAME || ""),   // the canonical address, if configured
+    ].filter(Boolean).map((h) => String(h).toLowerCase()));
+    if (!originHost || !permitted.has(originHost)) {
+      // Log the values that disagreed so this is diagnosable from the logs rather than guessed at.
+      // Hostnames only: never a query string, a body, or anything identifying a child or a family.
+      console.warn(`[origin] refused ${req.method} ${req.path}: origin ${originHost || "unparseable"}, permitted ${[...permitted].join(" ") || "none"}`);
+      return res.status(403).render("error", {
+        message: "That form was submitted from a different web address than the one you are signed in to, so it was refused. " +
+          "Reload the page and try again. If it keeps happening, tell your administrator the address shown in the browser bar.",
+      });
+    }
   }
   next();
 });

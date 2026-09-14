@@ -1159,3 +1159,58 @@ test('Week 2 batch G — the approved-places migration seeds only nulls and is i
   assert.equal(d.prepare("SELECT approved_places p FROM centres WHERE owna_id='2'").get().p,122,'a cleared value is re-seeded from the register');
  } finally {d.close();fs.rmSync(mdir,{recursive:true,force:true});}
 });
+
+// ===== Batch H — a write from the site itself must not be refused =====
+// On the deployed site (Cloudflare in front of Render) every form submission came back as a bare
+// "Forbidden": saving approved places, generating a briefing, everything. The cross-origin guard
+// compared the Origin's host to the raw `Host` header, and behind a proxy chain those are not
+// reliably the same string — a port may be added or dropped, and the address the browser actually
+// used can arrive only as X-Forwarded-Host. It now compares hostnames against every hostname the
+// request could legitimately have been made to, and says what happened instead of one bare word.
+test('Week 2 batch H — a same-site write survives a proxy; a cross-site one is still refused', async (t) => {
+ const dir2=fs.mkdtempSync(path.join(os.tmpdir(),'pulse-week2-origin-'));
+ const prev=process.env.DB_PATH, prevPublic=process.env.PUBLIC_HOSTNAME;
+ process.env.DB_PATH=path.join(dir2,'origin.db');
+ for(const k of Object.keys(require.cache)) if(k.startsWith(path.join(__dirname,'..'))&&!k.includes('node_modules')&&k!==__filename) delete require.cache[k];
+ const d2=require('../db/db'), app2=require('../server');
+ d2.prepare('INSERT INTO users(email,name,password_hash,role) VALUES(?,?,?,?)').run('origin@example.test','Origin Fixture',bcrypt.hashSync(pass,4),'admin');
+ const s3=app2.listen(0,'127.0.0.1'); await new Promise(r=>s3.once('listening',r));
+ const b3='http://127.0.0.1:'+s3.address().port, hostHeader='127.0.0.1:'+s3.address().port;
+ try{
+  const lr=await fetch(b3+'/login',{method:'POST',body:new URLSearchParams({email:'origin@example.test',password:pass}),redirect:'manual'});
+  const cookie=lr.headers.get('set-cookie').split(';')[0];
+  const post=(headers)=>fetch(b3+'/feedback',{method:'POST',redirect:'manual',
+    headers:{cookie,'content-type':'application/x-www-form-urlencoded',...headers},body:'area=overview&category=idea&message=hello'});
+
+  // The plain same-origin case: the browser's Origin is exactly the host it asked for.
+  assert.notEqual((await post({origin:'http://'+hostHeader})).status,403,'a write from the site itself must not be refused');
+  // Behind a TLS-terminating proxy the scheme differs and the port is dropped from Origin, while
+  // Host still carries one. Comparing the raw strings refused this — which is the production bug.
+  assert.notEqual((await post({origin:'https://127.0.0.1'})).status,403,'a dropped port must not refuse the write');
+  // The address the browser used can reach the app only as X-Forwarded-Host.
+  assert.notEqual((await post({origin:'https://futuro-pulse.onrender.com','x-forwarded-host':'futuro-pulse.onrender.com'})).status,403,
+    'the forwarded host is the address the browser used, and must be accepted');
+  // A canonical hostname can also be pinned by configuration, for a proxy that forwards neither.
+  process.env.PUBLIC_HOSTNAME='pulse.futuro.nsw.edu.au';
+  assert.notEqual((await post({origin:'https://pulse.futuro.nsw.edu.au'})).status,403,'the configured public hostname must be accepted');
+  delete process.env.PUBLIC_HOSTNAME;
+
+  // What the guard is actually for: another site posting with the user's cookie. Still refused —
+  // and now with a page that explains it, not the single word that left nobody any wiser.
+  const evil=await post({origin:'https://attacker.example'});
+  assert.equal(evil.status,403,'a genuinely cross-site write must still be refused');
+  const body=await evil.text();
+  assert.match(body,/different web address/,'the refusal must explain itself');
+  assert.doesNotMatch(body,/^Forbidden$/,'a bare "Forbidden" tells the reader nothing');
+  // An Origin that is not a URL at all is not a hostname match either.
+  assert.equal((await post({origin:'null'})).status,403,'an opaque origin is not the site');
+  // A GET is never checked: only writes carry this risk, and the cookie is SameSite=lax anyway.
+  assert.equal((await fetch(b3+'/',{headers:{cookie,origin:'https://attacker.example'},redirect:'manual'})).status,200);
+ } finally {
+  if(typeof s3.closeAllConnections==='function') s3.closeAllConnections();
+  await new Promise(r=>s3.close(r)); require('../middleware/session').store.stopPruning(); d2.close();
+  fs.rmSync(dir2,{recursive:true,force:true});
+  if(prevPublic===undefined) delete process.env.PUBLIC_HOSTNAME; else process.env.PUBLIC_HOSTNAME=prevPublic;
+  process.env.DB_PATH=prev;
+ }
+});

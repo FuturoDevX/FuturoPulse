@@ -60,6 +60,10 @@ services:
       # Default admin (change password after first login)
       - key: ADMIN_EMAIL
         sync: false
+      # The address people actually use, if a proxy forwards neither Host nor X-Forwarded-Host
+      # intact. Writes whose Origin matches it are accepted; leave unset unless a form is refused.
+      - key: PUBLIC_HOSTNAME
+        value: futuro-pulse.onrender.com
       - key: PRIVACY_CONTACT
         value: the Privacy Officer
       - key: AI_ASK_PER_HOUR
