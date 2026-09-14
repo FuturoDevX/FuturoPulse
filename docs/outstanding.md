@@ -70,6 +70,10 @@ The full sequence and reasoning live in the work plan: https://claude.ai/code/ar
 - [ ] Delete the two stale OneDrive copies of this app (copy `services/eh-timesheet.js` out of the archived worktree first if it is wanted). A server was found running from one of them on port 3003 on 12 September, serving 1 September data
 - [ ] Push the outstanding commits to GitHub
 
+## Fixed in production, recorded so it is not rediscovered
+
+- **Every write on the deployed site was refused with a bare "Forbidden"** (14 September, `/admin/places`, `/ai/briefing`, and every other form). The cross-origin guard compared the browser's Origin to the raw `Host` header; behind Cloudflare in front of Render those are not reliably the same string, so the app treated its own forms as cross-site. Fixed in `server.js`: hostnames are compared against every address the request could legitimately have come from, the mismatch is logged, and the refusal now renders an explanation instead of one word. `PUBLIC_HOSTNAME` is available in `render.yaml` as a belt-and-braces override. If a form is ever refused again, the Render log names the exact mismatch
+
 ## Known data problems at source — not calculation faults
 
 These limit what the dashboard can honestly show. Each page says so where it applies.
