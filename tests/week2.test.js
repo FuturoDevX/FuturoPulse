@@ -521,7 +521,12 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,rows_written) VALUES('2026-09-12 16:18:02','2026-09-12 16:20:31','ok',10)").run();
   const cookie=await login('exec');
   for(const url of ['/','/coe']){ // the two footers this fixture DB has the data to render
-   const html=await freeze(FROZEN,()=>page(url,cookie));
+   // NOT under freeze(): these footers format a STORED timestamp, so they do not depend on "now",
+   // and freeze() swaps the global Date for the duration of its callback. Awaiting a real HTTP
+   // round-trip inside it leaves Node's fetch keeping its socket alive against a clock that never
+   // advances, so the connection never times out and server.close() at the end of this file never
+   // returns — the tests all pass and the process then hangs. Freeze only synchronous work.
+   const html=await page(url,cookie);
    assert.match(html,/Data as at/,url+' should carry a freshness stamp');
    assert.ok(html.includes('13 Sep, 2:20 am')||html.includes('13 Sept, 2:20 am'),url+' must show the Sydney time of the run');
    assert.doesNotMatch(html,/2026-09-12 16:20:31/,url+' must not print the raw UTC column');
@@ -1020,7 +1025,15 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   } finally {clearTargets();db.prepare("DELETE FROM labour_weekly WHERE eh_centre=?").run(EH_ALPHA);
              db.prepare("UPDATE centres SET approved_places=NULL WHERE owna_id='a'").run();}
  });
- } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
+ } finally {
+  // server.close() only stops the listener and then WAITS for every open connection. Node's fetch
+  // keeps its sockets alive between requests, so with enough requests in one file there is always an
+  // idle keep-alive socket left and close() never calls back — the file's tests all pass and then the
+  // process sits there until the runner gives up. Drop the connections first, and stop the session
+  // store's sweep, so teardown is deterministic rather than a race with a keep-alive timeout.
+  require('../middleware/session').store.stopPruning();
+  if (typeof server.closeAllConnections==='function') server.closeAllConnections();
+  await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 // ===== Batch F — a restore must not reinstate the logins that were live when the backup was taken =====
