@@ -38,16 +38,19 @@ const incSum=(from,to)=>INC_FIX.filter(f=>f[0]>=from&&f[0]<=to).reduce((a,f)=>({
 for(const [ll,id] of [[1,'a'],[2,'b'],[3,'open']]) db.prepare('UPDATE centres SET ll_id=? WHERE owna_id=?').run(ll,id);
 const llp=db.prepare('INSERT INTO ll_pipeline(snapshot_date,ll_id,centre_name,status_id,status_name,count) VALUES(?,?,?,?,?,?)');
 llp.run(today,1,'Centre Alpha',4,'Waitlist',3);llp.run(today,1,'Centre Alpha',5,'Offer Accepted',1);llp.run(today,2,'Centre Beta',4,'Waitlist',1);
-const mem=db.prepare('INSERT INTO ll_pipeline_members(child_id,ll_id,owna_id,centre_name,child_name,family_name,status_id,status_name,wait_list_date,expected_start) VALUES(?,?,?,?,?,?,?,?,?,?)');
+// Batch 7: the pipeline tables are de-identified — no child_name, no family_name — so a family is an opaque
+// salted-hash key, exactly as the snapshot now writes it. famKey() only has to be stable and name-free here.
+const famKey=(n)=>require('crypto').createHmac('sha256','fixture-family-salt').update(String(n)).digest('hex').slice(0,32);
+const mem=db.prepare('INSERT INTO ll_pipeline_members(child_id,ll_id,owna_id,centre_name,family_key,status_id,status_name,wait_list_date,expected_start) VALUES(?,?,?,?,?,?,?,?,?)');
 // [child_id, ll_id, owna_id, status, wait_list_date, family]: Alpha joins this month (2), last month (2), six months back (3), 13 months back (1, outside the window), undated (1).
 for(const [cid,ll,owna,st,wl,fam] of [[1,1,'a',1,today,'One'],[2,1,'a',4,today,'Two'],[3,1,'a',5,monthShift(-1)+'-10','Three'],[4,1,'a',11,monthShift(-1)+'-12','Four'],
   [5,1,'a',4,monthShift(-6)+'-03','Five'],[6,1,'a',12,monthShift(-6)+'-04','Six'],[7,1,'a',3,monthShift(-6)+'-05','Seven'],[8,1,'a',4,monthShift(-13)+'-15','Eight'],[9,1,'a',2,null,'Nine'],
   [10,2,'b',4,monthShift(-2)+'-01','Ten'],[11,2,'b',5,monthShift(-2)+'-02','Eleven'],[12,3,'open',1,today,'Twelve'],[13,null,null,2,today,'Thirteen']])
-  mem.run(cid,ll,owna,owna?'Centre '+owna:null,'Fixture Child '+fam,'Fixture Family '+fam,st,String(st),wl,null);
+  mem.run(cid,ll,owna,owna?'Centre '+owna:null,famKey(fam),st,String(st),wl,null);
 // Alpha tours: completed last month; held (date passed) 3 months back; cancelled; scheduled next week; completed today; completed 13 months back; held by a non-member family.
-const tour=db.prepare('INSERT INTO ll_tours(task_id,ll_id,owna_id,centre_name,family_name,type_name,tour_date,is_completed,is_cancelled) VALUES(?,?,?,?,?,?,?,?,?)');
+const tour=db.prepare('INSERT INTO ll_tours(task_id,ll_id,owna_id,centre_name,family_key,type_name,tour_date,is_completed,is_cancelled) VALUES(?,?,?,?,?,?,?,?,?)');
 for(const [id,fam,d,done,canc] of [[1,'Three',monthShift(-1)+'-15',1,0],[2,'Five',monthShift(-3)+'-10',0,0],[3,'Six',monthShift(-3)+'-11',0,1],[4,'Seven',addDays(today,5),0,0],[5,'One',today,1,0],[6,'Two',monthShift(-13)+'-20',1,0],[7,'Zed',monthShift(-2)+'-05',0,0]])
-  tour.run(id,1,'a','Centre Alpha','Fixture Family '+fam,'Tour',d+'T00:30:00+00:00',done,canc);
+  tour.run(id,1,'a','Centre Alpha',famKey(fam),'Tour',d+'T00:30:00+00:00',done,canc);
 // Enrolment records carry the EXPECTED start for every status: only Enrolled (Started, 6) with a past date is a real start.
 const enr=db.prepare('INSERT INTO ll_enrolments(enrollment_id,ll_id,centre_name,child_id,status_id,start_date,withdrawn_date) VALUES(?,?,?,?,?,?,?)');
 enr.run(1,1,'Centre Alpha',101,6,monthShift(-2)+'-01',null);enr.run(2,1,'Centre Alpha',102,6,monthShift(-1)+'-01',null);
@@ -572,8 +575,8 @@ test('Week 1 batch 1',async(t)=>{
   const ex5=db.prepare("INSERT INTO child_exits(owna_id,child_key,room,start_date,finish_date,tenure_days,upcoming,reason,reason_source,updated_at) VALUES(?,?,'Room 2',NULL,?,NULL,1,NULL,NULL,datetime('now'))");
   ex5.run('a','a8','2026-11-20');                                                 // finishes 20 Nov: 10 of November's 30 days lost
   ex5.run('b','b4','2026-11-10');                                                 // Beta has no enrolled headcount → no day estimate
-  const st=db.prepare("INSERT INTO ll_pipeline_starts(enrollment_id,ll_id,owna_id,centre_name,child_name,status_id,expected_start,days_csv,updated_at) VALUES(?,1,?,?,?,?,?,?,datetime('now'))");
-  const mkStart=(id,owna,status,start,days)=>st.run(id,owna,'Centre '+owna,'Fixture Child S'+id,status,start,days);
+  const st=db.prepare("INSERT INTO ll_pipeline_starts(enrollment_id,ll_id,owna_id,centre_name,status_id,expected_start,days_csv,updated_at) VALUES(?,1,?,?,?,?,?,datetime('now'))");
+  const mkStart=(id,owna,status,start,days)=>st.run(id,owna,'Centre '+owna,status,start,days);
   mkStart(901,'a',5,'2026-11-01','mo,tu,we');        // firm, whole of November: 3 days/wk
   mkStart(902,'a',12,'2026-11-16','mo,tu,we,th,fr'); // firm, from 16 Nov: 5 days/wk × 15 of 30 days
   mkStart(903,'a',4,'2026-11-01','mo,tu');           // waitlist — all-pipeline only, never in the projection
@@ -845,6 +848,201 @@ test('Week 1 batch 1',async(t)=>{
    assert.doesNotMatch(boot(done.d),/reclaimed the freed pages/,'a clean boot vacuumed anyway');
    assert.doesNotMatch(boot(legacy.d),/reclaimed the freed pages/,'a clean boot vacuumed anyway');
   } finally { for(const d of opened) d.close();fs.rmSync(legDir,{recursive:true,force:true}); }
+ });
+
+ // ===== Batch 7 (14 September): the last names go =====
+ // The owner's decision: nobody uses the named lists, so the dashboard stops holding them at all. After this,
+ // what it knows about a CHILD is a LineLeader id, a centre, a status and dates, and about a STAFF MEMBER,
+ // hours. The three LineLeader tables are rebuilt from the CRM every night, so a purge alone would be undone
+ // by morning — the columns go AND the snapshot stops collecting them, and both halves are tested here.
+
+ // Every table, every column, every row, looking for anything shaped like a person's name. The allowlist is
+ // the only place a two-capitalised-word value is legitimate: the name of a CENTRE, a STAGE, a ROOM, a
+ // LEAVE/EXIT REASON or one of this app's own logins. A name reaching any other column fails this test —
+ // including a column that does not exist yet, which is the point of walking sqlite_master rather than a list.
+ const NOT_A_PERSON=new Set([
+  'centres.name','centres.suburb','centres.approval_no','users.name','users.email','sessions.sess',
+  'll_centres.name','ll_pipeline.centre_name','ll_pipeline.status_name','ll_enrolments.centre_name',
+  'll_pipeline_members.centre_name','ll_pipeline_members.status_name','ll_pipeline_starts.centre_name',
+  'll_tours.centre_name','ll_tours.type_name','ll_tours.result',
+  'child_exits.room','child_exits.reason','exits_monthly.room','labour_weekly.eh_centre','labour_budget.eh_centre',
+  'qc_audits.centre_name','qc_audits.qa_json','snapshot_runs.note','source_sync.detail','ai_briefings.content',
+ ]);
+ const NAMEISH=/\b[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\b/;
+ const scanForNames=(d,extra=[])=>{
+  const bad=[];
+  for(const t of d.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(r=>r.name)){
+   const cols=d.prepare(`PRAGMA table_info(${t})`).all().map(c=>c.name);
+   for(const row of d.prepare(`SELECT * FROM ${t}`).all())
+    for(const c of cols){
+     const v=row[c];
+     if(typeof v!=='string'||!v) continue;
+     const planted=extra.find(s=>v.includes(s));
+     if(planted) { bad.push(`${t}.${c} still holds "${planted}"`); continue; }
+     if(!NOT_A_PERSON.has(`${t}.${c}`)&&NAMEISH.test(v)) bad.push(`${t}.${c} = ${JSON.stringify(v.slice(0,60))}`);
+    }
+  }
+  return bad;
+ };
+
+ await t.test('the boot migration leaves no child, family or staff name in any table, and the hours survive',async()=>{
+  const Database=require('better-sqlite3'), {initSchema}=require('../db/init-schema');
+  const legDir=fs.mkdtempSync(path.join(os.tmpdir(),'pulse-names-'));
+  const file=path.join(legDir,'legacy.db'), d=new Database(file);
+  // Distinctive inventions, so a survivor is unmistakable wherever in the file it turns up.
+  const PLANTED=['Bartholemew','Fingleton','Perpetua','Grindlewald','Guinevere','Thistlewood','Ptolemy','Ravenscroft'];
+  try {
+   d.pragma('journal_mode = WAL');
+   // The three LineLeader tables exactly as the previous release left them. Every CREATE in schema.sql is
+   // IF NOT EXISTS, so loading it afterwards adds the rest of the database and leaves these three alone.
+   d.exec(`CREATE TABLE ll_pipeline_members (child_id INTEGER PRIMARY KEY, ll_id INTEGER, owna_id TEXT, centre_name TEXT,
+     child_name TEXT, family_name TEXT, status_id INTEGER, status_name TEXT, wait_list_date TEXT, expected_start TEXT, updated_at TEXT)`);
+   d.exec(`CREATE TABLE ll_pipeline_starts (enrollment_id INTEGER PRIMARY KEY, ll_id INTEGER, owna_id TEXT, centre_name TEXT,
+     child_name TEXT, status_id INTEGER, expected_start TEXT, days_csv TEXT, updated_at TEXT)`);
+   d.exec(`CREATE TABLE ll_tours (task_id INTEGER PRIMARY KEY, ll_id INTEGER, owna_id TEXT, centre_name TEXT,
+     family_name TEXT, type_name TEXT, tour_date TEXT, is_completed INTEGER DEFAULT 0, is_cancelled INTEGER DEFAULT 0, result TEXT, updated_at TEXT)`);
+   d.exec(fs.readFileSync(path.join(__dirname,'..','db','schema.sql'),'utf8'));
+   const insM=d.prepare("INSERT INTO ll_pipeline_members(child_id,ll_id,owna_id,centre_name,child_name,family_name,status_id,status_name,wait_list_date,expected_start) VALUES(?,1,'a','Centre Alpha',?,?,4,'Waitlist',?,?)");
+   const insS=d.prepare("INSERT INTO ll_pipeline_starts(enrollment_id,ll_id,owna_id,centre_name,child_name,status_id,expected_start,days_csv) VALUES(?,1,'a','Centre Alpha',?,5,?,'mo,tu')");
+   const insT=d.prepare("INSERT INTO ll_tours(task_id,ll_id,owna_id,centre_name,family_name,type_name,tour_date,is_completed,is_cancelled) VALUES(?,1,'a','Centre Alpha',?,'Tour',?,0,0)");
+   // Letter suffixes, not digits: the family key normalises a name down to its letters, so "Grindlewald1"
+   // and "Grindlewald2" would be one family and the distinct-key count below would prove nothing.
+   const LTR='abcdefghijklmnopqrstuvwxyz';
+   for(let i=0;i<200;i++){
+    const sfx=LTR[i%26]+LTR[(i/26|0)%26];
+    const kid='Bartholemew'+sfx+' Fingleton'+sfx, fam='Perpetua'+sfx+' Grindlewald'+sfx;
+    insM.run(i+1,kid,fam,'2026-0'+(1+i%9)+'-1'+(i%9),'2027-0'+(1+i%9)+'-01');
+    insS.run(i+1,kid,'2027-0'+(1+i%9)+'-01');
+    insT.run(i+1,fam,'2026-0'+(1+i%9)+'-1'+(i%9)+'T00:30:00Z');
+   }
+   // Roster weeks as OWNA's leave detail used to be stored: a named person and a leave type per entry.
+   // Guinevere is away twice on the Monday (two leave types, one person) — one person, both lots of hours.
+   const leave=[{staff:'Guinevere Thistlewood',leavetype:'Personal Leave',day:'1',hours:'8'},
+     {staff:'Guinevere Thistlewood',leavetype:'Annual Leave',day:'1',hours:'2'},
+     {staff:'Ptolemy Ravenscroft',leavetype:'Paid Parental Leave',day:'1',hours:'7.5'},
+     {staff:'Ptolemy Ravenscroft',leavetype:'TIL',day:'3',hours:'4'}];
+   d.prepare("INSERT INTO roster_weekly(owna_id,week_starting,total_hours,days_json,leave_json) VALUES('a','2026-09-07',420,?,?)")
+    .run(JSON.stringify([{day:'monday',hours:100,hpb:1.9,shifts:12,staff:12}]),JSON.stringify(leave));
+   d.prepare("INSERT INTO roster_weekly(owna_id,week_starting,total_hours,days_json,leave_json) VALUES('a','2026-08-31',400,'[]','[]')").run();
+   const hits=(re)=>([file,file+'-wal'].map(f=>fs.existsSync(f)?fs.readFileSync(f,'latin1'):'').join('').match(re)||[]).length;
+   const plantedRe=new RegExp(PLANTED.join('|'),'g');
+   assert.ok(hits(plantedRe)>0,'the fixture planted no recoverable names in the first place');
+   assert.ok(scanForNames(d,PLANTED).length>0,'the scanner does not see the names it is meant to catch');
+
+   const said=[],real=console.log;console.log=(...a)=>said.push(a.join(' '));
+   try { initSchema(d); } finally { console.log=real; }
+   const log=said.join('\n');
+
+   // (a) The columns are gone from the tables, not merely emptied — a nightly rebuild cannot refill them.
+   const cols=(t)=>d.prepare(`PRAGMA table_info(${t})`).all().map(c=>c.name);
+   assert.ok(!cols('ll_pipeline_members').includes('child_name')&&!cols('ll_pipeline_members').includes('family_name'),'ll_pipeline_members: '+cols('ll_pipeline_members'));
+   assert.ok(!cols('ll_pipeline_starts').includes('child_name'),'ll_pipeline_starts: '+cols('ll_pipeline_starts'));
+   assert.ok(!cols('ll_tours').includes('family_name'),'ll_tours: '+cols('ll_tours'));
+   assert.ok(cols('ll_pipeline_members').includes('family_key')&&cols('ll_tours').includes('family_key'),'the opaque family key was not added');
+   assert.equal(d.prepare('SELECT COUNT(*) n FROM ll_pipeline_members').get().n,200); // the rows themselves survive
+   assert.match(log,/dropped ll_pipeline_members\.child_name/);assert.match(log,/dropped ll_tours\.family_name/);
+   // The family match is carried across the drop, keyed off the name on its way out, so the cohort tour
+   // counts on /pipeline do not read zero until the next nightly rebuild fills the key in.
+   const mk=d.prepare('SELECT family_key k FROM ll_pipeline_members WHERE child_id=7').get().k;
+   assert.match(mk,/^[0-9a-f]{32}$/);
+   assert.equal(d.prepare('SELECT family_key k FROM ll_tours WHERE task_id=7').get().k,mk,'the tour no longer matches its family');
+   assert.equal(d.prepare('SELECT COUNT(DISTINCT family_key) n FROM ll_pipeline_members').get().n,200); // 200 distinct families stay 200
+   assert.notEqual(mk,d.prepare('SELECT family_key k FROM ll_pipeline_members WHERE child_id=8').get().k);
+
+   // (b) The roster keeps its hours and loses the person and the leave type. Guinevere's two Monday entries
+   //     are one person with 10 hours; the untouched empty week is left exactly as it was.
+   const lv=JSON.parse(d.prepare("SELECT leave_json j FROM roster_weekly WHERE week_starting='2026-09-07'").get().j);
+   assert.deepEqual(lv,[{day:'monday',staff:2,hours:17.5},{day:'wednesday',staff:1,hours:4}]);
+   assert.equal(lv.reduce((s,x)=>s+x.hours,0),leave.reduce((s,x)=>s+Number(x.hours),0),'leave hours changed');
+   assert.equal(d.prepare("SELECT leave_json j FROM roster_weekly WHERE week_starting='2026-08-31'").get().j,'[]');
+   assert.match(log,/rewrote 1 roster week\(s\) of leave detail as per-day hours/);
+
+   // (c) THE CHECK THAT MATTERS: walk every table and every column of the populated database. Nothing that
+   //     looks like a person may survive anywhere, and none of the planted names may survive at all.
+   assert.deepEqual(scanForNames(d,PLANTED),[],'a personal name survived the migration');
+
+   // (d) And it is gone from the FILE, not just from the rows: dropping a column or rewriting a JSON blob
+   //     leaves the old bytes on freed pages and in the WAL, where `strings` still reads them.
+   assert.match(log,/reclaimed the freed pages/);
+   assert.equal(hits(plantedRe),0,'the database file or WAL still holds the removed names');
+   // A database the batch has already cleaned is not rewritten on every later boot.
+   const said2=[];console.log=(...a)=>said2.push(a.join(' '));
+   try { initSchema(d); } finally { console.log=real; }
+   assert.doesNotMatch(said2.join('\n'),/reclaimed the freed pages/,'a clean boot vacuumed anyway');
+  } finally { d.close();fs.rmSync(legDir,{recursive:true,force:true}); }
+ });
+
+ // The migration is only half of it: these tables are REBUILT from LineLeader and OWNA every night, so the
+ // pulls have to stop collecting the names too — otherwise the next morning puts every one of them back.
+ await t.test('the nightly rebuild collects no name: pipeline members, starts, tours and roster leave',async()=>{
+  const snapshot=require('../services/snapshot');
+  const {owna}=require('../services/owna'), {lineleader}=require('../services/lineleader');
+  const savedLl={}, savedOw={};
+  for(const k of ['hasCreds','centres','statuses','familyCount','enrolmentsStarted','enrolmentsWithdrawn','enrolmentsByStatus','tasksOfType']) savedLl[k]=lineleader[k];
+  for(const k of ['listCentres','weeklyRoster']) savedOw[k]=owna[k];
+  const KID='Bartholemew Fingleton', FAM='Perpetua Grindlewald', PLANTED=['Bartholemew','Fingleton','Perpetua','Grindlewald','Guinevere','Thistlewood','Ptolemy','Ravenscroft','Personal Leave','Paid Parental Leave'];
+  try {
+   lineleader.hasCreds=()=>true;
+   lineleader.centres=async()=>[{id:1,values:{name:'Centre Alpha'},active:true}];
+   lineleader.statuses=async()=>[{id:4,values:{name:'Waitlist'}}];
+   lineleader.familyCount=async()=>2;
+   lineleader.enrolmentsStarted=async()=>[{id:9001,center:{id:1,values:{name:'Centre Alpha'}},child:{id:501,values:{name:KID,status:5}},
+     family:{values:{name:FAM}},expected_start_date:addDays(today,30),schedule:{monday:{am:true},tuesday:{am:true}}}];
+   lineleader.enrolmentsWithdrawn=async()=>[];
+   lineleader.enrolmentsByStatus=async()=>[{id:9002,center:{id:1,values:{name:'Centre Alpha'}},child:{id:502,values:{name:KID,status:4}},
+     family:{values:{name:FAM}},wait_list_date:today,expected_start_date:addDays(today,60)}];
+   lineleader.tasksOfType=async(tid)=>tid===89?[{id:9003,center:{id:1,values:{name:'Centre Alpha'}},family:{values:{name:FAM}},
+     type:{values:{value:'Tour'}},due_date_time:addDays(today,3)+'T01:00:00Z',is_completed:false,is_cancelled:false}]:[];
+   await snapshot.runLineLeaderSnapshot({log(){}});
+
+   const member=db.prepare('SELECT * FROM ll_pipeline_members WHERE child_id=502').get();
+   const start=db.prepare('SELECT * FROM ll_pipeline_starts WHERE enrollment_id=9001').get();
+   const tour=db.prepare('SELECT * FROM ll_tours WHERE task_id=9003').get();
+   assert.ok(member&&start&&tour,'the stubbed pull wrote nothing to check');
+   // What is left per child is LineLeader's own opaque id — a foreign key into the CRM, a name to nobody here.
+   assert.equal(member.child_id,502);assert.equal(start.enrollment_id,9001);assert.equal(tour.task_id,9003);
+   assert.equal(member.wait_list_date,today);assert.equal(start.days_csv,'mo,tu'); // the figures still arrive
+   // The family key keeps a tour matchable to its family WITHOUT either row holding the name, which is what
+   // the cohort tour count on /pipeline runs on.
+   assert.match(member.family_key,/^[0-9a-f]{32}$/);
+   assert.equal(tour.family_key,member.family_key,'a tour can no longer be matched to its family');
+   const guess=require('crypto').createHash('sha256').update('perpetuagrindlewald').digest('hex').slice(0,32);
+   assert.notEqual(member.family_key,guess,'the key is reproducible from a guessed family name');
+
+   // Roster: OWNA still hands back the person and the leave type; neither is written, the hours are.
+   owna.listCentres=async()=>[{id:'a',name:'Centre Alpha'}];
+   const wk=snapshot.recentMondays(1)[0];
+   owna.weeklyRoster=async(id,w)=>w!==wk?null:({rosteredhours:[{monday:80,hoursperbooking:1.6},{tuesday:60,hoursperbooking:1.5}],
+     monday:[{staffid:'s1'},{staffid:'s2'}],tuesday:[{staffid:'s1'}],
+     leave:[{staff:'Guinevere Thistlewood',leavetype:'Personal Leave',day:'1',hours:'8'},
+            {staff:'Guinevere Thistlewood',leavetype:'Annual Leave',day:'1',hours:'2'},
+            {staff:'Ptolemy Ravenscroft',leavetype:'Paid Parental Leave',day:'2',hours:'7.5'}]});
+   await snapshot.runRoster({weeks:1,log(){}});
+   const r=db.prepare('SELECT * FROM roster_weekly WHERE owna_id=? AND week_starting=?').get('a',wk);
+   assert.equal(r.total_hours,140);
+   assert.deepEqual(JSON.parse(r.leave_json),[{day:'monday',staff:1,hours:10},{day:'tuesday',staff:1,hours:7.5}]);
+   const rc=m.rosterCentre('a',12);
+   assert.deepEqual(rc.leave,[{day:'monday',staff:1,hours:10},{day:'tuesday',staff:1,hours:7.5}]); // the page still gets its figures
+
+   // And nothing anywhere in the database looks like a person, planted or otherwise.
+   assert.deepEqual(scanForNames(db,PLANTED),[],'the nightly rebuild wrote a personal name');
+   // The pages that used to print those lists render, and print no name.
+   const admin=await login('admin');
+   const rendered={};
+   for(const url of ['/centre/a/pipeline','/centre/a','/rostering']){
+    rendered[url]=await page(url,admin);
+    for(const s of PLANTED) assert.doesNotMatch(rendered[url],new RegExp(s),url+' prints '+s);
+   }
+   // The named lists became counts rather than blank columns: the pipeline page has no Child/Family column
+   // left to leave empty, and the centre's leave block is a per-day count of people and hours.
+   const pipe=rendered['/centre/a/pipeline'];
+   assert.match(pipe,/What&#39;s in the pipeline|What's in the pipeline/);
+   assert.doesNotMatch(pipe,/<th>Child<\/th>|<th>Family<\/th>/);
+   assert.match(pipe,/<thead><tr><th>When<\/th><th>Type<\/th><\/tr><\/thead>/);
+   assert.match(rendered['/centre/a'],/<thead><tr><th>Day<\/th><th class="num">On leave<\/th><th class="num">Leave hours<\/th><\/tr><\/thead>/);
+  } finally {
+   Object.assign(lineleader,savedLl);Object.assign(owna,savedOw);
+  }
  });
  } finally {await new Promise(r=>server.close(r));db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

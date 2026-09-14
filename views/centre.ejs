@@ -258,11 +258,18 @@
     </div>
     <% } %>
 
-    <% if (locals.canSeeIdentified && roster.leave && roster.leave.length) { %>
-    <h3 class="card-sub">On leave this week</h3>
-    <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--text);line-height:1.7;">
-      <% roster.leave.slice(0,15).forEach(function(l){ %><li><%= locals.canSeeIdentified ? l.staff : 'Staff member' %> — <%= l.leavetype %><%= l.hours?(' · '+l.hours+'h'):'' %></li><% }); %>
-    </ul>
+    <% if (locals.canSeeIdentified && roster.leave && roster.leave.length) {
+         var lvTot = roster.leave.reduce(function(a,l){ a.staff += (l.staff||0); a.hours += (l.hours||0); return a; }, {staff:0,hours:0}); %>
+    <h3 class="card-sub">On leave this week <span class="muted" style="font-weight:400;font-size:12px;">· <%= lvTot.staff %> across the week · <%= hnum(lvTot.hours) %>h</span></h3>
+    <table>
+      <thead><tr><th>Day</th><th class="num">On leave</th><th class="num">Leave hours</th></tr></thead>
+      <tbody>
+        <% roster.leave.forEach(function(l){ %>
+          <tr><td><%= cap3(String(l.day||'')) %></td><td class="num"><%= l.staff %></td><td class="num"><%= hnum(l.hours) %></td></tr>
+        <% }); %>
+      </tbody>
+    </table>
+    <p class="footnote">Hours only. This dashboard holds no staff name and no leave type — a leave type says something about a person's health, and only the hours were ever used. Employment Hero remains the record of who was away and why.</p>
     <% } %>
     <p class="footnote">Rostered hours &amp; hours per occupied place (HPOP) from OWNA’s weekly roster. Worked hours = Employment Hero actual hours scoped to what OWNA rosters — educators + kitchen (cooks) — excluding paid leave and cleaning. Worked − rostered flags overtime (positive) or under-worked rosters (negative); ±3% is on plan.</p>
   </div>

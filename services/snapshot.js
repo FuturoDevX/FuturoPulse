@@ -5,6 +5,7 @@ const db = require("../db/db");
 const { owna } = require("./owna");
 const { lineleader } = require("./lineleader");
 const { runLabourSnapshot } = require("./eh-labour");
+const { leaveTotals } = require("../db/init-schema"); // one implementation, shared with the migration
 const cal = require("./calendar");
 const metrics = require("./metrics"); // read-model only (db + calendar); it never requires this file back
 
@@ -365,7 +366,10 @@ async function runRoster({ weeks = 14, log = console.log } = {}) {
         const h = rh[d] ? rh[d].hours : 0; total += h;
         return { day: d, hours: Math.round(h * 10) / 10, hpb: rh[d] ? rh[d].hpb : null, shifts: shifts.length, staff: staff.size };
       });
-      const leave = (Array.isArray(r.leave) ? r.leave : []).map((l) => ({ staff: l.staff, leavetype: l.leavetype, day: l.day, hours: l.hours }));
+      // Leave: hours only. OWNA names the person and gives the leave type; neither is written (see
+      // leaveTotals) — the name is not ours to keep and the type implies health. The hours are what the
+      // Rostering page and the centre hub use, and they are unchanged.
+      const leave = leaveTotals(r.leave);
       upsert.run({ owna_id: c.id, week_starting: wk, total_hours: Math.round(total * 10) / 10, days_json: JSON.stringify(days), leave_json: JSON.stringify(leave) });
       rows += 1;
     }
@@ -835,13 +839,29 @@ function scheduleDays(sched) {
 // Pipeline statuses that could still convert to an enrolment (exclude Enrolled/Alumni/Withdrawn/Lost/Rejected).
 const PIPELINE_STATUSES = new Set([1, 2, 11, 3, 4, 12, 5]);
 
+// The LineLeader pipeline tables hold no child or family name (APP 11.2 — see db/schema.sql). What is kept
+// per row is LineLeader's own opaque id, which is a foreign key into LineLeader and identifies nobody here.
 const upsertPipelineStart = db.prepare(`
-  INSERT INTO ll_pipeline_starts (enrollment_id, ll_id, owna_id, centre_name, child_name, status_id, expected_start, days_csv, updated_at)
-  VALUES (@enrollment_id, @ll_id, @owna_id, @centre_name, @child_name, @status_id, @expected_start, @days_csv, datetime('now'))
+  INSERT INTO ll_pipeline_starts (enrollment_id, ll_id, owna_id, centre_name, status_id, expected_start, days_csv, updated_at)
+  VALUES (@enrollment_id, @ll_id, @owna_id, @centre_name, @status_id, @expected_start, @days_csv, datetime('now'))
   ON CONFLICT(enrollment_id) DO UPDATE SET
-    ll_id=@ll_id, owna_id=@owna_id, centre_name=@centre_name, child_name=@child_name,
+    ll_id=@ll_id, owna_id=@owna_id, centre_name=@centre_name,
     status_id=@status_id, expected_start=@expected_start, days_csv=@days_csv, updated_at=datetime('now')
 `);
+
+// A tour row carries no family id from LineLeader, only the family's name, and the cohort figures on
+// /pipeline need to know which of a month's families held a tour. So the name is hashed in memory and only
+// the hash is stored, exactly as child_exits.child_key is: it has to keep two families in one centre apart,
+// nothing more. The salt is random per process and never written to disk, so a stored key cannot be tested
+// against a guessed surname. ll_pipeline_members and ll_tours are rebuilt in the same run, so both sides of
+// the match are always keyed with the same salt; set LL_FAMILY_KEY_SALT to keep keys stable across restarts
+// (only needed if one of the two pulls fails and leaves the other's keys a generation ahead).
+const LL_FAMILY_KEY_SALT = process.env.LL_FAMILY_KEY_SALT || crypto.randomBytes(32).toString("hex");
+function familyRowKey(name) {
+  const n = (name || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (!n) return null;
+  return crypto.createHmac("sha256", LL_FAMILY_KEY_SALT).update(n).digest("hex").slice(0, 32);
+}
 
 const linkCentreLl = db.prepare(`UPDATE centres SET ll_id = ? WHERE owna_id = ?`);
 
@@ -922,7 +942,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
       const llId = r.center && r.center.id;
       upsertPipelineStart.run({
         enrollment_id: r.id, ll_id: llId, owna_id: llToOwna.get(llId) || null,
-        centre_name: nameOf(r, "center"), child_name: r.child && r.child.values && r.child.values.name,
+        centre_name: nameOf(r, "center"),
         status_id: status, expected_start: start, days_csv: scheduleDays(r.schedule),
       });
       n += 1;
@@ -951,14 +971,14 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
         const llId = r.center && r.center.id;
         const st = r.child && r.child.values && r.child.values.status;
         db.prepare(`
-          INSERT INTO ll_pipeline_members (child_id, ll_id, owna_id, centre_name, child_name, family_name, status_id, status_name, wait_list_date, expected_start, updated_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))
+          INSERT INTO ll_pipeline_members (child_id, ll_id, owna_id, centre_name, family_key, status_id, status_name, wait_list_date, expected_start, updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
           ON CONFLICT(child_id) DO UPDATE SET ll_id=excluded.ll_id, owna_id=excluded.owna_id, centre_name=excluded.centre_name,
-            child_name=excluded.child_name, family_name=excluded.family_name, status_id=excluded.status_id, status_name=excluded.status_name,
+            family_key=excluded.family_key, status_id=excluded.status_id, status_name=excluded.status_name,
             wait_list_date=excluded.wait_list_date, expected_start=excluded.expected_start, updated_at=datetime('now')
         `).run(
           r.child.id, llId, llToOwna.get(llId) || null, nameOf(r, "center"),
-          r.child.values && r.child.values.name, r.family && r.family.values && r.family.values.name,
+          familyRowKey(r.family && r.family.values && r.family.values.name),
           st, statusName.get(st) || null,
           llLocalDate(r.wait_list_date), r.expected_start_date ? String(r.expected_start_date).slice(0, 10) : null
         );
@@ -979,14 +999,14 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
       for (const t of list) {
         const llId = t.center && t.center.id;
         db.prepare(`
-          INSERT INTO ll_tours (task_id, ll_id, owna_id, centre_name, family_name, type_name, tour_date, is_completed, is_cancelled, result, updated_at)
+          INSERT INTO ll_tours (task_id, ll_id, owna_id, centre_name, family_key, type_name, tour_date, is_completed, is_cancelled, result, updated_at)
           VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))
           ON CONFLICT(task_id) DO UPDATE SET ll_id=excluded.ll_id, owna_id=excluded.owna_id, centre_name=excluded.centre_name,
-            family_name=excluded.family_name, type_name=excluded.type_name, tour_date=excluded.tour_date,
+            family_key=excluded.family_key, type_name=excluded.type_name, tour_date=excluded.tour_date,
             is_completed=excluded.is_completed, is_cancelled=excluded.is_cancelled, result=excluded.result, updated_at=datetime('now')
         `).run(
           t.id, llId, llToOwna.get(llId) || null, nameOf(t, "center"),
-          t.family && t.family.values && t.family.values.name,
+          familyRowKey(t.family && t.family.values && t.family.values.name),
           t.type && t.type.values && t.type.values.value,
           t.due_date_time || null, t.is_completed ? 1 : 0, t.is_cancelled ? 1 : 0,
           t.result && t.result.values && (t.result.values.value || t.result.values.name) || null

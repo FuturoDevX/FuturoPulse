@@ -434,27 +434,36 @@ function centrePipelineDetail(ownaId) {
     .all(date, c.ll_id).forEach((r) => { pc[r.status_id] = r.count; });
   const funnel = FUNNEL_STAGES.map(([id, name]) => ({ id, name, count: pc[id] || 0 }));
 
-  // Members (child-level) grouped by stage, most recent activity first.
+  // Members (child-level) summarised per stage. This used to be a list of children and families by name;
+  // it is now COUNTS — how many are at each stage, and when they want to start — because no child or family
+  // name is held any more (db/schema.sql). LineLeader is where a name is looked up.
   const memberRows = db.prepare(`
-    SELECT child_id, child_name, family_name, status_id, status_name, wait_list_date, expected_start
+    SELECT child_id, status_id, status_name, wait_list_date, expected_start
     FROM ll_pipeline_members WHERE owna_id = ?
     ORDER BY COALESCE(wait_list_date, expected_start) DESC
   `).all(ownaId);
   const membersByStage = {};
-  FUNNEL_STAGES.forEach(([id]) => { membersByStage[id] = []; });
-  memberRows.forEach((m) => { (membersByStage[m.status_id] = membersByStage[m.status_id] || []).push(m); });
+  FUNNEL_STAGES.forEach(([id]) => { membersByStage[id] = { count: 0, starts: [], no_start: 0, joined_from: null, joined_to: null }; });
+  memberRows.forEach((r) => {
+    const s = membersByStage[r.status_id] || (membersByStage[r.status_id] = { count: 0, starts: [], no_start: 0, joined_from: null, joined_to: null });
+    s.count += 1;
+    const mth = r.expected_start ? String(r.expected_start).slice(0, 7) : null;
+    if (mth) { const hit = s.starts.find((x) => x.month === mth); if (hit) hit.n += 1; else s.starts.push({ month: mth, n: 1 }); }
+    else s.no_start += 1;
+    const wl = r.wait_list_date ? String(r.wait_list_date).slice(0, 10) : null;
+    if (wl) { if (!s.joined_from || wl < s.joined_from) s.joined_from = wl; if (!s.joined_to || wl > s.joined_to) s.joined_to = wl; }
+  });
+  Object.values(membersByStage).forEach((s) => s.starts.sort((a, b) => a.month.localeCompare(b.month)));
 
-  // Upcoming tours (scheduled, not done/cancelled) + recent completed.
+  // Upcoming tours (scheduled, not done/cancelled) + recent completed. When and what type — the family the
+  // booking belongs to is in LineLeader, not here, so there is no name and no per-family current stage.
   const upcomingTours = db.prepare(`
-    SELECT t.family_name, t.type_name, t.tour_date, t.result,
-      (SELECT m.status_name FROM ll_pipeline_members m
-        WHERE m.owna_id = t.owna_id AND m.family_name = t.family_name LIMIT 1) AS current_stage
-    FROM ll_tours t
-    WHERE t.owna_id = ? AND t.is_completed = 0 AND t.is_cancelled = 0 AND substr(t.tour_date,1,10) >= ?
-    ORDER BY t.tour_date ASC
+    SELECT task_id, type_name, tour_date, result FROM ll_tours
+    WHERE owna_id = ? AND is_completed = 0 AND is_cancelled = 0 AND substr(tour_date,1,10) >= ?
+    ORDER BY tour_date ASC
   `).all(ownaId, today);
   const recentTours = db.prepare(`
-    SELECT family_name, type_name, tour_date, result FROM ll_tours
+    SELECT task_id, type_name, tour_date, result FROM ll_tours
     WHERE owna_id = ? AND is_completed = 1 AND substr(tour_date,1,10) < ?
     ORDER BY tour_date DESC LIMIT 10
   `).all(ownaId, today);
@@ -515,10 +524,12 @@ function funnelByCentre(month = null, today = todayStr()) {
   if (cohort) {
     db.prepare(`SELECT owna_id, COUNT(*) n FROM ll_pipeline_members WHERE owna_id IS NOT NULL AND substr(wait_list_date,1,7) = ? GROUP BY owna_id`)
       .all(cohort).forEach((r) => { leadsMap[r.owna_id] = r.n; });
-    // Tours held by the cohort's families — matched on family within the centre, counted only (never listed), and only
-    // from the day the family joined: a tour before that wait-list date came from an earlier enquiry, not this cohort.
+    // Tours held by the cohort's families — matched on the family KEY within the centre (a salted hash of the
+    // family name; neither table holds the name itself), counted only (never listed), and only from the day the
+    // family joined: a tour before that wait-list date came from an earlier enquiry, not this cohort.
     db.prepare(`SELECT owna_id, ${TOUR_COUNT_SQL} FROM ll_tours t WHERE owna_id IS NOT NULL AND ${TOUR_HELD_SQL}
-      AND EXISTS (SELECT 1 FROM ll_pipeline_members m WHERE m.owna_id = t.owna_id AND m.family_name = t.family_name
+      AND t.family_key IS NOT NULL
+      AND EXISTS (SELECT 1 FROM ll_pipeline_members m WHERE m.owna_id = t.owna_id AND m.family_key = t.family_key
         AND substr(m.wait_list_date,1,7) = @cohort AND substr(t.tour_date,1,10) >= substr(m.wait_list_date,1,10))
       GROUP BY owna_id`).all({ today, cohort }).forEach((r) => { toursMap[r.owna_id] = r; });
   } else {

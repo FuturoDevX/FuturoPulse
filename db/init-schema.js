@@ -5,7 +5,38 @@
 // would create the schema on an ephemeral filesystem that the running app never sees.
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
+
+// Roster leave, de-identified: OWNA hands back one entry per staff member per day, carrying that person's
+// name and their leave type. Only the HOURS are ever used (services/metrics.js rosterCentre, views/centre.ejs),
+// so this folds the entries into one row per day — how many people were on leave and for how many hours —
+// and the name and leave type never reach the database. Accepts either OWNA's array or a stored JSON string,
+// so the nightly write (services/snapshot.js) and the one-off migration below share one implementation.
+// Days are normalised to the weekday names days_json already uses; OWNA numbers them 1 = Monday.
+const LEAVE_DOW = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+function leaveTotals(input) {
+  let list = input;
+  if (typeof list === "string") { try { list = JSON.parse(list || "[]"); } catch { return []; } }
+  if (!Array.isArray(list)) return [];
+  const byDay = new Map();
+  for (const e of list) {
+    if (!e || typeof e !== "object") continue;
+    const raw = e.day == null ? "" : String(e.day).trim().toLowerCase();
+    const day = /^[1-7]$/.test(raw) ? LEAVE_DOW[Number(raw) - 1] : (raw || "unknown");
+    const d = byDay.get(day) || { day, staff: 0, hours: 0, who: new Set() };
+    // A person can hold two leave entries on one day (e.g. part personal, part unpaid): one person, both lots
+    // of hours. Count distinct people while the names are still in hand; an already-aggregated row counts as
+    // whatever it says. After this, nothing downstream can tell two entries from two people.
+    if (typeof e.staff === "number") d.staff += e.staff;
+    else if (e.staff != null && String(e.staff).trim()) d.who.add(String(e.staff).trim().toLowerCase());
+    else d.staff += 1;
+    d.hours += Number(e.hours) || 0;
+    byDay.set(day, d);
+  }
+  return LEAVE_DOW.filter((d) => byDay.has(d)).concat([...byDay.keys()].filter((d) => !LEAVE_DOW.includes(d)))
+    .map((k) => { const d = byDay.get(k); return { day: d.day, staff: d.staff + d.who.size, hours: Math.round(d.hours * 100) / 100 }; });
+}
 
 function initSchema(db) {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
@@ -71,22 +102,60 @@ function initSchema(db) {
   addColumnIfMissing("action_plan_items", "priority", "TEXT");
   addColumnIfMissing("action_plan_items", "job_reference", "TEXT");
 
-  // Exit report de-identification (APP 11.2): departed children's names and dates of birth are no longer
-  // collected, so clean them out of any database that already has them. The nightly rebuild would only
-  // put them back, which is why the columns go rather than the rows. SQLite 3.35+ can drop a column that
-  // is in no key or index (child_name/dob are in neither); otherwise fall back to clearing the values.
+  // The tours/members family match used to be on the family NAME. It is now a salted hash of it, written
+  // by the nightly LineLeader rebuild, so an existing database needs the column before the drops below.
+  addColumnIfMissing("ll_pipeline_members", "family_key", "TEXT");
+  addColumnIfMissing("ll_tours", "family_key", "TEXT");
+
+  // De-identification (APP 11.2). This dashboard is a DERIVED system: OWNA, Employment Hero and LineLeader
+  // remain the records of who each child, family and staff member is, and nobody used the named lists here.
+  // So no child name, family name, date of birth or staff name is collected any more — clean them out of any
+  // database that already has them. Every one of these tables is REBUILT from its source (child_exits and the
+  // three ll_* tables nightly), so deleting the ROWS would only have the names written back the next morning:
+  // the COLUMNS go, and the snapshot stops collecting them. SQLite 3.35+ can drop a column that is in no key
+  // or index — none of these are — otherwise fall back to clearing the values.
+  const NAME_COLUMNS = [
+    ["child_exits", ["child_name", "dob"], "the exit report"],
+    ["ll_pipeline_members", ["child_name", "family_name"], "the centre pipeline"],
+    ["ll_pipeline_starts", ["child_name"], "the enrolment projection"],
+    ["ll_tours", ["family_name"], "the tour list"],
+  ];
   const exitCols = db.prepare("PRAGMA table_info(child_exits)").all().map((c) => c.name);
   let deidentified = false; // set when this boot actually removed or rewrote name-bearing data
-  for (const col of ["child_name", "dob"]) {
-    if (!exitCols.includes(col)) continue;
-    try {
-      db.exec(`ALTER TABLE child_exits DROP COLUMN ${col}`);
-      console.log(`[init] dropped child_exits.${col} — the exit report no longer stores it`);
-    } catch (e) {
-      db.exec(`UPDATE child_exits SET ${col} = NULL`);
-      console.log(`[init] could not drop child_exits.${col} (${e.message}) — cleared every value instead`);
+
+  // Carry the family match across the drop. The cohort tour figures on /pipeline match a tour to its family,
+  // and LineLeader gives no family id on a tour row — only the name. Waiting for the nightly rebuild to fill
+  // family_key would leave those counts reading zero until the next morning, so derive the key HERE, from the
+  // name that is about to go, with a salt that exists only for this boot and is never written down. Both
+  // tables are keyed in the same pass, so they agree; the nightly rebuild then re-keys both with its own salt.
+  const bootSalt = crypto.randomBytes(32).toString("hex");
+  const familyKey = (name) => {
+    const n = (name || "").toLowerCase().replace(/[^a-z]/g, "");
+    return n ? crypto.createHmac("sha256", bootSalt).update(n).digest("hex").slice(0, 32) : null;
+  };
+  for (const [table, idCol] of [["ll_pipeline_members", "child_id"], ["ll_tours", "task_id"]]) {
+    const have = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (!have.includes("family_name") || !have.includes("family_key")) continue;
+    const rows = db.prepare(`SELECT ${idCol} AS id, family_name FROM ${table} WHERE family_name IS NOT NULL AND family_key IS NULL`).all();
+    if (!rows.length) continue;
+    const set = db.prepare(`UPDATE ${table} SET family_key = ? WHERE ${idCol} = ?`);
+    db.transaction(() => { for (const r of rows) set.run(familyKey(r.family_name), r.id); })();
+    console.log(`[init] keyed ${rows.length} ${table} row(s) by an opaque family key, so the tour match survives the name going`);
+  }
+
+  for (const [table, cols, what] of NAME_COLUMNS) {
+    const have = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    for (const col of cols) {
+      if (!have.includes(col)) continue;
+      try {
+        db.exec(`ALTER TABLE ${table} DROP COLUMN ${col}`);
+        console.log(`[init] dropped ${table}.${col} — ${what} no longer stores it`);
+      } catch (e) {
+        db.exec(`UPDATE ${table} SET ${col} = NULL`);
+        console.log(`[init] could not drop ${table}.${col} (${e.message}) — cleared every value instead`);
+      }
+      deidentified = true;
     }
-    deidentified = true;
   }
   // Legacy child_key values were the raw "name|dob" string, i.e. a recoverable name. Replace them with
   // opaque ids; the next exit rebuild re-keys every row with a salted hash anyway.
@@ -94,6 +163,21 @@ function initSchema(db) {
     const n = db.prepare("UPDATE child_exits SET child_key = lower(hex(randomblob(16))) WHERE child_key LIKE '%|%'").run().changes;
     console.log(`[init] replaced ${n} name-bearing child_exits keys with opaque ids`);
     deidentified = true;
+  }
+  // roster_weekly.leave_json used to be one entry per staff member per day — {staff, leavetype, day, hours} —
+  // where `staff` is a person's name and `leavetype` (personal, parental) implies health, which is sensitive
+  // information. Only the hours were ever used. Rewrite each stored week IN PLACE to per-day totals,
+  // {day, staff: <count of people on leave>, hours}, so the figures survive and neither survives with them.
+  // Distinct names are counted here while they are still readable; after this boot nothing can recover them.
+  const rosterCols = db.prepare("PRAGMA table_info(roster_weekly)").all().map((c) => c.name);
+  if (rosterCols.includes("leave_json")) {
+    const legacy = db.prepare("SELECT owna_id, week_starting, leave_json FROM roster_weekly WHERE leave_json LIKE '%\"staff\":\"%' OR leave_json LIKE '%leavetype%'").all();
+    if (legacy.length) {
+      const write = db.prepare("UPDATE roster_weekly SET leave_json = ? WHERE owna_id = ? AND week_starting = ?");
+      db.transaction(() => { for (const r of legacy) write.run(JSON.stringify(leaveTotals(r.leave_json)), r.owna_id, r.week_starting); })();
+      console.log(`[init] rewrote ${legacy.length} roster week(s) of leave detail as per-day hours — no staff name, no leave type`);
+      deidentified = true;
+    }
   }
   // Dropping a column, clearing it or rewriting a key only changes the rows SQL can see: SQLite leaves the
   // old bytes on the freed pages of the database file and in the WAL, where `strings` still reads them, and
@@ -103,9 +187,16 @@ function initSchema(db) {
   // already migrated by the earlier release as well as the ones still carrying the columns, so it runs once
   // per database, recorded in user_version (this dashboard uses that pragma for nothing else), and never on
   // a boot that has nothing to reclaim — a normal boot must not rewrite the database every time.
-  const RECLAIM_STAMP = 1; // bump if a later migration frees name-bearing pages again
+  const RECLAIM_STAMP = 2; // bump if a later migration frees name-bearing pages again (2: the LineLeader
+                           // pipeline tables and the roster's leave detail joined child_exits)
   const stamped = db.pragma("user_version", { simple: true }) >= RECLAIM_STAMP;
-  const mayHoldResidue = deidentified || (!stamped && exitCols.length && !!db.prepare("SELECT 1 FROM child_exits").get());
+  // A database stamped by the EARLIER release has already had child_exits reclaimed, but its pipeline and
+  // roster pages are still in the file — so "has this stamp" is the only thing that clears a database, and
+  // any of the name-bearing tables holding rows is enough to have to reclaim again.
+  const hadRows = () => NAME_COLUMNS.concat([["roster_weekly"]]).some(([t]) => {
+    try { return !!db.prepare(`SELECT 1 FROM ${t}`).get(); } catch { return false; }
+  });
+  const mayHoldResidue = deidentified || (!stamped && hadRows());
   if (mayHoldResidue) {
     try {
       db.pragma("secure_delete = ON"); // later deletions zero their pages instead of leaving them readable
@@ -170,4 +261,4 @@ function initSchema(db) {
   }
 }
 
-module.exports = { initSchema };
+module.exports = { initSchema, leaveTotals };

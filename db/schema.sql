@@ -146,12 +146,18 @@ CREATE TABLE IF NOT EXISTS exits_monthly (
 CREATE INDEX IF NOT EXISTS idx_exitsmon_month ON exits_monthly(month);
 
 -- ===== Enrolment projection: CRM pipeline families with expected start + weekly schedule =====
+-- De-identified (Australian Privacy Principle 11.2), like child_exits above and for the same reason: this
+-- dashboard is a DERIVED system and LineLeader remains the record of who each child and family is. The three
+-- ll_pipeline_* / ll_tours tables below therefore hold no child name, family name or date of birth. What
+-- identifies a row is LineLeader's own opaque id (enrollment_id / child_id / task_id) — a foreign key into
+-- LineLeader, useless on its own — plus a centre, a status and dates. These tables are REBUILT every night
+-- from LineLeader, so the names are not collected at all (see services/snapshot.js); deleting them here
+-- alone would only have them written back the next morning.
 CREATE TABLE IF NOT EXISTS ll_pipeline_starts (
-  enrollment_id  INTEGER PRIMARY KEY,
+  enrollment_id  INTEGER PRIMARY KEY,   -- LineLeader enrolment id (opaque)
   ll_id          INTEGER,
   owna_id        TEXT,               -- mapped OWNA centre (NULL for pre-open LineLeader-only centres)
   centre_name    TEXT,
-  child_name     TEXT,
   status_id      INTEGER,
   expected_start TEXT,               -- YYYY-MM-DD
   days_csv       TEXT,               -- e.g. "mo,tu,we"
@@ -162,12 +168,12 @@ CREATE INDEX IF NOT EXISTS idx_pstarts_start ON ll_pipeline_starts(expected_star
 
 -- ===== Centre pipeline drill-down: individual members + scheduled tours =====
 CREATE TABLE IF NOT EXISTS ll_pipeline_members (
-  child_id       INTEGER PRIMARY KEY,   -- deduped per child
+  child_id       INTEGER PRIMARY KEY,   -- LineLeader child id (opaque), deduped per child
   ll_id          INTEGER,
   owna_id        TEXT,
   centre_name    TEXT,
-  child_name     TEXT,
-  family_name    TEXT,
+  family_key     TEXT,                  -- salted hash of the family name — opaque, not reversible; only
+                                        -- has to line a tour up with its family inside one centre
   status_id      INTEGER,
   status_name    TEXT,
   wait_list_date TEXT,                  -- when they joined the waitlist (YYYY-MM-DD)
@@ -178,11 +184,12 @@ CREATE INDEX IF NOT EXISTS idx_members_owna ON ll_pipeline_members(owna_id);
 CREATE INDEX IF NOT EXISTS idx_members_status ON ll_pipeline_members(status_id);
 
 CREATE TABLE IF NOT EXISTS ll_tours (
-  task_id      INTEGER PRIMARY KEY,
+  task_id      INTEGER PRIMARY KEY,     -- LineLeader task id (opaque)
   ll_id        INTEGER,
   owna_id      TEXT,
   centre_name  TEXT,
-  family_name  TEXT,
+  family_key   TEXT,                    -- same salted hash as ll_pipeline_members.family_key, so a cohort's
+                                        -- tours can still be COUNTED without either table holding a name
   type_name    TEXT,
   tour_date    TEXT,                    -- scheduled date/time (ISO)
   is_completed INTEGER DEFAULT 0,
@@ -292,12 +299,16 @@ CREATE TABLE IF NOT EXISTS action_plan_items (
 CREATE INDEX IF NOT EXISTS idx_apitems ON action_plan_items(owna_id, month);
 
 -- ===== Rostering: OWNA weekly staff roster aggregated per centre per week =====
+-- Hours only. No roster row names a staff member, and leave carries no leave type: a leave type implies
+-- health (personal/parental leave) and is sensitive information under the Privacy Act, and it was only
+-- ever used to arrive at hours. Employment Hero remains the record of who worked and who was away.
 CREATE TABLE IF NOT EXISTS roster_weekly (
   owna_id       TEXT NOT NULL,
   week_starting TEXT NOT NULL,          -- Monday YYYY-MM-DD
   total_hours   REAL,                   -- rostered hours across the week (OWNA rosteredhours)
-  days_json     TEXT,                   -- JSON: [{day, hours, hpb, shifts, staff}] Mon–Sun
-  leave_json    TEXT,                   -- JSON: [{staff, leavetype, day, hours}]
+  days_json     TEXT,                   -- JSON: [{day, hours, hpb, shifts, staff}] Mon–Sun; staff is a COUNT
+  leave_json    TEXT,                   -- JSON: [{day, staff, hours}] — staff is a COUNT of people on leave
+                                        -- that day, hours their leave hours. No name, no leave type.
   updated_at    TEXT,
   PRIMARY KEY (owna_id, week_starting)
 );

@@ -45,18 +45,17 @@
       <p class="muted">None scheduled.</p>
     <% } else { %>
       <table>
-        <thead><tr><th>When</th><th>Family</th><th>Type</th></tr></thead>
+        <thead><tr><th>When</th><th>Type</th></tr></thead>
         <tbody>
           <% d.upcomingTours.forEach(function(t){ %>
             <tr>
               <td><%= dtt(t.tour_date) %></td>
-              <td><%= t.family_name || '—' %><% if (t.current_stage) { %><br><span class="muted" style="font-size:11px;">now: <%= t.current_stage %></span><% } %></td>
               <td><span class="reason-tag"><%= t.type_name || 'Tour' %></span></td>
             </tr>
           <% }); %>
         </tbody>
       </table>
-      <p class="footnote" style="margin-top:10px;">This is every booked visit on the calendar. The funnel counts a family's <em>current stage</em>, so a booked tour can belong to a family who has already moved on (e.g. Offer Accepted), and orientations happen after acceptance — which is why this can exceed "Tour Scheduled".</p>
+      <p class="footnote" style="margin-top:10px;">This is every booked visit on the calendar. Which family each booking belongs to is in LineLeader — this dashboard holds no family name. The funnel counts a family's <em>current stage</em>, so a booked tour can belong to a family who has already moved on (e.g. Offer Accepted), and orientations happen after acceptance — which is why this can exceed "Tour Scheduled".</p>
     <% } %>
   </div>
 
@@ -79,37 +78,36 @@
   </div>
 </div>
 
-<!-- Members by stage -->
+<!-- Members by stage: counts and wanted start months, never names -->
 <div class="card">
-  <h2 style="margin-top:0;">Who's in the pipeline <span class="muted" style="font-weight:400;font-size:13px;">· children, most recent first</span></h2>
-  <% d.stages.slice().reverse().forEach(function(st){ var list = d.membersByStage[st[0]] || []; if (!list.length) return; %>
+  <h2 style="margin-top:0;">What's in the pipeline <span class="muted" style="font-weight:400;font-size:13px;">· children per stage, by the month they want to start</span></h2>
+  <% d.stages.slice().reverse().forEach(function(st){ var s = d.membersByStage[st[0]]; if (!s || !s.count) return; %>
     <div class="stage-block">
-      <h3 class="stage-h <%= st[0]===4 ? 'hot-h' : '' %>"><%= st[1] %> <span class="badge"><%= list.length %></span></h3>
+      <h3 class="stage-h <%= st[0]===4 ? 'hot-h' : '' %>"><%= st[1] %> <span class="badge"><%= s.count %></span></h3>
+      <% if (st[0]===4 && s.joined_from) { %>
+        <p class="sub" style="margin:0 0 8px;">Joined the waitlist between <%= dt(s.joined_from) %> and <%= dt(s.joined_to) %>.</p>
+      <% } %>
+      <% if (!s.starts.length) { %>
+        <p class="muted" style="margin:0;">No start month recorded for any of them.</p>
+      <% } else { %>
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th>Child</th><th>Family</th>
-            <% if (st[0]===4) { %><th>Joined waitlist</th><% } %>
-            <th><%= st[0]===5 || st[0]===12 ? 'Expected start' : (st[0]===4 ? 'Wanted start' : 'Expected start') %></th>
-          </tr></thead>
+          <thead><tr><th><%= st[0]===4 ? 'Wanted start' : 'Expected start' %></th><th class="num">Children</th></tr></thead>
           <tbody>
-            <% list.slice(0,50).forEach(function(mem){ %>
-              <tr>
-                <td><%= mem.child_name || '—' %></td>
-                <td><%= mem.family_name || '—' %></td>
-                <% if (st[0]===4) { %><td><%= dt(mem.wait_list_date) %></td><% } %>
-                <td><%= dt(mem.expected_start) %></td>
-              </tr>
+            <% s.starts.forEach(function(x){ %>
+              <tr><td><%= mth(x.month) %></td><td class="num"><%= x.n %></td></tr>
             <% }); %>
+            <% if (s.no_start) { %><tr><td class="muted">Not recorded</td><td class="num"><%= s.no_start %></td></tr><% } %>
           </tbody>
         </table>
       </div>
-      <% if (list.length > 50) { %><p class="footnote">Showing 50 of <%= list.length %>.</p><% } %>
+      <% } %>
     </div>
   <% }); %>
 </div>
 
 <p class="footnote">
-  Funnel counts are families (matches the rest of the dashboard); the member lists below are children, so a family with siblings appears once per child. "Joined waitlist" is the LineLeader wait-list date. Tours come from LineLeader tasks (Tour + Orientation Day).
+  Funnel counts are families (matches the rest of the dashboard); the stage counts above are children, so a family with siblings is counted once per child. "Joined waitlist" is the LineLeader wait-list date. Tours come from LineLeader tasks (Tour + Orientation Day). <strong>No child's or family's name is stored by this dashboard</strong> — it is a derived system, and LineLeader stays the record of who each family is. A row here is a LineLeader id, a centre, a stage and dates.
 </p>
 
 <% } %>
