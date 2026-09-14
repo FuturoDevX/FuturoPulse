@@ -25,18 +25,20 @@ dm.run('a',SYD,20,18,2,0,400);        // today in Sydney, still "yesterday" in U
 dm.run('a','2026-09-13',30,30,0,0,600); // tomorrow — must count as FUTURE
 dm.run('a','2026-09-20',10,10,0,0,200); // further ahead, so MAX(metric_date) is in the future
 
-// Freeze the clock at a real UTC instant. `new Date()` and `Date.now()` report it; everything else
-// (Date.UTC, Date.parse, explicit arguments) behaves normally. Restores even if `fn` throws, and
-// awaits `fn` when it returns a promise so route tests can run inside the freeze.
-const RealDate=Date;
+// Freeze the APP's clock at a real UTC instant — not the process's. Every date-level decision in
+// this codebase goes through services/calendar.js, so setNow() there is enough to put the app at any
+// instant, and the rest of the process keeps real time.
+//
+// This used to swap the global Date for a subclass. That works for synchronous code, but it also
+// stops the clock for Node's fetch, whose keep-alive sockets are aged out on a timer: a test that
+// awaited an HTTP request under the frozen clock left a connection that could never time out, so
+// server.close() in this file's finally never called back and the process hung for minutes after
+// every assertion had passed — the runner eventually giving up with "[error] request failed".
+// Restores even if `fn` throws, and awaits `fn` when it returns a promise so route tests can run
+// inside the freeze, which is now safe.
 function freeze(iso,fn){
-  const fixed=new RealDate(iso).getTime();
-  class FakeDate extends RealDate{
-    constructor(...a){ return a.length?new RealDate(...a):new RealDate(fixed); } // eslint-disable-line constructor-super
-    static now(){ return fixed; }
-  }
-  const restore=()=>{ global.Date=RealDate; };
-  global.Date=FakeDate;
+  cal.setNow(iso);
+  const restore=()=>{ cal.setNow(null); };
   let out; try{ out=fn(); }catch(e){ restore(); throw e; }
   if(out&&typeof out.then==='function') return out.then((v)=>{restore();return v;},(e)=>{restore();throw e;});
   restore(); return out;
@@ -87,6 +89,17 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
    assert.equal(cal.daysAgo(7),'2026-09-05');
    assert.equal(cal.daysAhead(30),'2026-10-12');
   });
+  // freeze() must move the APP's clock only. An earlier version swapped the global Date, which also
+  // stopped the timers Node's fetch ages its keep-alive sockets on, so a frozen request left a
+  // connection that never closed and this file hung for minutes after passing. If the global clock
+  // is ever frozen again, this catches it here instead of as a mysterious hang at the end.
+  const RealDate=Date, before=Date.now();
+  freeze(FROZEN,()=>{
+   assert.equal(Date,RealDate,'freeze() must not replace the global Date');
+   assert.ok(Date.now()>=before,'the real clock must keep running while the app is frozen');
+   assert.equal(cal.today(),SYD,'while the app still reads the frozen date');
+  });
+  assert.equal(cal.today(),cal.sydneyDate(new Date()),'the app clock is back on real time afterwards');
  });
 
  await t.test('todayStr is the Sydney date, including across a month boundary',()=>{

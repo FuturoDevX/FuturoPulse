@@ -23,8 +23,22 @@ const fmt = (d) => d.toISOString().slice(0, 10);
 const TIME_ZONE = "Australia/Sydney";
 const SYDNEY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
 
+// Tests need the app to believe it is a particular instant — a DST boundary, a month or
+// financial-year rollover, the 23:30 UTC window where Sydney is already tomorrow. Replacing the
+// global Date does that, but it stops the clock for EVERYTHING else in the process as well,
+// including the timers Node's own fetch uses to age out a keep-alive socket. A test that awaits an
+// HTTP request under a stopped clock therefore leaves a connection that never times out, so
+// server.close() never calls back and the whole test file hangs after its assertions have passed.
+// So the app's notion of now is injectable here, in the one place every date decision already flows
+// through, and nothing else in the process is touched. Production never calls setNow.
+let nowFn = () => new Date();
+function setNow(at) {
+  nowFn = at == null ? () => new Date()
+    : typeof at === "function" ? at
+    : () => new Date(at);
+}
 // The Sydney calendar date (YYYY-MM-DD) at instant `at` — defaults to now.
-function sydneyDate(at = new Date()) { return SYDNEY_FMT.format(at); }
+function sydneyDate(at) { return SYDNEY_FMT.format(at === undefined ? nowFn() : at); }
 // The current Sydney date. This is "today" everywhere in the app.
 function today(at) { return sydneyDate(at); }
 // The current Sydney month (YYYY-MM).
@@ -80,4 +94,4 @@ function unknownHolidayYears(from, to) {
 }
 
 module.exports = { NSW_HOLIDAYS, isHoliday, isWeekday, isOperatingDay, holidaysKnown, operatingDayList, operatingDays, unknownHolidayYears,
-  TIME_ZONE, sydneyDate, today, currentMonth, sydneyStamp, addDays, daysAgo, daysAhead };
+  TIME_ZONE, sydneyDate, today, currentMonth, sydneyStamp, addDays, daysAgo, daysAhead, setNow };
