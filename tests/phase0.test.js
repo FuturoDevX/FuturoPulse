@@ -57,6 +57,9 @@ test('Phase 0 regression suite',async(t)=>{
   const cc=await login('centre');html=await (await request('/',cc)).text();assert.match(html,/\(partial\)/);assert.doesNotMatch(html,/EH payroll import failed/);
   // A finalised run that reconciles → status ok, metadata kept.
   eh.locations=async()=>[{id:10,name:'Organisation'},{id:11,parentId:10,name:'Centre Alpha'}];
+  // The talent step counts employees, so give it one: an empty payroll is an anomaly it deliberately
+  // reports rather than treats as a business with nobody in it (services/eh-talent.js).
+  eh.allEmployees=async()=>[{id:1,status:'Active',employmentType:'Full Time',startDate:'2026-01-05',endDate:null,jobTitle:'Early Childhood Educator',primaryLocation:'Organisation / Centre Alpha'}];
   eh.payRuns=async()=>[{id:5,isFinalised:true,datePaid:'2026-09-08',payPeriodEnding:'2026-09-06'}];
   eh.earnings=async id=>({payRunId:id,earningsLines:{1:[{id:1,locationId:11,locationName:'Centre Alpha',payCategoryName:'Ordinary',units:8,earnings:300,super:30}]}});
   eh.runTotals=async id=>({payRunId:id,payRunTotals:{1:{grossEarnings:300}}});

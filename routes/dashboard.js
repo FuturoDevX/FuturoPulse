@@ -271,6 +271,14 @@ router.get("/pc", (req, res) => {
     latest: m.pcForMonth(latestMonth, owna || undefined),
     latestMonth,
     targets: m.pcTargets(),
+    // Talent pipeline from payroll (counts only — no name, no employee id). A centre-scoped user gets
+    // their own centre; everyone else gets the group, whose casual headcount is the ONLY casual figure
+    // anywhere, because a casual works across all the centres rather than at the one payroll files them
+    // under. Turnover is deliberately reported twice, from the HR spreadsheet and from payroll, because
+    // the two count different populations and neither may silently stand in for the other.
+    talent: m.talentReport(owna, 24),
+    turnoverSources: m.talentTurnoverSources(owna),
+    talentSync: sourceSyncFor("talent"),
     lastRun: lastRun(),
   });
 });

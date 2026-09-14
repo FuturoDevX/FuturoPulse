@@ -421,9 +421,78 @@ CREATE TABLE IF NOT EXISTS coe_forward_horizon (
   PRIMARY KEY (snapshot_date, owna_id)
 );
 
+-- ===== Talent pipeline: Employment Hero people, as COUNTS ONLY (services/eh-talent.js) =====
+-- PRIVACY: Employment Hero's /employee record carries names, date of birth, tax file number, bank
+-- accounts and addresses. NONE of it is stored. These three tables hold counts, a centre id, a month
+-- and an ATO cessation code — nothing that identifies a person, exactly as the rest of this database.
+--
+-- THE OWNER'S RULES (decided 14 September 2026) are enforced in the aggregation, not in the reader:
+--   * CASUALS ARE NOT TURNOVER. employmentType 'Casual' is excluded from both sides — not in the
+--     headcount denominator here, and a casual who leaves is not a leaver.
+--   * CASUALS ARE GROUP-LEVEL ONLY. A casual works across all centres, so the centre recorded against
+--     them in payroll is an administrative home, not where the hours were worked. There is therefore
+--     no casual column in talent_monthly at all; the one casual headcount lives in the group table.
+--     (Casual HOURS per centre on the Wages page come from payroll earnings lines — real hours paid
+--     against that location — and are unaffected. This is about counting casual PEOPLE.)
+--   * SOMEONE WHO NEVER STARTED IS NOT A LEAVER. Payroll has no code for it, so it is inferred from
+--     endDate on or before startDate: they never worked a day. Excluded on both sides like a casual.
+--     Deliberately NOT a tenure threshold — someone who worked a fortnight and left IS turnover.
+CREATE TABLE IF NOT EXISTS talent_monthly (
+  owna_id       TEXT NOT NULL,        -- centre owna_id, or '(support office)' for payroll locations that
+                                      -- are not a centre (Futuro HQ and the like). Never a casual figure.
+  month         TEXT NOT NULL,        -- YYYY-MM
+  headcount     INTEGER NOT NULL DEFAULT 0,  -- permanent people employed on the LAST DAY of the month
+  starters      INTEGER NOT NULL DEFAULT 0,  -- permanent starts dated in the month (never-started excluded)
+  leavers       INTEGER NOT NULL DEFAULT 0,  -- turnover leavers: permanent, and they actually started
+  never_started INTEGER NOT NULL DEFAULT 0,  -- endDate <= startDate: excluded from leavers, shown separately
+  ect           INTEGER NOT NULL DEFAULT 0,  -- the role mix below sums to headcount: one primary role each
+  edu_leader    INTEGER NOT NULL DEFAULT 0,
+  room_leader   INTEGER NOT NULL DEFAULT 0,
+  educator      INTEGER NOT NULL DEFAULT 0,
+  management    INTEGER NOT NULL DEFAULT 0,
+  support       INTEGER NOT NULL DEFAULT 0,  -- kitchen, cleaning, maintenance
+  other         INTEGER NOT NULL DEFAULT 0,  -- a job title no rule recognised — carried, never dropped
+  updated_at    TEXT,
+  PRIMARY KEY (owna_id, month)
+);
+CREATE INDEX IF NOT EXISTS idx_talent_month ON talent_monthly(month);
+
+-- One row per month for the whole group. This is the ONLY place a casual is counted, and it is where
+-- the turnover basis reconciles: raw_terminations - casual_leavers - never_started = leavers, by
+-- construction, so the number on the page can be traced rather than doubted.
+CREATE TABLE IF NOT EXISTS talent_group_monthly (
+  month            TEXT PRIMARY KEY,            -- YYYY-MM
+  headcount        INTEGER NOT NULL DEFAULT 0,  -- permanent, group-wide (the turnover denominator)
+  casual_headcount INTEGER NOT NULL DEFAULT 0,  -- casuals employed at month end — group only, never per centre
+  starters         INTEGER NOT NULL DEFAULT 0,  -- permanent starts
+  casual_starters  INTEGER NOT NULL DEFAULT 0,
+  raw_terminations INTEGER NOT NULL DEFAULT 0,  -- EVERY termination dated in the month, casuals included
+  casual_leavers   INTEGER NOT NULL DEFAULT 0,  -- of those, the casuals (not turnover)
+  never_started    INTEGER NOT NULL DEFAULT 0,  -- of the rest, those who never worked a day (not turnover)
+  leavers          INTEGER NOT NULL DEFAULT 0,  -- = raw_terminations - casual_leavers - never_started
+  updated_at       TEXT
+);
+
+-- Leavers by ATO Single Touch Payroll cessation code, on the TURNOVER basis (casuals and never-started
+-- already removed). There is no separate "Resignation" code in payroll: a resignation is recorded as
+-- 'Voluntary cessation', which is why voluntary is reported as its own figure. The full STP set also
+-- includes 'Transfer' and 'Deceased', which this tenant has not used yet; a code that has never been
+-- seen — including one added later — is carried through with its own label rather than dropped.
+CREATE TABLE IF NOT EXISTS talent_reasons_monthly (
+  owna_id      TEXT NOT NULL,
+  month        TEXT NOT NULL,        -- YYYY-MM of the end date
+  reason_key   TEXT NOT NULL,        -- voluntary | contract | dismissal | redundancy | ill_health |
+                                     -- transfer | deceased | not_recorded | other:<slug>
+  reason_label TEXT NOT NULL,        -- the code as payroll words it (an ATO code, not free text)
+  leavers      INTEGER NOT NULL DEFAULT 0,
+  updated_at   TEXT,
+  PRIMARY KEY (owna_id, month, reason_key)
+);
+CREATE INDEX IF NOT EXISTS idx_talentreason_month ON talent_reasons_monthly(month);
+
 -- ===== Per-source sync health: what the nightly snapshot last did for each upstream =====
 CREATE TABLE IF NOT EXISTS source_sync (
-  source       TEXT PRIMARY KEY,    -- owna | lineleader | eh_labour | exits | incidents | roster | coe | retention
+  source       TEXT PRIMARY KEY,    -- owna | lineleader | eh_labour | exits | incidents | roster | coe | talent | retention
   last_attempt TEXT,
   last_success TEXT,
   status       TEXT,                -- ok | error | skipped

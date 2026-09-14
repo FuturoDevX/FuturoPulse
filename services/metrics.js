@@ -2314,6 +2314,205 @@ function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
     centres, stops: centres.filter((c) => c.stops_early) };
 }
 
+
+// ===== Talent pipeline: Employment Hero people, counted (services/eh-talent.js writes the tables) =====
+// Read-model only. Every figure below is a count of people, never a person: the snapshot stores no
+// name, no employee id and no date of birth, so there is none here to leak.
+//
+// THE BASIS, once, so every caller reports the same thing (the owner's rules of 14 September 2026):
+//   * Casuals are excluded from turnover on BOTH sides — not in the headcount denominator, and a casual
+//     who leaves is not a leaver. They are counted once, group-wide, because the centre recorded
+//     against a casual in payroll is an administrative home, not where the hours were worked. There is
+//     therefore no per-centre casual figure anywhere in this file. (Casual HOURS per centre on the
+//     Wages page come from payroll earnings lines and are a different measurement; they stand.)
+//   * Someone whose end date is on or before their start date never worked a day and is not a leaver.
+//   * Turnover % is rolling twelve months: leavers over that window ÷ the average month-end permanent
+//     headcount across it. The same formula per centre and for the group, so they can be read together.
+const { ROLES: TALENT_ROLES, CESSATION_REASONS, NO_CENTRE } = require("./eh-talent");
+const TALENT_WINDOW = 12; // months in the rolling turnover window
+const VOLUNTARY_KEYS = new Set(CESSATION_REASONS.filter((r) => r.voluntary).map((r) => r.key));
+
+const talentMonthsBack = (last, n) => { // n months ending at `last`, oldest first
+  const [y, mo] = last.split("-").map(Number);
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const t = y * 12 + (mo - 1) - i;
+    out.push(`${String(Math.floor(t / 12)).padStart(4, "0")}-${String(((t % 12) + 12) % 12 + 1).padStart(2, "0")}`);
+  }
+  return out;
+};
+function talentLatestMonth() {
+  const r = db.prepare("SELECT MAX(month) m FROM talent_group_monthly").get();
+  return (r && r.m) || null;
+}
+// Rolling turnover: leavers over the window as a percentage of the AVERAGE month-end headcount across
+// it. Averaging matters in a group that grew from 138 to 175 in a year — dividing by today's headcount
+// alone would quietly flatter every month the business was smaller.
+function talentTurnoverPct(leavers, headcounts) {
+  const hs = (headcounts || []).filter((h) => h != null);
+  if (!hs.length) return null;
+  const avg = hs.reduce((a, b) => a + b, 0) / hs.length;
+  return avg > 0 ? Math.round((leavers / avg) * 1000) / 10 : null;
+}
+function talentCentreName(ownaId) {
+  if (ownaId === NO_CENTRE) return "Support office (no centre)";
+  const c = db.prepare("SELECT name FROM centres WHERE owna_id = ?").get(ownaId);
+  return (c && c.name) || ownaId;
+}
+
+// The whole People & Culture talent picture for one centre (`ownaId`) or the group (null).
+// `months` is how much of the trend to return; the reconciliation is always the full history, because
+// a basis you can only see part of is a basis nobody can check.
+function talentReport(ownaId = null, months = 24) {
+  const latest = talentLatestMonth();
+  if (!latest) return null;
+  const axis = talentMonthsBack(latest, Math.max(1, months));
+  const win = talentMonthsBack(latest, TALENT_WINDOW);            // the rolling year
+  const winFrom = win[0], prevTo = talentMonthsBack(winFrom, 2)[0];
+  const prevFrom = talentMonthsBack(winFrom, TALENT_WINDOW + 1)[0];
+  const scoped = !!ownaId;
+
+  const centreIds = db.prepare("SELECT DISTINCT owna_id FROM talent_monthly").all().map((r) => r.owna_id)
+    .filter((id) => !scoped || id === ownaId);
+  const monthRow = db.prepare("SELECT * FROM talent_monthly WHERE owna_id=? AND month=?");
+  const windowRow = db.prepare(`SELECT COALESCE(SUM(starters),0) starters, COALESCE(SUM(leavers),0) leavers,
+      COALESCE(SUM(never_started),0) never_started FROM talent_monthly WHERE owna_id=? AND month BETWEEN ? AND ?`);
+  const heads = db.prepare("SELECT month, headcount FROM talent_monthly WHERE owna_id=? AND month BETWEEN ? AND ?");
+
+  const centres = centreIds.map((id) => {
+    const now = monthRow.get(id, latest) || {};
+    const w = windowRow.get(id, winFrom, latest) || {};
+    const hs = heads.all(id, winFrom, latest).map((r) => r.headcount);
+    return {
+      owna_id: id, name: talentCentreName(id), is_group_bucket: id === NO_CENTRE,
+      headcount: now.headcount || 0,
+      roles: TALENT_ROLES.map((r) => ({ key: r.key, label: r.label, n: now[r.key] || 0 }))
+        .concat([{ key: "other", label: "Other / unclassified", n: now.other || 0 }]),
+      ect: now.ect || 0, edu_leader: now.edu_leader || 0, room_leader: now.room_leader || 0,
+      educator: now.educator || 0, management: now.management || 0, support: now.support || 0, other: now.other || 0,
+      starters12: w.starters || 0, leavers12: w.leavers || 0, never_started12: w.never_started || 0,
+      turnover12: talentTurnoverPct(w.leavers || 0, hs),
+      // A centre that opened inside the window divides by a much smaller average headcount than it
+      // carries today, so its rate is real but volatile. Flagged rather than footnoted away.
+      partial_window: hs.length > 0 && hs[0] === 0,
+    };
+  }).sort((a, b) => (a.is_group_bucket - b.is_group_bucket) || (b.headcount - a.headcount));
+
+  // Group figures. Casuals live here and only here.
+  const g = db.prepare("SELECT * FROM talent_group_monthly WHERE month=?").get(latest) || {};
+  const sumGroup = (from, to) => db.prepare(`SELECT COALESCE(SUM(starters),0) starters, COALESCE(SUM(leavers),0) leavers,
+      COALESCE(SUM(raw_terminations),0) raw, COALESCE(SUM(casual_leavers),0) casual, COALESCE(SUM(never_started),0) never
+      FROM talent_group_monthly WHERE month BETWEEN ? AND ?`).get(from, to);
+  const g12 = sumGroup(winFrom, latest);
+  const gHeads = db.prepare("SELECT month, headcount FROM talent_group_monthly WHERE month BETWEEN ? AND ?").all(winFrom, latest).map((r) => r.headcount);
+  const allTime = db.prepare(`SELECT MIN(month) first, COALESCE(SUM(raw_terminations),0) raw, COALESCE(SUM(casual_leavers),0) casual,
+      COALESCE(SUM(never_started),0) never, COALESCE(SUM(leavers),0) leavers FROM talent_group_monthly`).get();
+
+  const group = {
+    month: latest,
+    headcount: g.headcount || 0,
+    casual_headcount: g.casual_headcount || 0,   // group only — rule 3
+    starters12: g12.starters, leavers12: g12.leavers,
+    turnover12: talentTurnoverPct(g12.leavers, gHeads),
+  };
+  // The reconciliation the owner asked to be printed, so the 115 can be traced rather than doubted.
+  const recon = {
+    window: { from: winFrom, to: latest, label: "last 12 months", raw: g12.raw, casual: g12.casual, never_started: g12.never, leavers: g12.leavers },
+    all: { from: allTime.first, to: latest, label: "all payroll history", raw: allTime.raw, casual: allTime.casual, never_started: allTime.never, leavers: allTime.leavers },
+  };
+
+  // Termination reasons, on the turnover basis, for the window / the previous window / all time.
+  const reasonSum = (from, to) => {
+    const sql = `SELECT reason_key, reason_label, COALESCE(SUM(leavers),0) n FROM talent_reasons_monthly
+                 WHERE month BETWEEN ? AND ?${scoped ? " AND owna_id = ?" : ""} GROUP BY reason_key, reason_label`;
+    const args = scoped ? [from, to, ownaId] : [from, to];
+    const out = new Map();
+    for (const r of db.prepare(sql).all(...args)) out.set(r.reason_key, r);
+    return out;
+  };
+  const cur = reasonSum(winFrom, latest), before = reasonSum(prevFrom, prevTo), ever = reasonSum("0000-00", "9999-99");
+  const keys = [...new Set([...CESSATION_REASONS.map((r) => r.key), ...ever.keys()])];
+  const reasons = keys.map((key) => {
+    const known = CESSATION_REASONS.find((r) => r.key === key);
+    const seen = ever.get(key) || cur.get(key) || before.get(key);
+    return {
+      key,
+      label: known ? known.label : (seen ? seen.reason_label : key),
+      voluntary: VOLUNTARY_KEYS.has(key),
+      known: !!known,
+      last12: (cur.get(key) || {}).n || 0,
+      prior12: (before.get(key) || {}).n || 0,
+      all: (ever.get(key) || {}).n || 0,
+    };
+  }).filter((r) => r.all > 0 || r.known)           // an unseen STP code still shows as 0, never as blank
+    .sort((a, b) => b.last12 - a.last12 || b.all - a.all || a.label.localeCompare(b.label));
+  const totalLast12 = reasons.reduce((a, r) => a + r.last12, 0);
+  const voluntaryLast12 = reasons.filter((r) => r.voluntary).reduce((a, r) => a + r.last12, 0);
+  const totalAll = reasons.reduce((a, r) => a + r.all, 0);
+  const voluntaryAll = reasons.filter((r) => r.voluntary).reduce((a, r) => a + r.all, 0);
+
+  // Trend over the axis. For a centre, its own rows; for the group, the group table.
+  const monthly = axis.map((mth) => {
+    if (scoped) {
+      const r = monthRow.get(ownaId, mth) || {};
+      const v = db.prepare(`SELECT COALESCE(SUM(leavers),0) n FROM talent_reasons_monthly WHERE owna_id=? AND month=? AND reason_key IN (${[...VOLUNTARY_KEYS].map(() => "?").join(",")})`).get(ownaId, mth, ...VOLUNTARY_KEYS);
+      return { month: mth, headcount: r.headcount ?? null, starters: r.starters || 0, leavers: r.leavers || 0, voluntary: v.n };
+    }
+    const r = db.prepare("SELECT * FROM talent_group_monthly WHERE month=?").get(mth) || {};
+    const v = db.prepare(`SELECT COALESCE(SUM(leavers),0) n FROM talent_reasons_monthly WHERE month=? AND reason_key IN (${[...VOLUNTARY_KEYS].map(() => "?").join(",")})`).get(mth, ...VOLUNTARY_KEYS);
+    return { month: mth, headcount: r.headcount ?? null, starters: r.starters || 0, leavers: r.leavers || 0, voluntary: v.n };
+  });
+
+  return {
+    month: latest, scoped: scoped ? ownaId : null, window: { from: winFrom, to: latest, months: TALENT_WINDOW },
+    centres, group, recon, reasons, monthly,
+    totals: { last12: totalLast12, voluntary_last12: voluntaryLast12, all: totalAll, voluntary_all: voluntaryAll },
+    roleLabels: TALENT_ROLES.map((r) => ({ key: r.key, label: r.label })).concat([{ key: "other", label: "Other / unclassified" }]),
+    noCentreKey: NO_CENTRE,
+  };
+}
+
+// Turnover has two sources and they measure different populations, so the page shows BOTH rather than
+// quietly preferring one: the HR spreadsheet uploaded into pc_metrics, and payroll counted here. They
+// are labelled by source and by basis wherever they appear together.
+function talentTurnoverSources(ownaId = null) {
+  const hrMonth = db.prepare(`SELECT MAX(month) m FROM pc_metrics WHERE turnover IS NOT NULL${ownaId ? " AND owna_id = ?" : ""}`)
+    .get(...(ownaId ? [ownaId] : [])) || {};
+  let hr = null;
+  if (hrMonth.m) {
+    const rows = ownaId
+      ? db.prepare("SELECT turnover, headcount FROM pc_metrics WHERE month=? AND owna_id=? AND turnover IS NOT NULL").all(hrMonth.m, ownaId)
+      : db.prepare("SELECT turnover, headcount FROM pc_metrics WHERE month=? AND turnover IS NOT NULL").all(hrMonth.m);
+    const vals = rows.map((r) => r.turnover).filter((v) => v != null);
+    const hc = rows.map((r) => r.headcount).filter((v) => v != null);
+    hr = {
+      source: "HR spreadsheet (SharePoint upload)",
+      basis: ownaId ? "rolling annual turnover as entered for this centre" : "rolling annual turnover, unweighted average of the centres that reported",
+      month: hrMonth.m,
+      value: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10 : null,
+      headcount: hc.length ? hc.reduce((a, b) => a + b, 0) : null,
+      centres: rows.length,
+    };
+  }
+  const rep = talentReport(ownaId, 1);
+  let payroll = null;
+  if (rep) {
+    const c = ownaId ? rep.centres.find((x) => x.owna_id === ownaId) : null;
+    payroll = {
+      source: "Employment Hero payroll",
+      basis: "rolling 12-month leavers ÷ average month-end headcount, casuals and never-started excluded",
+      month: rep.month,
+      value: ownaId ? (c ? c.turnover12 : null) : rep.group.turnover12,
+      headcount: ownaId ? (c ? c.headcount : null) : rep.group.headcount,
+      leavers: ownaId ? (c ? c.leavers12 : null) : rep.group.leavers12,
+      casual_headcount: ownaId ? null : rep.group.casual_headcount,
+    };
+  }
+  const diff = (hr && payroll && hr.value != null && payroll.value != null)
+    ? Math.round((payroll.value - hr.value) * 10) / 10 : null;
+  return { hr, payroll, diff, agree: diff != null ? Math.abs(diff) < 0.05 : null };
+}
+
 module.exports = {
   defaultRange, forwardRange, centres, overview, totals,
   centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
@@ -2333,4 +2532,5 @@ module.exports = {
   yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months, wagesPerChildDay, ownaWeek,
   funnelByCentre, funnelMonths, CONVERSION_STAGES, pipelineTargets, savePipelineTarget, deletePipelineTarget, pipelineTargetProgress, targetRag, placesByMonth,
   coeOutlook, coeMeasured, coeRunWeek, coeMonthKeys, COE_TARGET_PCT, COE_FIRM_STATUSES,
+  talentReport, talentTurnoverSources, talentLatestMonth, talentTurnoverPct, TALENT_WINDOW,
 };

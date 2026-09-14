@@ -5,6 +5,7 @@ const db = require("../db/db");
 const { owna } = require("./owna");
 const { lineleader } = require("./lineleader");
 const { runLabourSnapshot } = require("./eh-labour");
+const { runTalentSnapshot } = require("./eh-talent"); // people counts per centre per month (no names)
 const { leaveTotals } = require("../db/init-schema"); // one implementation, shared with the migration
 const cal = require("./calendar");
 const metrics = require("./metrics"); // read-model only (db + calendar); it never requires this file back
@@ -242,6 +243,22 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
         rows: r.rows ?? null,
         detail: `${r.runs} finalised pay runs over ${r.weeks} pay periods to ${latest}`,
         meta: { weeks: r.weeks || 0, runs: r.runs || 0, latest_period: latest, total_wages: r.total_wages ?? null },
+      };
+    });
+
+    // Talent pipeline: Employment Hero people as COUNTS per centre per month — headcount, starters,
+    // leavers by ATO cessation code and the role mix. Casuals and never-starters are out of turnover on
+    // both sides (the owner's rules, enforced in services/eh-talent.js, not here).
+    await step("talent", "talent pipeline", () => runTalentSnapshot({ log }), (r) => {
+      if (!r.employees) return { problem: "Employment Hero returned no employees; talent counts left as previously imported" };
+      return {
+        rows: r.rows ?? null,
+        detail: `${r.employees} employees over ${r.months} months to ${r.to}: ${r.headcount} permanent, ${r.casual_headcount} casual (group), `
+          + `${r.terminations} terminations less ${r.casual_leavers} casual less ${r.never_started} never started = ${r.turnover_leavers} turnover events`
+          + (r.undated_terminations ? `; ${r.undated_terminations} termination(s) carry no end date` : ""),
+        meta: { months: r.months, from: r.from, to: r.to, headcount: r.headcount, casual_headcount: r.casual_headcount,
+          terminations: r.terminations, casual_leavers: r.casual_leavers, never_started: r.never_started,
+          turnover_leavers: r.turnover_leavers, undated_terminations: r.undated_terminations, centres: r.centres },
       };
     });
 

@@ -8,6 +8,7 @@
     "seed": "node db/init.js",
     "snapshot": "node db/snapshot-run.js",
     "coe-snapshot": "node scripts/coe-snapshot.js",
+    "talent-snapshot": "node scripts/talent-snapshot.js",
     "discover-forms": "node scripts/discover-forms.js",
     "backfill": "node db/backfill.js",
     "backup": "node scripts/backup-db.js",

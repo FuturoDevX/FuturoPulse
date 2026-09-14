@@ -86,4 +86,208 @@
   Each chart is bucketed by that metric’s own cadence — <strong>eNPS</strong> &amp; <strong>psych safety</strong> by quarter (Q1 25…), <strong>Family NPS</strong> by half-year (H1 25…), <strong>turnover</strong> &amp; <strong>career check-ins</strong> by month. It shows the most recent periods by default; use <strong>Explore full history</strong> (or a card’s “explore all”) to see the whole lifetime. The amber dashed line is the target. Switch between the group average and a single centre with the selector. eNPS &amp; turnover come from the SharePoint upload; the rest are entered in <strong>Admin → P&amp;C Data</strong>. eNPS/Family NPS run −100…100.
 </p>
 
+
+<%
+  // ===== Talent pipeline (Employment Hero payroll, counts only) =====
+  // The owner's rules of 14 September are enforced in services/eh-talent.js; this section's job is to
+  // STATE them, so nobody has to infer the basis from the numbers. Nothing here is a name: the whole
+  // section is counts, a centre and an ATO cessation code.
+  const tScoped = !!locals.scopedOwnaId;
+  const tMine = talent ? (tScoped ? talent.centres.find(function(c){ return c.owna_id === locals.scopedOwnaId; }) : null) : null;
+  const tHead = talent ? (tScoped ? (tMine ? tMine.headcount : 0) : talent.group.headcount) : 0;
+  const tLeavers = talent ? (tScoped ? (tMine ? tMine.leavers12 : 0) : talent.group.leavers12) : 0;
+  const tStarters = talent ? (tScoped ? (tMine ? tMine.starters12 : 0) : talent.group.starters12) : 0;
+  const tTurn = talent ? (tScoped ? (tMine ? tMine.turnover12 : null) : talent.group.turnover12) : null;
+  const tNever = talent ? (tScoped ? (tMine ? tMine.never_started12 : 0) : talent.recon.window.never_started) : 0;
+  const tVolPct = (talent && talent.totals.last12) ? Math.round(talent.totals.voluntary_last12 / talent.totals.last12 * 1000) / 10 : null;
+  const tMonthLbl = talent ? mLbl(talent.month) : '';
+  const num = function(v){ return v == null ? '—' : v; };
+%>
+
+<h2 class="section-label" id="talent">Talent — counted from payroll</h2>
+
+<% if (!talent) { %>
+<div class="card">
+  <p class="muted" style="margin:0;">No talent counts have been taken yet. They populate on the nightly sync from Employment Hero, or on demand with <code>npm run talent-snapshot</code>.</p>
+</div>
+<% } else { %>
+
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= tHead %></div><div class="l">Permanent headcount<span class="cap"><%= tScoped ? 'your centre' : 'group-wide' %> · as at <%= tMonthLbl %></span></div></div>
+  <% if (!tScoped) { %>
+  <div class="card stat"><div class="n"><%= talent.group.casual_headcount %></div><div class="l">Casuals<span class="cap">group-wide only — a casual works across every centre, so payroll's centre is an admin home, not where the hours were worked</span></div></div>
+  <% } %>
+  <div class="card stat"><div class="n"><%= tStarters %></div><div class="l">Starters<span class="cap">last 12 months</span></div></div>
+  <div class="card stat"><div class="n"><%= tLeavers %></div><div class="l">Leavers<span class="cap">last 12 months, turnover basis</span></div></div>
+  <div class="card stat"><div class="n"><%= tTurn == null ? '—' : tTurn + '%' %></div><div class="l">Turnover<span class="cap">rolling 12 months · leavers ÷ average headcount</span></div></div>
+  <% if (!tScoped && tVolPct != null) { %>
+  <div class="card stat"><div class="n"><%= tVolPct %>%</div><div class="l">Voluntary<span class="cap">share of the last 12 months' leavers</span></div></div>
+  <% } %>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">What counts as turnover</h2>
+  <% if (!tScoped) { %>
+  <p style="margin:0 0 10px;font-size:14px;">Payroll records <strong><%= talent.recon.all.raw %></strong> terminations across its whole history. Two groups are taken out before turnover is measured, and the same two are taken out of the headcount it is measured against:</p>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Turnover basis</th><th style="text-align:right;">Last 12 months</th><th style="text-align:right;">All payroll history</th></tr></thead>
+    <tbody>
+      <tr><td>Terminations recorded in payroll</td><td style="text-align:right;"><%= talent.recon.window.raw %></td><td style="text-align:right;"><%= talent.recon.all.raw %></td></tr>
+      <tr><td>less casual employees — a casual leaving is not turnover</td><td style="text-align:right;">−<%= talent.recon.window.casual %></td><td style="text-align:right;">−<%= talent.recon.all.casual %></td></tr>
+      <tr><td>less people recorded as leaving on or before their start date — they never worked a day</td><td style="text-align:right;">−<%= talent.recon.window.never_started %></td><td style="text-align:right;">−<%= talent.recon.all.never_started %></td></tr>
+      <tr style="font-weight:700;border-top:2px solid var(--border);"><td>Turnover events</td><td style="text-align:right;"><%= talent.recon.window.leavers %></td><td style="text-align:right;"><%= talent.recon.all.leavers %></td></tr>
+    </tbody>
+  </table></div>
+  <% } else { %>
+  <p style="margin:0 0 10px;font-size:14px;">Turnover here counts permanent staff at your centre only. Casual employees are excluded from both sides — they are not in the headcount and a casual leaving is not a leaver — and they are counted once group-wide rather than against any centre, because a casual works across all of them. <strong><%= tNever %></strong> <%= tNever === 1 ? 'person was' : 'people were' %> recorded as leaving on or before their start date in the last 12 months and <%= tNever === 1 ? 'is' : 'are' %> excluded too: they never worked a day.</p>
+  <% } %>
+  <p class="footnote" style="margin-top:12px;">
+    <strong>There is no separate “resignation” code in payroll — a resignation is recorded as <em>Voluntary cessation</em></strong>, so the absence of a “Resignation” row below is not missing data.
+    The exclusions are a test of the dates, not of tenure: someone who worked a fortnight and left is turnover.
+    Turnover % is leavers over the rolling twelve months divided by the average month-end permanent headcount across them.
+  </p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Headcount &amp; role mix<% if (!tScoped) { %> by centre<% } %> — <%= tMonthLbl %></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Centre</th>
+      <th style="text-align:right;">Permanent</th>
+      <% talent.roleLabels.forEach(function(r){ %><th style="text-align:right;"><%= r.label %></th><% }); %>
+      <th style="text-align:right;">Starters 12m</th>
+      <th style="text-align:right;">Leavers 12m</th>
+      <th style="text-align:right;">Turnover</th>
+    </tr></thead>
+    <tbody>
+      <% talent.centres.forEach(function(c){ %>
+      <tr>
+        <td><strong><%= shortName(c.name) %></strong><% if (c.is_group_bucket) { %> <span class="muted" style="font-size:11px;">not a centre</span><% } %></td>
+        <td style="text-align:right;font-weight:700;"><%= c.headcount %></td>
+        <% talent.roleLabels.forEach(function(r){ %><td style="text-align:right;"><%= c[r.key] || 0 %></td><% }); %>
+        <td style="text-align:right;"><%= c.starters12 %></td>
+        <td style="text-align:right;"><%= c.leavers12 %></td>
+        <td style="text-align:right;"><%= c.turnover12 == null ? '—' : c.turnover12 + '%' %><% if (c.partial_window) { %> <span class="tag-fut" title="This centre was not open for the whole 12 months, so the average headcount it is divided by is small">part year</span><% } %></td>
+      </tr>
+      <% }); %>
+      <% if (!tScoped) { %>
+      <tr style="font-weight:700;border-top:2px solid var(--border);">
+        <td>Group</td>
+        <td style="text-align:right;"><%= talent.group.headcount %></td>
+        <% talent.roleLabels.forEach(function(r){ %><td style="text-align:right;"><%= talent.centres.reduce(function(a,c){ return a + (c[r.key] || 0); }, 0) %></td><% }); %>
+        <td style="text-align:right;"><%= talent.group.starters12 %></td>
+        <td style="text-align:right;"><%= talent.group.leavers12 %></td>
+        <td style="text-align:right;"><%= talent.group.turnover12 == null ? '—' : talent.group.turnover12 + '%' %></td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table></div>
+  <p class="footnote">
+    Permanent staff only — <strong>no casual appears in this table</strong>.<% if (!tScoped) { %> The <%= talent.group.casual_headcount %> casuals are shown once, group-wide, in the tile above: a casual works across every centre, so the centre recorded against them in payroll is an administrative home rather than where the hours were worked. (Casual <em>hours</em> per centre on <a href="/wages">Wages &amp; Margin</a> are a different measurement — those are real hours paid against that location, and they stand.)<% } else { %> Casuals are counted once group-wide rather than against any centre, for the same reason: a casual works across all of them. Casual <em>hours</em> paid against a centre are a different measurement and are unaffected.<% } %>
+    Each person is counted once, under one primary role: educational leader, then teacher, then management, then room leader, then kitchen/cleaning/maintenance, then educator — so the role columns add up to the headcount instead of counting a teaching educational leader twice.
+  </p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Why people left</h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Cessation reason (ATO Single Touch Payroll code)</th>
+      <th style="text-align:right;">Last 12 months</th>
+      <th style="text-align:right;">% of last 12</th>
+      <th style="text-align:right;">Previous 12</th>
+      <th style="text-align:right;">All history</th>
+    </tr></thead>
+    <tbody>
+      <% talent.reasons.forEach(function(r){ %>
+      <tr>
+        <td><%= r.label %><% if (r.voluntary) { %> <span class="muted" style="font-size:11px;">(how a resignation is recorded)</span><% } %><% if (!r.known) { %> <span class="tag-fut" title="A code this dashboard has not seen before — carried through rather than dropped">new code</span><% } %></td>
+        <td style="text-align:right;font-weight:<%= r.voluntary ? '700' : '400' %>;"><%= r.last12 %></td>
+        <td style="text-align:right;"><%= talent.totals.last12 ? (Math.round(r.last12 / talent.totals.last12 * 1000) / 10) + '%' : '—' %></td>
+        <td style="text-align:right;"><%= r.prior12 %></td>
+        <td style="text-align:right;"><%= r.all %></td>
+      </tr>
+      <% }); %>
+      <tr style="font-weight:700;border-top:2px solid var(--border);">
+        <td>All terminations, turnover basis</td>
+        <td style="text-align:right;"><%= talent.totals.last12 %></td>
+        <td style="text-align:right;">100%</td>
+        <td style="text-align:right;"><%= talent.reasons.reduce(function(a,r){return a+r.prior12;},0) %></td>
+        <td style="text-align:right;"><%= talent.totals.all %></td>
+      </tr>
+      <tr>
+        <td>of which voluntary</td>
+        <td style="text-align:right;"><%= talent.totals.voluntary_last12 %></td>
+        <td style="text-align:right;"><%= tVolPct == null ? '—' : tVolPct + '%' %></td>
+        <td style="text-align:right;"><%= talent.reasons.filter(function(r){return r.voluntary;}).reduce(function(a,r){return a+r.prior12;},0) %></td>
+        <td style="text-align:right;"><%= talent.totals.voluntary_all %></td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p class="footnote">
+    Casuals and never-started people are already out of every figure in this table. <strong>Transfer</strong> and <strong>Deceased</strong> are in the ATO code set and are listed at zero because this payroll has not used them — a zero is a measurement, a blank row is not. A code that is not in the set at all is carried through under its own name rather than dropped.
+  </p>
+</div>
+
+<%
+  const tLabels = talent.monthly.map(function(x){ return mLbl(x.month); });
+  const tLc = { labels: tLabels, height: 220, series: [
+    { name: 'Leavers', points: talent.monthly.map(function(x){ return x.leavers; }) },
+    { name: 'Voluntary', points: talent.monthly.map(function(x){ return x.voluntary; }) },
+    { name: 'Starters', points: talent.monthly.map(function(x){ return x.starters; }) },
+  ] };
+%>
+<div class="card">
+  <h2 style="margin-top:0;">Terminations over time<% if (tScoped) { %> — your centre<% } %></h2>
+  <%- include('partials/linechart', { lc: tLc }) %>
+  <p class="footnote">Monthly counts on the turnover basis: casuals and never-started people are not in any of these three lines. Voluntary is the subset of leavers recorded as <em>Voluntary cessation</em>.</p>
+</div>
+
+<% if (turnoverSources && (turnoverSources.hr || turnoverSources.payroll)) { %>
+<div class="card">
+  <h2 style="margin-top:0;">Turnover has two sources</h2>
+  <p style="margin:0 0 12px;font-size:14px;">
+    <% if (turnoverSources.diff == null) { %>
+      Only one of the two has a figure at the moment. Both are shown as they stand, labelled by source and basis.
+    <% } else if (turnoverSources.agree) { %>
+      The two sources agree at the moment. Both are shown, so it stays visible that they measure different populations.
+    <% } else { %>
+      The two sources <strong>do not agree</strong> — payroll is <strong><%= turnoverSources.diff > 0 ? '+' : '' %><%= turnoverSources.diff %> percentage points</strong> against the spreadsheet. Neither is corrected to match the other: they count different people.
+    <% } %>
+  </p>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Source</th><th>As at</th><th style="text-align:right;">Turnover</th><th style="text-align:right;">Headcount</th><th>Basis</th></tr></thead>
+    <tbody>
+      <% if (turnoverSources.hr) { %>
+      <tr>
+        <td><strong><%= turnoverSources.hr.source %></strong></td>
+        <td><%= mLbl(turnoverSources.hr.month) %></td>
+        <td style="text-align:right;font-weight:700;"><%= turnoverSources.hr.value == null ? '—' : turnoverSources.hr.value + '%' %></td>
+        <td style="text-align:right;"><%= num(turnoverSources.hr.headcount) %></td>
+        <td class="muted" style="font-size:12px;"><%= turnoverSources.hr.basis %> · entered by hand, so what it includes is whatever the spreadsheet included</td>
+      </tr>
+      <% } %>
+      <% if (turnoverSources.payroll) { %>
+      <tr>
+        <td><strong><%= turnoverSources.payroll.source %></strong></td>
+        <td><%= mLbl(turnoverSources.payroll.month) %></td>
+        <td style="text-align:right;font-weight:700;"><%= turnoverSources.payroll.value == null ? '—' : turnoverSources.payroll.value + '%' %></td>
+        <td style="text-align:right;"><%= num(turnoverSources.payroll.headcount) %></td>
+        <td class="muted" style="font-size:12px;"><%= turnoverSources.payroll.basis %><% if (turnoverSources.payroll.leavers != null) { %> · <%= turnoverSources.payroll.leavers %> leavers in the window<% } %></td>
+      </tr>
+      <% } %>
+    </tbody>
+  </table></div>
+  <p class="footnote">The spreadsheet figure is whatever HR entered; the payroll figure is counted from Employment Hero every night on the basis stated above. Where they differ, the difference is the point — it says the two are counting different people, and which one answers a given question depends on which population you meant.</p>
+</div>
+<% } %>
+
+<% if (locals.talentSync) { %>
+<p class="footnote">
+  Payroll people counts last <%= talentSync.status === 'ok' ? 'refreshed' : 'attempted' %> <%= talentSync.last_attempt || 'never' %><% if (talentSync.status && talentSync.status !== 'ok') { %> — <strong><%= talentSync.status %></strong>: <%= talentSync.detail %><% } %>. Counts only: this dashboard stores no staff name, employee number or date of birth.
+</p>
+<% } %>
+
+<% } %>
+
 <%- include('partials/footer') %>
