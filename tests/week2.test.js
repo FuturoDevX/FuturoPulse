@@ -1222,3 +1222,74 @@ test('Week 2 batch H — a same-site write survives a proxy; a cross-site one is
   process.env.DB_PATH=prev;
  }
 });
+
+// ===== Under construction =====
+// MAINTENANCE=1 puts the dashboard behind a holding page while pages are being reworked, without
+// taking the service down or deploying different code. It has to do three things: show trial users
+// the page, keep letting admin and ops through so the work can be checked, and answer 503 rather
+// than 200 so a monitor or a crawler reads it as temporary.
+test('Week 2 batch I — the under-construction page holds everyone but admin and ops', async (t) => {
+ const mdir = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-maint-'));
+ const prevDb = process.env.DB_PATH, prevMode = process.env.MAINTENANCE;
+ process.env.DB_PATH = path.join(mdir, 'maint.db');
+ process.env.MAINTENANCE = '1';
+ for (const k of Object.keys(require.cache)) if (k.startsWith(path.join(__dirname, '..')) && !k.includes('node_modules') && k !== __filename) delete require.cache[k];
+ const mdb = require('../db/db'), mapp = require('../server');
+ for (const [email, role] of [['boss@example.test', 'admin'], ['ops@example.test', 'ops_manager'], ['dir@example.test', 'exec'], ['look@example.test', 'viewer']])
+   mdb.prepare('INSERT INTO users(email,name,password_hash,role) VALUES(?,?,?,?)').run(email, role, bcrypt.hashSync(pass, 4), role);
+ const srv = mapp.listen(0, '127.0.0.1'); await new Promise(r => srv.once('listening', r));
+ const b = 'http://127.0.0.1:' + srv.address().port;
+ const signIn = async (email) => {
+   const r = await fetch(b + '/login', { method: 'POST', redirect: 'manual', body: new URLSearchParams({ email, password: pass }) });
+   assert.equal(r.status, 302, 'sign-in must keep working while the holding page is up');
+   return r.headers.get('set-cookie').split(';')[0];
+ };
+ const go = (p, cookie) => fetch(b + p, { headers: cookie ? { cookie } : {}, redirect: 'manual' });
+ try {
+   // A visitor with no login gets the page, not a redirect to sign in, and not a 200.
+   const anon = await go('/');
+   assert.equal(anon.status, 503, 'a holding page is temporary — it must not answer 200');
+   assert.equal(anon.headers.get('retry-after'), '3600');
+   const anonBody = await anon.text();
+   assert.match(anonBody, /making some changes/i);
+   assert.match(anonBody, /sign in/i, 'and it must tell whoever looks after it how to get in');
+
+   // Every route, not just the home page.
+   for (const p of ['/coe', '/pipeline', '/wages', '/admin/places', '/ask', '/nothing-here'])
+     assert.equal((await go(p)).status, 503, p + ' must be held too');
+
+   // Admin and ops keep working.
+   for (const role of ['boss', 'ops']) {
+     const c = await signIn(role + '@example.test');
+     const r = await go('/', c);
+     assert.equal(r.status, 200, role + ' must still reach the dashboard');
+     assert.doesNotMatch(await r.text(), /making some changes/i);
+   }
+   // Everyone else is held, even signed in — and told so by name rather than bounced to a login loop.
+   for (const role of ['dir', 'look']) {
+     const c = await signIn(role + '@example.test');
+     const r = await go('/', c);
+     assert.equal(r.status, 503, role + ' must see the holding page');
+     assert.match(await r.text(), /cannot see the dashboard while it is offline/i);
+   }
+   // And with the switch off, nothing is held.
+   process.env.MAINTENANCE = '0';
+   for (const k of Object.keys(require.cache)) if (k.startsWith(path.join(__dirname, '..')) && !k.includes('node_modules') && k !== __filename) delete require.cache[k];
+   const openApp = require('../server'), s2 = openApp.listen(0, '127.0.0.1');
+   await new Promise(r => s2.once('listening', r));
+   const b2 = 'http://127.0.0.1:' + s2.address().port;
+   const lr = await fetch(b2 + '/login', { method: 'POST', redirect: 'manual', body: new URLSearchParams({ email: 'look@example.test', password: pass }) });
+   const r2 = await fetch(b2 + '/', { headers: { cookie: lr.headers.get('set-cookie').split(';')[0] }, redirect: 'manual' });
+   assert.equal(r2.status, 200, 'with MAINTENANCE off a viewer sees the dashboard again');
+   if (typeof s2.closeAllConnections === 'function') s2.closeAllConnections();
+   await new Promise(r => s2.close(r));
+   require('../middleware/session').store.stopPruning();
+ } finally {
+   if (typeof srv.closeAllConnections === 'function') srv.closeAllConnections();
+   await new Promise(r => srv.close(r));
+   try { require('../middleware/session').store.stopPruning(); } catch {}
+   mdb.close(); fs.rmSync(mdir, { recursive: true, force: true });
+   if (prevMode === undefined) delete process.env.MAINTENANCE; else process.env.MAINTENANCE = prevMode;
+   process.env.DB_PATH = prevDb;
+ }
+});

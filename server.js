@@ -38,6 +38,27 @@ app.use((req, res, next) => {
   next();
 });
 
+// ===== Under construction =====
+// MAINTENANCE=1 puts the whole dashboard behind a holding page: every route answers 503 with
+// views/maintenance.ejs. Sign-in still works and admin or ops still get the real dashboard, so the
+// people doing the work can keep checking it while trial users see the holding page. Turn it on and
+// off with the environment variable on the host — no deploy of code required, just a restart.
+const MAINTENANCE = /^(1|true|on|yes)$/i.test(String(process.env.MAINTENANCE || "").trim());
+const MAINTENANCE_ROLES = ["admin", "ops_manager"];
+if (MAINTENANCE) console.warn("[maintenance] MAINTENANCE is on — everyone except admin/ops sees the holding page");
+app.use((req, res, next) => {
+  if (!MAINTENANCE) return next();
+  // Let people sign in (and out), and let static assets through, or an admin cannot reach the login
+  // form or the page cannot style itself.
+  if (req.path === "/login" || req.path === "/logout" || req.path === "/healthz") return next();
+  const user = req.session && req.session.user;
+  if (user && MAINTENANCE_ROLES.includes(user.role)) return next();
+  res.status(503);
+  res.set("Retry-After", "3600");           // tell crawlers and monitors this is temporary, not gone
+  res.set("Cache-Control", "no-store");
+  return res.render("maintenance", { user: user || null });
+});
+
 // Public
 app.use("/", require("./routes/auth"));
 

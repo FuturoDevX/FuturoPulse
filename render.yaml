@@ -86,6 +86,11 @@ services:
         sync: false
       # The address people actually use, if a proxy forwards neither Host nor X-Forwarded-Host
       # intact. Writes whose Origin matches it are accepted; leave unset unless a form is refused.
+      # Set to 1 to put the whole dashboard behind the "under construction" holding page. Sign-in
+      # still works and admin/ops still get the real dashboard, so work can carry on behind it.
+      # Change it in the Render dashboard and restart — no code deploy needed.
+      - key: MAINTENANCE
+        value: 0
       - key: PUBLIC_HOSTNAME
         value: futuro-pulse.onrender.com
       - key: PRIVACY_CONTACT

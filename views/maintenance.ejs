@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Futuro Pulse — back shortly</title>
+  <style>
+    :root { --navy:#1f3864; --navy-dark:#152847; --ink:#1a2030; --muted:#5d6675; --paper:#f6f7fa; --surface:#fff; --rule:#dfe3ea; }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+           background:var(--paper); color:var(--ink);
+           font-family:"Source Sans 3","Segoe UI",system-ui,-apple-system,sans-serif; line-height:1.55; }
+    .card { background:var(--surface); border:1px solid var(--rule); border-radius:10px; max-width:520px; width:100%;
+            padding:0; overflow:hidden; box-shadow:0 1px 2px rgba(26,32,48,.05), 0 8px 24px rgba(26,32,48,.06); }
+    .top { background:linear-gradient(185deg,#244472 0%, var(--navy) 55%, var(--navy-dark) 100%); color:#fff; padding:26px 30px; }
+    .brand { font-weight:700; font-size:20px; letter-spacing:-.01em; }
+    .brand span { display:block; font-weight:500; font-size:10px; text-transform:uppercase; letter-spacing:.11em; opacity:.6; margin-top:3px; }
+    .body { padding:26px 30px 28px; }
+    h1 { font-size:21px; margin:0 0 10px; letter-spacing:-.01em; }
+    p { margin:0 0 12px; color:var(--muted); font-size:15px; }
+    p:last-child { margin-bottom:0; }
+    .who { margin-top:18px; padding-top:16px; border-top:1px solid var(--rule); font-size:13.5px; }
+    a { color:var(--navy); }
+    @media (prefers-color-scheme: dark) {
+      :root { --paper:#12161f; --surface:#191e2a; --ink:#e6e9f0; --muted:#97a1b3; --rule:#2c3442; --navy:#8fa6d6; }
+      body { background:var(--paper); color:var(--ink); }
+      .top { background:linear-gradient(185deg,#1c2b47 0%, #16223a 55%, #101a2d 100%); }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="top"><div class="brand">Futuro Pulse<span>Operations</span></div></div>
+    <div class="body">
+      <h1>We're making some changes</h1>
+      <p>Futuro Pulse is briefly offline while we tidy up a few pages. Nothing has been lost — your centres' data is safe in OWNA, Employment Hero and LineLeader, and the dashboard will pick it up again when it comes back.</p>
+      <p>Please try again a little later.</p>
+      <div class="who">
+        <% if (locals.user) { %>
+          You are signed in as <strong><%= user.name || user.email %></strong>, but this login cannot see the dashboard while it is offline.
+          <a href="/logout">Sign out</a>
+        <% } else { %>
+          If you look after this dashboard, <a href="/login">sign in</a> to keep working.
+        <% } %>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
