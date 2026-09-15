@@ -380,3 +380,39 @@ tr.coe-anchor td { background: #f6f8fc; }
 .coe-method { columns: 2; column-gap: 30px; font-size: 13px; }
 .coe-method p { break-inside: avoid; margin: 0 0 10px; }
 @media (max-width: 860px) { .coe-bar-row { grid-template-columns: 1fr; gap: 6px; } .coe-bar-val { text-align: left; } .coe-method { columns: 1; } }
+
+/* A completed audit action, struck through. The tags used to be concatenated into an escaped
+   EJS expression, which printed them literally. */
+.struck { text-decoration: line-through; color: var(--muted, #5d6675); }
+
+/* ===== Phone and small tablet =====
+   Added 15 Sept 2026. Until now the only media queries in this file touched a two-column grid and one
+   chart row, so on a phone the navy sidebar kept its fixed 238px and its full height — roughly 60% of
+   a 400px screen — and the page content was cut off to the right of it. Centre directors read this
+   between rooms, on a phone, which makes it the most-used screen size and the only one nobody had
+   looked at. The sidebar becomes an ordinary block at the top, scrolling with the page; the tables
+   already scroll inside their own wrappers. */
+@media (max-width: 760px) {
+  .app-shell { display: block; }
+  .sidebar { width: auto; height: auto; position: static; overflow: visible; padding: 16px 0 12px; }
+  /* .side-nav sets flex-direction: column for the desktop rail — override it, or the links stay in
+     one tall stack and fill the whole first screen before any number appears. */
+  /* Cap the nav at a third of the screen and let it scroll: an admin sees twenty links, and without
+     this the first number on the page sits below the fold on every visit. */
+  .side-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 0 12px; flex: none;
+              max-height: 32vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .side-nav a { margin: 0; padding: 7px 11px; font-size: 14px; }
+  /* Section labels ("CENTRES", "OPENING SOON") break the row, so each group starts on its own line. */
+  .side-nav-divider { flex-basis: 100%; padding: 10px 2px 2px; }
+  .side-nav-footer { flex-basis: 100%; margin-top: 10px; padding: 10px 2px 0; }
+  .sidebar .brand { padding-left: 14px; padding-right: 14px; margin-bottom: 14px; }
+  main { max-width: none; padding: 20px 14px 48px; }
+  .page-head { display: block; }
+  .head-actions { margin-top: 12px; }
+  /* Tiles two-up rather than one enormous column of eight. */
+  .grid.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .card.stat .n { font-size: 24px; }
+  h1 { font-size: 26px; }
+  /* Date range controls stack instead of overflowing. */
+  .rangebar form, .rangebar { flex-wrap: wrap; }
+}

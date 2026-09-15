@@ -29,9 +29,11 @@
   <div class="card stat"><div class="n"><%= (t[4]||0).toLocaleString('en-AU') %></div><div class="l">On waitlist</div></div>
   <div class="card stat"><div class="n"><%= (t[5]||0).toLocaleString('en-AU') %></div><div class="l">Offers accepted</div></div>
   <div class="card stat"><div class="n"><%= ((t[1]||0)+(t[2]||0)+(t[11]||0)+(t[3]||0)).toLocaleString('en-AU') %></div><div class="l">Active leads</div></div>
-  <div class="card stat"><div class="n"><%= (t.started||0).toLocaleString('en-AU') %></div><div class="l">Expected starts (120d)</div></div>
-  <div class="card stat"><div class="n"><%= (t.withdrawn||0).toLocaleString('en-AU') %></div><div class="l">Withdrawn (120d)</div></div>
-  <div class="card stat"><div class="n <%= (t.net||0) >= 0 ? 'good-text' : 'bad-text' %>"><%= (t.net||0) >= 0 ? '+' : '' %><%= (t.net||0).toLocaleString('en-AU') %></div><div class="l">Indicative net</div></div>
+<%# Removed 15 Sept 2026: "Expected starts (120d)", "Withdrawn (120d)" and "Indicative net". The query
+    feeding them had no date filter, so they counted every enrolment record ever written — out to 2029 —
+    while the label promised 120 days. The group read 1,554 expected starts and +1,520 net against 501
+    licensed places and 764 children enrolled. Expected starts with a real window are on the Continuation
+    of Enrolment page, which counts them per month against places. %>
 </div>
 <% } %>
 
@@ -173,7 +175,6 @@
       <tr>
         <th>Centre</th>
         <% p.funnel.forEach(function(f){ %><th class="num"><%= f[1].replace(' (Started)','') %></th><% }); %>
-        <th class="num" title="Started minus withdrawn in the snapshot window">Net</th>
       </tr>
     </thead>
     <tbody>
@@ -183,7 +184,6 @@
           <% p.funnel.forEach(function(f){ var v=r.counts[f[0]]||0; %>
             <td class="num <%= f[0]===4 && v>0 ? 'hot' : '' %>"><%= v %></td>
           <% }); %>
-          <td class="num <%= r.net>=0 ? 'good-text':'bad-text' %>"><%= r.net>=0?'+':'' %><%= r.net %></td>
         </tr>
       <% }); %>
     </tbody>
@@ -191,7 +191,6 @@
       <tr class="total-row">
         <td>All centres</td>
         <% p.funnel.forEach(function(f){ %><td class="num"><%= t[f[0]]||0 %></td><% }); %>
-        <td class="num <%= (t.net||0)>=0 ? 'good-text':'bad-text' %>"><%= (t.net||0)>=0?'+':'' %><%= t.net||0 %></td>
       </tr>
     </tfoot>
   </table>
@@ -199,7 +198,7 @@
 </div>
 
 <p class="footnote">
-  Waitlist column highlighted. “Expected starts” counts enrolment records with an expected-start date in the last 120 days (includes places not yet confirmed enrolled), so “Indicative net” is directional, not a hard headcount; “Withdrawn” is exact. Live enrolled headcount is on the Overview.
+  Waitlist column highlighted. Live enrolled headcount is on the Overview.
   Centres like Oran Park, Park Rd and Cobbitty appear here (building a pipeline) before they show in the OWNA occupancy view.
 </p>
 <% } %>

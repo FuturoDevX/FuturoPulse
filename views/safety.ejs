@@ -82,7 +82,9 @@
   <div class="card stat"><div class="n"><%= g.injuries %></div><div class="l">Injuries · YTD</div></div>
   <div class="card stat"><div class="n"><%= g.illness %></div><div class="l">Illness · YTD</div></div>
   <div class="card stat"><div class="n"><%= g.serious %></div><div class="l">Emergency services · YTD</div></div>
-  <div class="card stat"><div class="n"><%= g.reportable %></div><div class="l">Serious incidents · Reg 12 · YTD</div></div>
+  <%# Removed 15 Sept 2026: a second tile rendering this same g.reportable value under the heading
+      "Serious incidents · Reg 12 · YTD". Two tiles, one number, teaching readers they were different
+      things. "Notified to the Department" below is the same count and says what it means. %>
   <div class="card stat"><div class="n"><%= g.reportable %></div><div class="l">Notified to the Department · <%= ytd.ytdLabel %><span class="cap">= Reg 12 serious incidents: emergency services attended or medical attention sought, from OWNA incident reports</span></div></div>
   <div class="card stat"><div class="n"><%= g12.reportable %></div><div class="l">Notified to the Department · last 12 months<span class="cap"><%= mShort(l12.from_month) %> <%= l12.from_month.slice(0,4) %> → <%= mShort(l12.to_month) %> <%= l12.to_month.slice(0,4) %> · <%= plural(g12.months, 'month') %> of data</span></div></div>
 </div>

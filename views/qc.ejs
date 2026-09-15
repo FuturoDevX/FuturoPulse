@@ -101,8 +101,13 @@
       <% (audit.actions||[]).forEach(function(a){ %>
         <tr class="<%= isDone(a.completed)?'future-row':'' %>">
           <td><%= a.quality_area %></td>
-          <td style="white-space:normal;"><%= isDone(a.completed) ? '<s>'+(a.issue||'') : (a.issue||'') %><%= isDone(a.completed)?'</s>':'' %></td>
-          <td style="max-width:320px;white-space:normal;"><%= (a.action||'').slice(0,180) %></td>
+          <%# The strikethrough tags used to be concatenated inside an escaped EJS expression, so a
+              completed row printed those tags as literal characters — 16 of 30 rows on a real audit.
+              Mark the row instead and let CSS strike it. %>
+          <td style="white-space:normal;" class="<%= isDone(a.completed) ? 'struck' : '' %>"><%= a.issue || '' %></td>
+          <%# Was .slice(0,180) with no ellipsis, so the one column a director acts on ended mid-word
+              ("...have an evacua"). Show it in full: the cell already wraps. %>
+          <td style="max-width:320px;white-space:normal;"><%= a.action || '' %></td>
           <td><%- prPill(a.priority) %></td>
           <td><%= a.owner || '—' %></td>
           <td><%= a.due_date || (isDone(a.completed)?'done':'—') %></td>

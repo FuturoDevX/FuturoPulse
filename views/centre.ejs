@@ -141,21 +141,25 @@
       <% }); %>
     </div>
     <% } %>
-    <% if (insights.calc.length) { %>
+    <%# Only offer the growth calculator where growth is actually available. A centre already at or
+        above 100% was being told to chase 15 new families to reach "105.7% (caps at 100%)", which is
+        advice nobody can act on. metrics.js already flags each row `reachable`. %>
+    <% const growable = (insights.calc || []).filter(function(r){ return r.reachable; }); %>
+    <% if (growable.length) { %>
     <h3 class="card-sub">What it takes to grow</h3>
     <p class="sub" style="margin:0 0 10px;">Current occupancy <strong><%= insights.occupancyNow %>%</strong> across <%= insights.places %> approved places. New permanent enrolments needed to lift it:</p>
     <div style="overflow-x:auto;"><table>
       <thead><tr><th>Lift occupancy by</th><th class="num">2-day places</th><th class="num">3-day</th><th class="num">4-day</th><th class="num">5-day</th></tr></thead>
       <tbody>
-        <% insights.calc.forEach(function(row){ %>
+        <% growable.forEach(function(row){ %>
         <tr>
-          <td><strong>+<%= row.delta %>pp</strong> <span class="muted">→ <%= row.target_occ %>%</span><% if(!row.reachable){ %> <span class="muted" style="font-size:11px;">(caps at 100%)</span><% } %></td>
+          <td><strong>+<%= row.delta %>pp</strong> <span class="muted">→ <%= row.target_occ %>%</span></td>
           <% row.perPattern.forEach(function(p){ %><td class="num"><%= p.count %></td><% }); %>
         </tr>
         <% }); %>
       </tbody>
     </table></div>
-    <p class="footnote">Read across a row: e.g. to lift occupancy +<%= insights.calc[0].delta %>pp you need about <strong><%= insights.calc[0].perPattern[0].count %></strong> new 2-day children — or <strong><%= insights.calc[0].perPattern[3].count %></strong> new 5-day children. Any mix of days works; each 5-day place moves the needle fastest.</p>
+    <p class="footnote">Read across a row: e.g. to lift occupancy +<%= growable[0].delta %>pp you need about <strong><%= growable[0].perPattern[0].count %></strong> new 2-day children — or <strong><%= growable[0].perPattern[3].count %></strong> new 5-day children. Any mix of days works; each 5-day place moves the needle fastest.</p>
     <% } %>
   </div>
   <% } else { %>

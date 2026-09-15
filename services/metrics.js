@@ -278,17 +278,13 @@ function llPipeline() {
     if (!byCentre.has(r.ll_id)) byCentre.set(r.ll_id, { ll_id: r.ll_id, name: r.centre_name, counts: {} });
     byCentre.get(r.ll_id).counts[r.status_id] = r.count;
   }
-  // Net growth (window) from ll_enrolments.
-  const growth = db.prepare(`
-    SELECT ll_id, SUM(start_date IS NOT NULL) AS started, SUM(withdrawn_date IS NOT NULL) AS withdrawn
-    FROM ll_enrolments GROUP BY ll_id
-  `).all();
-  const gMap = new Map(growth.map((g) => [g.ll_id, g]));
-
-  const rows = [...byCentre.values()].map((c) => {
-    const g = gMap.get(c.ll_id) || { started: 0, withdrawn: 0 };
-    return { ...c, started: g.started || 0, withdrawn: g.withdrawn || 0, net: (g.started || 0) - (g.withdrawn || 0) };
-  }).sort((a, b) => (b.counts[4] || 0) - (a.counts[4] || 0)); // busiest waitlist first
+  // The "started / withdrawn / net" figures that used to be built here were removed on 15 Sept 2026.
+  // The query had no date filter, so it counted every enrolment record ever written while the page
+  // labelled the result "120d": the group read 1,554 expected starts and +1,520 net against 501
+  // licensed places. Expected starts with a real window live on the Continuation of Enrolment page,
+  // which counts them per month against the places available.
+  const rows = [...byCentre.values()]
+    .sort((a, b) => (b.counts[4] || 0) - (a.counts[4] || 0)); // busiest waitlist first
 
   const totals = {};
   for (const [sid] of LL_FUNNEL) totals[sid] = rows.reduce((s, r) => s + (r.counts[sid] || 0), 0);
