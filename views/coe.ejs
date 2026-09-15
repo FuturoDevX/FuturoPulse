@@ -129,73 +129,11 @@
   </p>
 </div>
 
-<div class="grid kpis">
-  <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> approved places × <%= am.operating_days %> operating days</span></div></div>
-  <div class="card stat"><div class="n <%= tone(ga.pct, GTGT) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · against the group target of <%= pctStr(GTGT) %>, the centre targets weighted by approved places</span></div></div>
-  <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>, at each centre's average booking pattern</span></div></div>
-  <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date<%= ga.days_unknown ? ' · ' + ga.days_unknown + ' of them with no requested days recorded, valued at their centre average' : '' %></span></div></div>
-  <div class="card stat"><div class="n"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></div><div class="l">Gap to target<span class="cap">child-days in <%= mLong(am.month) %> against <%= fmt(ga.target_days) %> targeted (<%= pctStr(GTGT) %> of available)<%= ga.gap_days > 0 && am.operating_days ? ' · about ' + Math.round(ga.gap_days / (am.operating_days / 5) / 3) + ' children at 3 days a week' : ' · the projection is at or above target' %><%= ga.shortfall_days > 0 ? ' · ' + fmt(ga.shortfall_days) + ' counted centre by centre, since a centre over its target cannot fill a seat at one under it' : '' %></span></div></div>
-</div>
-
-<div class="card">
-  <h2 style="margin-top:0;"><%= mLong(am.month) %>, the anchor month <span class="muted" style="font-weight:400;font-size:13px;">· each bar is that centre's available child-days</span></h2>
-  <% coe.centres.forEach(function(c){ var x = c.months[ai]; var keep = Math.max(0, x.run_rate_days - x.leaver_days); %>
-    <div class="coe-bar-row">
-      <div class="coe-bar-name"><%= shortName(c.name) %><span><%= c.places %> places · <%= am.operating_days %> days · <%= fmt(x.available_days) %> days available · target <%= pctStr(c.target_pct) %><%= c.target_source === 'centre' ? '' : ' (group default)' %></span></div>
-      <div class="coe-track">
-        <div class="coe-seg keep" style="width:<%= W(keep, x.available_days) %>%;" title="Run rate less leavers: <%= fmt(keep) %> days"></div>
-        <div class="coe-seg firm" style="width:<%= W(x.firm_days, x.available_days) %>%;" title="Firm backfill: <%= fmt(x.firm_days) %> days"></div>
-        <div class="coe-seg lost" style="width:<%= W(x.leaver_days, x.available_days) %>%;" title="Days falling away: <%= fmt(x.leaver_days) %> days"></div>
-        <%# The track is clipped at 100%, so a target above 100 sits on the right-hand edge and says so. %>
-        <div class="coe-target" style="left:<%= Math.min(100, c.target_pct) %>%;" title="<%= shortName(c.name) %> target <%= pctStr(c.target_pct) %><%= c.target_pct > 100 ? ' — beyond the end of the track, which stops at 100%' : '' %>"></div>
-      </div>
-      <div class="coe-bar-val <%= tone(x.pct, c.target_pct) + '-text' %>"><%= x.pct %>%<span><%= fmt(x.projected_days) %> days · target <%= pctStr(c.target_pct) %></span></div>
-    </div>
-  <% }); %>
-  <div class="coe-legend">
-    <span><i style="background:var(--navy);"></i>Run rate, less the children with finish dates</span>
-    <span><i style="background:#4caf7d;"></i>Firm backfill (Offer Accepted / Pre-Offered)</span>
-    <span><i class="coe-seg lost" style="width:14px;height:10px;"></i>Days falling away (shown beyond the fill, not inside it)</span>
-    <span><i style="background:var(--warn);width:3px;"></i>That centre's own target<%= mixedTargets ? ' — a different mark on each row' : '' %></span>
-  </div>
-  <p class="footnote">The track is clipped at 100%: a centre above target fills it and the figure beside the bar carries the real number. Each row's target mark is its own — <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %><% if (overTarget.length) { %>, and a target over 100% sits on the right-hand edge because the track cannot draw past it<% } %>.</p>
-</div>
-
-<div class="card">
-  <h2 style="margin-top:0;">Month by month <span class="muted" style="font-weight:400;font-size:13px;">· projected child-days filled as a share of child-days available</span></h2>
-  <div style="overflow-x:auto;"><table>
-    <thead>
-      <tr>
-        <th>Centre</th><th class="num">Places</th><th class="num">Target</th><th class="num">Run rate / week</th><th class="num">Leaving by <%= mShort(coe.window.last) %></th>
-        <% coe.months.forEach(function(x){ %><th class="num"><%= mShort(x.month) %><br><span style="font-weight:400;text-transform:none;letter-spacing:0;"><%= x.operating_days %> days</span></th><% }); %>
-      </tr>
-    </thead>
-    <tbody>
-      <% coe.centres.forEach(function(c){ %>
-        <tr>
-          <td><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a><br><span class="muted" style="font-size:11.5px;"><%= c.enrolled %> enrolled · <%= c.avg_days_per_child.toFixed(1) %> days per child</span></td>
-          <td class="num"><%= c.places %></td>
-          <td class="num"><strong><%= pctStr(c.target_pct) %></strong><% if (c.target_source !== 'centre') { %><br><span class="muted" style="font-size:11.5px;">group default</span><% } %></td>
-          <td class="num"><%= fmt(c.run_week_days) %></td>
-          <td class="num bad-text"><%= c.months[coe.months.length-1].leavers_to_date %></td>
-          <% c.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct, c.target_pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days · <%= shortName(c.name) %> is measured against <%= pctStr(c.target_pct) %>"><%= x.pct %>%</td><% }); %>
-        </tr>
-      <% }); %>
-    </tbody>
-    <tfoot>
-      <tr class="total-row">
-        <td>All operating centres</td>
-        <td class="num"><%= coe.group.places %></td>
-        <td class="num"><strong><%= pctStr(GTGT) %></strong></td>
-        <td class="num"><%= fmt(coe.group.run_week_days) %></td>
-        <td class="num"><%= coe.group.months[coe.months.length-1].leavers_to_date %></td>
-        <% coe.group.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct, x.target_pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days · measured against the weighted group target <%= pctStr(x.target_pct) %>"><%= x.pct %>%</td><% }); %>
-      </tr>
-    </tfoot>
-  </table></div>
-  <p class="footnote" style="margin-bottom:0;">Green is at or above <strong>that centre's own target</strong> — <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %> — amber within ten points of it, red below; the group row is measured against <%= pctStr(GTGT) %>, those targets weighted by approved places. Two centres on the same percentage can therefore be different colours, and that is the point of the column. <strong>Leaving by <%= mShort(coe.window.last) %></strong> counts every child whose finish date falls between <%= dLong(coe.as_at) %> and <%= mLong(coe.window.last) %> — the same children are deducted from every later month. The pre-opening centres are not in this table or in the group row: they have no run rate and no licensed places recorded.</p>
-</div>
-
+<%# Reordered 15 Sept 2026: the measured continuing count leads and the run-rate projection follows.
+    The page opened with the projection — a model that assumes every family without a finish date
+    stays — while the count of children who actually hold bookings sat two hundred lines below it.
+    The measured number is the one a director can act on; the projection is the ceiling around it,
+    and reads better as context than as the headline. %>
 <% if (ms && mm) { %>
 <div class="card">
   <h2 style="margin-top:0;">The measured continuing count <span class="muted" style="font-weight:400;font-size:13px;">· counted from the bookings themselves, not from the run rate</span></h2>
@@ -316,6 +254,76 @@
   <p class="sub" style="margin-bottom:0;">Not on this page yet: no snapshot of forward bookings has been taken. The nightly run at 2:15am Sydney takes the first one — or <code>npm run coe-snapshot</code> takes it now — and from then on this page shows, beside the run rate, how many of the children enrolled today hold bookings reaching each campaign month, how many are not yet confirmed, how many are leaving, and how many families are booked 1, 2, 3, 4 or 5 days a week. Everything above works as it does today in the meantime.</p>
 </div>
 <% } %>
+
+<%# The run-rate projection: the ceiling. It assumes every family without a finish date continues,
+    which is why it sits under the measured count rather than above it. %>
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> approved places × <%= am.operating_days %> operating days</span></div></div>
+  <div class="card stat"><div class="n <%= tone(ga.pct, GTGT) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · against the group target of <%= pctStr(GTGT) %>, the centre targets weighted by approved places</span></div></div>
+  <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>, at each centre's average booking pattern</span></div></div>
+  <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date<%= ga.days_unknown ? ' · ' + ga.days_unknown + ' of them with no requested days recorded, valued at their centre average' : '' %></span></div></div>
+  <div class="card stat"><div class="n"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></div><div class="l">Gap to target<span class="cap">child-days in <%= mLong(am.month) %> against <%= fmt(ga.target_days) %> targeted (<%= pctStr(GTGT) %> of available)<%= ga.gap_days > 0 && am.operating_days ? ' · about ' + Math.round(ga.gap_days / (am.operating_days / 5) / 3) + ' children at 3 days a week' : ' · the projection is at or above target' %><%= ga.shortfall_days > 0 ? ' · ' + fmt(ga.shortfall_days) + ' counted centre by centre, since a centre over its target cannot fill a seat at one under it' : '' %></span></div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;"><%= mLong(am.month) %>, the anchor month <span class="muted" style="font-weight:400;font-size:13px;">· each bar is that centre's available child-days</span></h2>
+  <% coe.centres.forEach(function(c){ var x = c.months[ai]; var keep = Math.max(0, x.run_rate_days - x.leaver_days); %>
+    <div class="coe-bar-row">
+      <div class="coe-bar-name"><%= shortName(c.name) %><span><%= c.places %> places · <%= am.operating_days %> days · <%= fmt(x.available_days) %> days available · target <%= pctStr(c.target_pct) %><%= c.target_source === 'centre' ? '' : ' (group default)' %></span></div>
+      <div class="coe-track">
+        <div class="coe-seg keep" style="width:<%= W(keep, x.available_days) %>%;" title="Run rate less leavers: <%= fmt(keep) %> days"></div>
+        <div class="coe-seg firm" style="width:<%= W(x.firm_days, x.available_days) %>%;" title="Firm backfill: <%= fmt(x.firm_days) %> days"></div>
+        <div class="coe-seg lost" style="width:<%= W(x.leaver_days, x.available_days) %>%;" title="Days falling away: <%= fmt(x.leaver_days) %> days"></div>
+        <%# The track is clipped at 100%, so a target above 100 sits on the right-hand edge and says so. %>
+        <div class="coe-target" style="left:<%= Math.min(100, c.target_pct) %>%;" title="<%= shortName(c.name) %> target <%= pctStr(c.target_pct) %><%= c.target_pct > 100 ? ' — beyond the end of the track, which stops at 100%' : '' %>"></div>
+      </div>
+      <div class="coe-bar-val <%= tone(x.pct, c.target_pct) + '-text' %>"><%= x.pct %>%<span><%= fmt(x.projected_days) %> days · target <%= pctStr(c.target_pct) %></span></div>
+    </div>
+  <% }); %>
+  <div class="coe-legend">
+    <span><i style="background:var(--navy);"></i>Run rate, less the children with finish dates</span>
+    <span><i style="background:#4caf7d;"></i>Firm backfill (Offer Accepted / Pre-Offered)</span>
+    <span><i class="coe-seg lost" style="width:14px;height:10px;"></i>Days falling away (shown beyond the fill, not inside it)</span>
+    <span><i style="background:var(--warn);width:3px;"></i>That centre's own target<%= mixedTargets ? ' — a different mark on each row' : '' %></span>
+  </div>
+  <p class="footnote">The track is clipped at 100%: a centre above target fills it and the figure beside the bar carries the real number. Each row's target mark is its own — <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %><% if (overTarget.length) { %>, and a target over 100% sits on the right-hand edge because the track cannot draw past it<% } %>.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Month by month <span class="muted" style="font-weight:400;font-size:13px;">· projected child-days filled as a share of child-days available</span></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead>
+      <tr>
+        <th>Centre</th><th class="num">Places</th><th class="num">Target</th><th class="num">Run rate / week</th><th class="num">Leaving by <%= mShort(coe.window.last) %></th>
+        <% coe.months.forEach(function(x){ %><th class="num"><%= mShort(x.month) %><br><span style="font-weight:400;text-transform:none;letter-spacing:0;"><%= x.operating_days %> days</span></th><% }); %>
+      </tr>
+    </thead>
+    <tbody>
+      <% coe.centres.forEach(function(c){ %>
+        <tr>
+          <td><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a><br><span class="muted" style="font-size:11.5px;"><%= c.enrolled %> enrolled · <%= c.avg_days_per_child.toFixed(1) %> days per child</span></td>
+          <td class="num"><%= c.places %></td>
+          <td class="num"><strong><%= pctStr(c.target_pct) %></strong><% if (c.target_source !== 'centre') { %><br><span class="muted" style="font-size:11.5px;">group default</span><% } %></td>
+          <td class="num"><%= fmt(c.run_week_days) %></td>
+          <td class="num bad-text"><%= c.months[coe.months.length-1].leavers_to_date %></td>
+          <% c.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct, c.target_pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days · <%= shortName(c.name) %> is measured against <%= pctStr(c.target_pct) %>"><%= x.pct %>%</td><% }); %>
+        </tr>
+      <% }); %>
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td>All operating centres</td>
+        <td class="num"><%= coe.group.places %></td>
+        <td class="num"><strong><%= pctStr(GTGT) %></strong></td>
+        <td class="num"><%= fmt(coe.group.run_week_days) %></td>
+        <td class="num"><%= coe.group.months[coe.months.length-1].leavers_to_date %></td>
+        <% coe.group.months.forEach(function(x){ %><td class="num coe-pct <%= tone(x.pct, x.target_pct) %>" title="<%= fmt(x.projected_days) %> of <%= fmt(x.available_days) %> days · measured against the weighted group target <%= pctStr(x.target_pct) %>"><%= x.pct %>%</td><% }); %>
+      </tr>
+    </tfoot>
+  </table></div>
+  <p class="footnote" style="margin-bottom:0;">Green is at or above <strong>that centre's own target</strong> — <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %> — amber within ten points of it, red below; the group row is measured against <%= pctStr(GTGT) %>, those targets weighted by approved places. Two centres on the same percentage can therefore be different colours, and that is the point of the column. <strong>Leaving by <%= mShort(coe.window.last) %></strong> counts every child whose finish date falls between <%= dLong(coe.as_at) %> and <%= mLong(coe.window.last) %> — the same children are deducted from every later month. The pre-opening centres are not in this table or in the group row: they have no run rate and no licensed places recorded.</p>
+</div>
+
 
 <div class="card">
   <h2 style="margin-top:0;">The working, group total by month</h2>

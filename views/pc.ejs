@@ -125,8 +125,10 @@
   <% } %>
 </div>
 
-<div class="card">
-  <h2 style="margin-top:0;">What counts as turnover</h2>
+<%# The reconciliation from raw terminations to turnover events. Kept, because the owner asked to be
+    able to trace 145 down to 115, but behind a toggle: it is working, not a headline. %>
+<details class="card working">
+  <summary><strong>What counts as turnover</strong> — raw terminations, less casuals, less never-started</summary>
   <% if (!tScoped) { %>
   <p style="margin:0 0 10px;font-size:14px;">Payroll records <strong><%= talent.recon.all.raw %></strong> terminations across its whole history. Two groups are taken out before turnover is measured, and the same two are taken out of the headcount it is measured against:</p>
   <div style="overflow-x:auto;"><table>
@@ -146,7 +148,7 @@
     The exclusions are a test of the dates, not of tenure: someone who worked a fortnight and left is turnover.
     Turnover % is leavers over the rolling twelve months divided by the average month-end permanent headcount across them.
   </p>
-</div>
+</details>
 
 <div class="card">
   <h2 style="margin-top:0;">Headcount &amp; role mix<% if (!tScoped) { %> by centre<% } %> — <%= tMonthLbl %></h2>
@@ -244,42 +246,11 @@
 </div>
 
 <% if (turnoverSources && (turnoverSources.hr || turnoverSources.payroll)) { %>
-<div class="card">
-  <h2 style="margin-top:0;">Turnover has two sources</h2>
-  <p style="margin:0 0 12px;font-size:14px;">
-    <% if (turnoverSources.diff == null) { %>
-      Only one of the two has a figure at the moment. Both are shown as they stand, labelled by source and basis.
-    <% } else if (turnoverSources.agree) { %>
-      The two sources agree at the moment. Both are shown, so it stays visible that they measure different populations.
-    <% } else { %>
-      The two sources <strong>do not agree</strong> — payroll is <strong><%= turnoverSources.diff > 0 ? '+' : '' %><%= turnoverSources.diff %> percentage points</strong> against the spreadsheet. Neither is corrected to match the other: they count different people.
-    <% } %>
-  </p>
-  <div style="overflow-x:auto;"><table>
-    <thead><tr><th>Source</th><th>As at</th><th style="text-align:right;">Turnover</th><th style="text-align:right;">Headcount</th><th>Basis</th></tr></thead>
-    <tbody>
-      <% if (turnoverSources.hr) { %>
-      <tr>
-        <td><strong><%= turnoverSources.hr.source %></strong></td>
-        <td><%= mLbl(turnoverSources.hr.month) %></td>
-        <td style="text-align:right;font-weight:700;"><%= turnoverSources.hr.value == null ? '—' : turnoverSources.hr.value + '%' %></td>
-        <td style="text-align:right;"><%= num(turnoverSources.hr.headcount) %></td>
-        <td class="muted" style="font-size:12px;"><%= turnoverSources.hr.basis %> · entered by hand, so what it includes is whatever the spreadsheet included</td>
-      </tr>
-      <% } %>
-      <% if (turnoverSources.payroll) { %>
-      <tr>
-        <td><strong><%= turnoverSources.payroll.source %></strong></td>
-        <td><%= mLbl(turnoverSources.payroll.month) %></td>
-        <td style="text-align:right;font-weight:700;"><%= turnoverSources.payroll.value == null ? '—' : turnoverSources.payroll.value + '%' %></td>
-        <td style="text-align:right;"><%= num(turnoverSources.payroll.headcount) %></td>
-        <td class="muted" style="font-size:12px;"><%= turnoverSources.payroll.basis %><% if (turnoverSources.payroll.leavers != null) { %> · <%= turnoverSources.payroll.leavers %> leavers in the window<% } %></td>
-      </tr>
-      <% } %>
-    </tbody>
-  </table></div>
-  <p class="footnote">The spreadsheet figure is whatever HR entered; the payroll figure is counted from Employment Hero every night on the basis stated above. Where they differ, the difference is the point — it says the two are counting different people, and which one answers a given question depends on which population you meant.</p>
-</div>
+<%# Removed 15 Sept 2026: a card headed "Turnover has two sources", whose only job was to explain
+    that the payroll figure and the HR spreadsheet figure disagree. Payroll is now the number of
+    record on this page — it is derived from termination records rather than typed in, and it is the
+    one the owner's rules (casuals out, never-started out) actually apply to. The spreadsheet figure
+    still loads and is compared on the P&C Data admin page, where the person who maintains it works. %>
 <% } %>
 
 <% if (locals.talentSync) { %>

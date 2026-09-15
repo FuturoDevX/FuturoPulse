@@ -14,6 +14,32 @@
   </form>
   <p class="footnote" style="margin-top:10px;">Turnover stores the <strong>rolling 12-month (YoY)</strong> figure as the headline; the month-on-month rate, headcount and leavers are kept alongside it. Values load per the periods in the file (eNPS quarterly, turnover monthly).</p>
 </div>
+
+<% const ts = locals.turnoverSources; %>
+<% if (ts && (ts.hr || ts.payroll)) { %>
+<div class="card">
+  <h2 style="margin-top:0;">Turnover: this spreadsheet vs payroll</h2>
+  <p class="sub" style="margin:0 0 10px;">People &amp; Culture reports the payroll figure, because it is derived from termination records rather than typed in, and it is the one the owner's rules apply to — casuals excluded, and anyone recorded as leaving on or before their start date excluded. The spreadsheet figure is kept and compared here.</p>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Source</th><th class="num">Turnover</th><th>Basis</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Payroll</strong> <span class="muted">· reported on People &amp; Culture</span></td>
+          <td class="num"><%= ts.payroll && ts.payroll.value != null ? ts.payroll.value + '%' : '—' %></td>
+          <td class="small"><%= ts.payroll ? ts.payroll.source : '—' %></td></tr>
+      <tr><td>This spreadsheet</td>
+          <td class="num"><%= ts.hr && ts.hr.value != null ? ts.hr.value + '%' : '—' %></td>
+          <td class="small"><%= ts.hr ? ts.hr.source : '—' %></td></tr>
+    </tbody>
+  </table></div>
+  <p class="footnote" style="margin-bottom:0;">
+    <% if (ts.hr && ts.payroll && ts.hr.value != null && ts.payroll.value != null) { var gap = Math.round((ts.payroll.value - ts.hr.value) * 10) / 10; %>
+      <% if (gap === 0) { %>The two agree at the moment. They still count different populations, so expect them to move apart.
+      <% } else { %>Payroll is <strong><%= gap > 0 ? '+' + gap : gap %></strong> percentage points against the spreadsheet. Neither is corrected to match the other — they count different people.<% } %>
+    <% } else { %>Only one source has a figure at the moment.<% } %>
+  </p>
+</div>
+<% } %>
+
 <form method="POST" action="/admin/pc">
   <div class="card">
     <h2 style="margin-top:0;">Targets / benchmarks</h2>

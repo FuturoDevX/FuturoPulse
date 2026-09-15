@@ -336,14 +336,23 @@ test('Talent pipeline — payroll people, counted', async (t) => {
       assert.match(src.payroll.basis, /casuals and never-started excluded/i);
       assert.equal(src.agree, false);
       assert.equal(Math.round((src.payroll.value - src.hr.value) * 10) / 10, src.diff);
+      // Changed 15 Sept 2026. People & Culture used to carry a card headed "Turnover has two sources"
+      // whose whole job was to explain that two numbers on the page disagreed. Payroll is now the
+      // figure of record there — it comes from termination records rather than being typed in, and it
+      // is the one the owner's rules apply to. The spreadsheet figure is NOT dropped: it is compared
+      // on the P&C Data admin page, beside the upload that produces it and in front of the person who
+      // maintains it. Both sources must still be visible somewhere, neither corrected to match.
       const cookie = await login('exec');
       const html = await freeze(FROZEN, () => page('/pc', cookie));
-      assert.match(html, /Turnover has two sources/);
-      assert.match(html, /HR spreadsheet/);
-      assert.match(html, /Employment Hero payroll/);
-      assert.match(html, /do not agree/i);
-      assert.ok(html.includes('10.5%'), "the spreadsheet's own figure is shown, not corrected towards payroll");
-      assert.ok(html.includes(src.payroll.value + '%'), "and payroll's is shown beside it");
+      assert.doesNotMatch(html, /Turnover has two sources/, 'the explainer card is gone from the reader-facing page');
+      assert.ok(html.includes(src.payroll.value + '%'), 'payroll is the figure reported there');
+
+      const adminCookie = await login('admin');
+      const adminHtml = await freeze(FROZEN, () => page('/admin/pc', adminCookie));
+      assert.match(adminHtml, /this spreadsheet vs payroll/i, 'the comparison moved to the admin page');
+      assert.ok(adminHtml.includes('10.5%'), "the spreadsheet's own figure is shown, not corrected towards payroll");
+      assert.ok(adminHtml.includes(src.payroll.value + '%'), "and payroll's is shown beside it");
+      assert.match(adminHtml, /count different people/i, 'and the page says they are different populations');
     });
 
     await t.test('a centre-scoped user sees their centre and no group or casual figure', async () => {

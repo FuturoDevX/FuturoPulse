@@ -163,7 +163,10 @@ router.get("/pipeline", blockScoped, (req, res) => {
   const funnelMonth = funnelMonths.includes(req.query.month) ? req.query.month : null; // null = all leads
   res.render("pipeline", { title: "Enrolment Pipeline", pipeline: p,
     trendCentres, trendOwna: owna, trend: m.pipelineTrend(owna), joins: m.waitlistJoins(owna, 12),
-    funnel: m.funnelByCentre(funnelMonth), funnelMonth, funnelMonths, progress: m.pipelineTargetProgress(), lastRun: lastRun() });
+    // `funnel` follows the month selector; `funnelAll` never does, because the tiles at the top of the
+    // page report the whole pipeline and must not change when someone filters the table below them.
+    funnel: m.funnelByCentre(funnelMonth), funnelAll: funnelMonth ? m.funnelByCentre(null) : null,
+    funnelMonth, funnelMonths, progress: m.pipelineTargetProgress(), lastRun: lastRun() });
 });
 
 // Per-centre enrolment pipeline drill-down (stages, members, tours, waitlist trend).

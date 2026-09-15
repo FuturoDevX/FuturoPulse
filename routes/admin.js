@@ -154,7 +154,11 @@ router.get("/pc", requireAdmin, (req, res) => {
   const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : cal.currentMonth();
   const centres = db.prepare("SELECT owna_id, name FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0) ORDER BY name").all();
   const data = {}; db.prepare("SELECT * FROM pc_metrics WHERE month = ?").all(month).forEach((r) => { data[r.owna_id] = r; });
-  res.render("admin-pc", { title: "P&C Entry", month, centres, data, targets: m.pcTargets(), msg: req.query.msg, err: req.query.err });
+  // The dashboard reports payroll turnover. The spreadsheet figure is compared here, beside the upload
+  // that produces it, rather than on a card in front of every reader of People & Culture.
+  let turnoverSources = null;
+  try { turnoverSources = m.talentTurnoverSources(null); } catch { turnoverSources = null; }
+  res.render("admin-pc", { title: "P&C Entry", month, centres, data, targets: m.pcTargets(), turnoverSources, msg: req.query.msg, err: req.query.err });
 });
 // Upload the HR SharePoint P&C workbooks (eNPS Data / Turnover Analysis) — same flow as Q&C.
 router.post("/pc/import", requireAdmin, upload.single("workbook"), (req, res) => {

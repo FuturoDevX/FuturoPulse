@@ -3,6 +3,15 @@
   const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
   const p = pipeline;
   const t = p.totals || {};
+  // One source for every current-state figure on this page: the per-child pipeline behind the funnel.
+  // `p.totals` is a separate daily count-by-status snapshot kept for the trend below, and the two do
+  // not agree — it is a different call to LineLeader, taken at a different moment.
+  const fg = (locals.funnelAll || funnel).group, stageCount = (id) => (fg.stages.find((x) => x.id === id) || {}).count || 0;
+  const fTot = {
+    waitlist: fg.waitlist.count,
+    offers: stageCount(5),
+    active: stageCount(1) + stageCount(2) + stageCount(11) + stageCount(3),
+  };
   // Sparkline: return an SVG polyline points string, scaled to each stage's own range.
   const spark = (pts, w, h) => {
     if (!pts || !pts.length) return '';
@@ -26,9 +35,12 @@
 
 <% if (p.rows.length) { %>
 <div class="grid kpis">
-  <div class="card stat"><div class="n"><%= (t[4]||0).toLocaleString('en-AU') %></div><div class="l">On waitlist</div></div>
-  <div class="card stat"><div class="n"><%= (t[5]||0).toLocaleString('en-AU') %></div><div class="l">Offers accepted</div></div>
-  <div class="card stat"><div class="n"><%= ((t[1]||0)+(t[2]||0)+(t[11]||0)+(t[3]||0)).toLocaleString('en-AU') %></div><div class="l">Active leads</div></div>
+  <%# These read the same per-child pipeline the funnel table below is built from. They used to read a
+      separate daily count-by-status snapshot, which is a different query against LineLeader and gave
+      different answers — the tile said 440 on the waitlist while the table underneath said 456. %>
+  <div class="card stat"><div class="n"><%= fTot.waitlist.toLocaleString('en-AU') %></div><div class="l">On waitlist</div></div>
+  <div class="card stat"><div class="n"><%= fTot.offers.toLocaleString('en-AU') %></div><div class="l">Offers accepted</div></div>
+  <div class="card stat"><div class="n"><%= fTot.active.toLocaleString('en-AU') %></div><div class="l">Active leads</div></div>
 <%# Removed 15 Sept 2026: "Expected starts (120d)", "Withdrawn (120d)" and "Indicative net". The query
     feeding them had no date filter, so they counted every enrolment record ever written — out to 2029 —
     while the label promised 120 days. The group read 1,554 expected starts and +1,520 net against 501
@@ -167,36 +179,10 @@
   <% } %>
 </div>
 
-<div class="card">
-  <h2 style="margin-top:0;">Funnel by centre <span class="muted" style="font-weight:400;font-size:13px;">· current snapshot</span></h2>
-  <div style="overflow-x:auto;">
-  <table>
-    <thead>
-      <tr>
-        <th>Centre</th>
-        <% p.funnel.forEach(function(f){ %><th class="num"><%= f[1].replace(' (Started)','') %></th><% }); %>
-      </tr>
-    </thead>
-    <tbody>
-      <% p.rows.forEach(function(r){ %>
-        <tr>
-          <td><%= shortName(r.name) %></td>
-          <% p.funnel.forEach(function(f){ var v=r.counts[f[0]]||0; %>
-            <td class="num <%= f[0]===4 && v>0 ? 'hot' : '' %>"><%= v %></td>
-          <% }); %>
-        </tr>
-      <% }); %>
-    </tbody>
-    <tfoot>
-      <tr class="total-row">
-        <td>All centres</td>
-        <% p.funnel.forEach(function(f){ %><td class="num"><%= t[f[0]]||0 %></td><% }); %>
-      </tr>
-    </tfoot>
-  </table>
-  </div>
-</div>
-
+<%# Removed 15 Sept 2026: a second "Funnel by centre · current snapshot" table. It listed the same
+    seven stages as the funnel above but was built from the daily count-by-status snapshot rather than
+    the per-child pipeline, so every number disagreed with the table a few centimetres above it —
+    waitlist 440 against 456, offers accepted 178 against 189. One page, one answer. %>
 <p class="footnote">
   Waitlist column highlighted. Live enrolled headcount is on the Overview.
   Centres like Oran Park, Park Rd and Cobbitty appear here (building a pipeline) before they show in the OWNA occupancy view.

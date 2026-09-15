@@ -416,3 +416,15 @@ tr.coe-anchor td { background: #f6f8fc; }
   /* Date range controls stack instead of overflowing. */
   .rangebar form, .rangebar { flex-wrap: wrap; }
 }
+
+/* "Show the working": a card that stays shut until someone wants the arithmetic. Used for the
+   turnover reconciliation and the Continuation of Enrolment month table — both are worth keeping
+   and neither is worth a screen of everybody's attention. */
+details.working { padding: 0; }
+details.working > summary { cursor: pointer; padding: 15px 18px; font-size: 14.5px; color: var(--ink-2, #3b4454); list-style: none; }
+details.working > summary::-webkit-details-marker { display: none; }
+details.working > summary::before { content: "▸ "; color: var(--muted, #5d6675); }
+details.working[open] > summary::before { content: "▾ "; }
+details.working[open] > summary { border-bottom: 1px solid var(--rule-soft, #eceff4); margin-bottom: 4px; }
+details.working > *:not(summary) { padding-left: 18px; padding-right: 18px; }
+details.working > *:last-child { padding-bottom: 16px; }

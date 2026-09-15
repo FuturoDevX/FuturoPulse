@@ -30,7 +30,7 @@
     <% d.funnel.forEach(function(s){ %>
       <div class="funnel-step <%= s.id===4 ? 'hot' : '' %>">
         <div class="fs-n"><%= s.count %></div>
-        <div class="fs-l"><%= s.name %></div>
+        <div class="fs-l"><%= s.name %><br><span class="muted" style="font-size:11px;">famil<%= s.count === 1 ? 'y' : 'ies' %></span></div>
       </div>
       <% if (s.id !== 5) { %><div class="funnel-arrow">→</div><% } %>
     <% }); %>
@@ -83,7 +83,7 @@
   <h2 style="margin-top:0;">What's in the pipeline <span class="muted" style="font-weight:400;font-size:13px;">· children per stage, by the month they want to start</span></h2>
   <% d.stages.slice().reverse().forEach(function(st){ var s = d.membersByStage[st[0]]; if (!s || !s.count) return; %>
     <div class="stage-block">
-      <h3 class="stage-h <%= st[0]===4 ? 'hot-h' : '' %>"><%= st[1] %> <span class="badge"><%= s.count %></span></h3>
+      <h3 class="stage-h <%= st[0]===4 ? 'hot-h' : '' %>"><%= st[1] %> <span class="badge"><%= s.count %> <%= s.count === 1 ? 'child' : 'children' %></span></h3>
       <% if (st[0]===4 && s.joined_from) { %>
         <p class="sub" style="margin:0 0 8px;">Joined the waitlist between <%= dt(s.joined_from) %> and <%= dt(s.joined_to) %>.</p>
       <% } %>
@@ -107,7 +107,7 @@
 </div>
 
 <p class="footnote">
-  Funnel counts are families (matches the rest of the dashboard); the stage counts above are children, so a family with siblings is counted once per child. "Joined waitlist" is the LineLeader wait-list date. Tours come from LineLeader tasks (Tour + Orientation Day). <strong>No child's or family's name is stored by this dashboard</strong> — it is a derived system, and LineLeader stays the record of who each family is. A row here is a LineLeader id, a centre, a stage and dates.
+  "Joined waitlist" is the LineLeader wait-list date. Tours come from LineLeader tasks (Tour + Orientation Day). <strong>No child's or family's name is stored by this dashboard</strong> — it is a derived system, and LineLeader stays the record of who each family is. A row here is a LineLeader id, a centre, a stage and dates.
 </p>
 
 <% } %>

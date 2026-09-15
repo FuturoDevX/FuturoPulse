@@ -1010,16 +1010,26 @@ function reg12Last12Months(ownaId, today = todayStr()) {
 const REASON_LABEL_NONE = "Not recorded";
 
 // Per-centre exit summary (past vs scheduled + top recorded reason).
-function exitsSummary() {
+// The one window every exit figure on the page uses, so the summary and the churn table cannot
+// disagree again.
+const EXIT_WINDOW_MONTHS = 12;
+
+// Departures over the same rolling window the churn table uses (12 months by default). It used to
+// count every row in child_exits with no window at all, which read 313 while churn on the same page
+// read 310 — the three departures that had aged past twelve months. The detail table only ever holds
+// about a year anyway (the nightly pull's look-back), so "all of it" was a window pretending not to be.
+function exitsSummary(months = EXIT_WINDOW_MONTHS, today = todayStr()) {
+  const d = new Date(today + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() - months);
+  const from = d.toISOString().slice(0, 10);
   const rows = db.prepare(`
     SELECT c.owna_id, c.name,
-      SUM(e.upcoming = 0) AS past,
+      SUM(e.upcoming = 0 AND e.finish_date > @from AND e.finish_date <= @today) AS past,
       SUM(e.upcoming = 1) AS upcoming,
-      SUM(e.upcoming = 0 AND e.reason IS NOT NULL AND e.reason <> 'Unknown') AS reason_known,
-      AVG(CASE WHEN e.upcoming = 0 AND e.tenure_days > 0 THEN e.tenure_days END) AS avg_tenure
+      SUM(e.upcoming = 0 AND e.finish_date > @from AND e.finish_date <= @today AND e.reason IS NOT NULL AND e.reason <> 'Unknown') AS reason_known,
+      AVG(CASE WHEN e.upcoming = 0 AND e.finish_date > @from AND e.finish_date <= @today AND e.tenure_days > 0 THEN e.tenure_days END) AS avg_tenure
     FROM centres c LEFT JOIN child_exits e ON e.owna_id = c.owna_id
     GROUP BY c.owna_id ORDER BY past DESC
-  `).all();
+  `).all({ from, today });
   return rows.map((r) => {
     const top = db.prepare(`
       SELECT reason, COUNT(*) n FROM child_exits
@@ -1230,7 +1240,7 @@ function tenureByCentre() {
 // at exit as recorded in OWNA, rooms in descending order of departures — with an annualised churn rate:
 // departures × (12 ÷ months) ÷ average booked children per operating day over the same window (daily_metrics,
 // NSW operating days with bookings). A centre with no booking data in the window falls back to centres.enrolled.
-function churnByRoom(months = 12, today = todayStr()) {
+function churnByRoom(months = EXIT_WINDOW_MONTHS, today = todayStr()) {
   const d = new Date(today + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() - months);
   const from = d.toISOString().slice(0, 10);
   const roomRows = db.prepare(`
