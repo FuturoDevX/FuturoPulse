@@ -162,7 +162,7 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
   if (!employees.length) return { ok: true, employees: 0, rows: 0, months: 0, from: null, to: null,
     headcount: 0, casual_headcount: 0, terminations: 0, casual_leavers: 0, never_started: 0,
     turnover_leavers: 0, undated_terminations: 0, centres: 0,
-    scales: 0, on_scales: 0, unmapped_scales: 0, unclassified_people: 0 };
+    scales: 0, on_scales: 0, unmapped_scales: 0, unmapped_people: 0, no_scale_people: 0, unclassified_people: 0 };
   const locations = await eh.locations();
   if (!Array.isArray(locations)) throw new Error("Employment Hero returned an invalid location list.");
   const index = buildLocationIndex(locations);
@@ -312,8 +312,12 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
     rows: centreRows.size + groupRows.size + reasonRows.size + scaleRows.size,
     centre_rows: centreRows.size, group_rows: groupRows.size, reason_rows: reasonRows.size,
     // The classification picture, so a run says how much of payroll the mapping actually covers.
-    scales: scaleRows.size, on_scales: onScales,
-    unmapped_scales: scaleList.filter((r) => !r.matched).length,
+    // A scale of '' is not a scale: it is the people payroll records no classification for. Counted on
+    // its own, never as a scale nobody has mapped — see talentPayScales() in services/metrics.js.
+    scales: scaleList.filter((r) => r.scale).length, on_scales: onScales,
+    unmapped_scales: scaleList.filter((r) => r.scale && !r.matched).length,
+    unmapped_people: scaleList.filter((r) => r.scale && !r.matched).reduce((a, r) => a + r.people, 0),
+    no_scale_people: scaleList.filter((r) => !r.scale).reduce((a, r) => a + r.people, 0),
     unclassified_people: unclassifiedPeople,
     from: months[0], to: months[months.length - 1],
     headcount: latest.headcount, casual_headcount: latest.casual_headcount,
@@ -361,7 +365,8 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
     + `${totals.raw} terminations − ${totals.casual} casual − ${totals.never} never started = ${totals.leavers} turnover events`);
   if (noEndDate) log(`[talent] ${noEndDate} terminated record(s) carry no end date and are in no month's counts`);
   log(`[talent] role from pay classification: ${summary.scales} distinct pay scale(s) across ${summary.on_scales} people`
-    + (summary.unmapped_scales ? `, ${summary.unmapped_scales} unmapped covering ${summary.unclassified_people} people — see /admin/pay-scales` : ", all mapped"));
+    + (summary.no_scale_people ? `, ${summary.no_scale_people} with none recorded` : "")
+    + (summary.unmapped_scales ? `, ${summary.unmapped_scales} unmapped covering ${summary.unmapped_people} people — see /admin/pay-scales` : ", all mapped"));
   return summary;
 }
 

@@ -10,6 +10,7 @@
   <div class="card stat"><div class="n"><%= t.scales %></div><div class="l">Pay scales in payroll</div></div>
   <div class="card stat"><div class="n"><%= t.people %></div><div class="l">People on them<span class="cap"><%= t.permanent %> permanent · <%= t.casual %> casual</span></div></div>
   <div class="card stat"><div class="n <%= t.unmapped_scales ? 'bad-text' : '' %>"><%= t.unmapped_scales %></div><div class="l">Scales no rule maps<span class="cap"><%= t.unmapped_people %> <%= t.unmapped_people === 1 ? 'person' : 'people' %>, counted as Unclassified</span></div></div>
+  <div class="card stat"><div class="n"><%= t.no_scale_people %></div><div class="l">No classification recorded<span class="cap">counted as Unclassified; no rule is missing</span></div></div>
 </div>
 
 <div class="card">
@@ -42,7 +43,7 @@
   <p class="footnote">
     Counts are the people employed as at the last payroll sync<% if (locals.talentSync && talentSync.last_attempt) { %> (<%= talentSync.last_attempt %>)<% } %>; the category beside each scale is the rule as it stands right now.
     Permanent and casual come from payroll's employment type, not from the word in the scale's name.
-    <% if (t.no_scale_people) { %><strong><%= t.no_scale_people %></strong> <%= t.no_scale_people === 1 ? 'person carries' : 'people carry' %> no pay classification at all and <%= t.no_scale_people === 1 ? 'is' : 'are' %> shown in the row above with no name.<% } %>
+    <% if (t.no_scale_people) { %>The people payroll records no classification for are the unnamed row above, and are not counted as a scale.<% } %>
   </p>
   <% } %>
 </div>

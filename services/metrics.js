@@ -2674,9 +2674,13 @@ function talentPayScales() {
       scales: rows.filter((r) => r.category === c.key).length,
     })),
     totals: {
-      scales: rows.length, people: sum((r) => r.people), permanent: sum((r) => r.permanent), casual: sum((r) => r.casual),
-      unmapped_scales: rows.filter((r) => !r.matched).length,
-      unmapped_people: rows.filter((r) => !r.matched).reduce((a, r) => a + r.people, 0),
+      // The "no scale recorded" row is people payroll holds no classification for, not a scale awaiting
+      // a rule: counting it as one would leave an unmapped scale permanently flagged on a tenant where
+      // every scale maps, and hide the arrival of a real one. It is no_scale_people, and only that.
+      scales: rows.filter((r) => r.recorded).length,
+      people: sum((r) => r.people), permanent: sum((r) => r.permanent), casual: sum((r) => r.casual),
+      unmapped_scales: rows.filter((r) => r.recorded && !r.matched).length,
+      unmapped_people: rows.filter((r) => r.recorded && !r.matched).reduce((a, r) => a + r.people, 0),
       no_scale_people: rows.filter((r) => !r.recorded).reduce((a, r) => a + r.people, 0),
       stale: rows.filter((r) => r.stale).length,
     },

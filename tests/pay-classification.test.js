@@ -205,7 +205,9 @@ test('Role mix from pay classification', async (t) => {
       // The scales that map to nothing are counted and visible, not dropped.
       assert.equal(a.cls_unclassified, 2, 'the unseen scale and the person with no scale at all');
       assert.equal(summary.unclassified_people, 2);
-      assert.equal(summary.unmapped_scales, 2);
+      assert.equal(summary.unmapped_scales, 1, 'the unseen scale only — no scale recorded is not a scale awaiting a rule');
+      assert.equal(summary.unmapped_people, 1);
+      assert.equal(summary.no_scale_people, 1);
     });
 
     await t.test('casuals appear in no per-centre figure, and are one group figure by category', () => {
@@ -326,17 +328,46 @@ test('Role mix from pay classification', async (t) => {
       assert.match(html, /unmapped/i, 'a scale no rule maps is flagged rather than folded into Unclassified');
       // The model behind the page, asserted rather than inferred from the HTML.
       const scales = freeze(FROZEN, () => m.talentPayScales());
-      assert.equal(scales.totals.scales, 19);
+      assert.equal(scales.totals.scales, 18, 'the scales payroll carries; the "none recorded" row is not one of them');
       assert.equal(scales.totals.people, EMPLOYEES.length);
       assert.equal(scales.totals.permanent, 18);
       assert.equal(scales.totals.casual, 4);
-      assert.equal(scales.totals.unmapped_scales, 2, 'the unseen scale and the empty one');
-      assert.equal(scales.totals.unmapped_people, 2);
+      assert.equal(scales.totals.unmapped_scales, 1, 'the unseen scale only');
+      assert.equal(scales.totals.unmapped_people, 1);
       assert.equal(scales.totals.no_scale_people, 1);
+      assert.match(html, /No classification recorded/, 'the people with no scale are their own figure, not an unmapped scale');
       assert.equal(scales.rows[0].matched, false, 'unmapped scales sort to the top, where they get looked at');
       const cert3 = scales.byCategory.find((c) => c.key === 'cert3');
       assert.equal(cert3.people, 5, 'two permanent CSE 3, one permanent at Beta... and the two casuals');
       for (const marker of NAME_MARKERS) assert.ok(!html.includes(marker));
+    });
+
+    await t.test('a tenant where every scale maps flags nothing, however many carry no scale at all', async () => {
+      // The owner's own shape: every scale payroll carries maps, and a number of people carry none. If
+      // those people count as an unmapped scale the page shows a red 1 for ever — and the 20th scale
+      // that really is unmapped only moves it to 2, which is the one thing the flag exists to show.
+      const mapped = EMPLOYEES.filter((e) => e.payRateTemplate && e.payRateTemplate !== UNSEEN);
+      const none = [emp({ payRateTemplate: null }), emp({ payRateTemplate: null }), emp({ payRateTemplate: '   ' })];
+      const undo = stubPayroll(mapped.concat(none));
+      try {
+        const summary = await freeze(FROZEN, () => talent.runTalentSnapshot({ log: () => {} }));
+        const scales = freeze(FROZEN, () => m.talentPayScales());
+        assert.equal(scales.totals.unmapped_scales, 0, 'nothing on this tenant is unmapped');
+        assert.equal(scales.totals.unmapped_people, 0);
+        assert.equal(scales.totals.scales, 17, 'the 17 scales payroll carries, not 18 with an empty one');
+        assert.equal(scales.totals.no_scale_people, 3, 'the people with no classification are counted here, and only here');
+        assert.equal(scales.totals.people, mapped.length + none.length, 'and nobody is lost by being counted there');
+        assert.ok(scales.rows.some((r) => !r.recorded && r.people === 3), 'their row is still listed, under its own name');
+        assert.equal(summary.unmapped_scales, 0, 'so the nightly run raises no false alarm either');
+        assert.equal(summary.no_scale_people, 3);
+        const cookie = await login('admin');
+        const html = await freeze(FROZEN, () => page('/admin/pay-scales', cookie));
+        assert.ok(!html.includes('bad-text'), 'and the page shows nothing in red');
+        assert.match(html, /No classification recorded/);
+      } finally {
+        undo();
+        await freeze(FROZEN, () => talent.runTalentSnapshot({ log: () => {} })); // put the fixture tenant back
+      }
     });
 
     await t.test('an ops manager can open it; a viewer and a centre user cannot', async () => {
