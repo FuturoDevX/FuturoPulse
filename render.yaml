@@ -107,12 +107,16 @@ services:
       # sent must be merged from the saved file rather than a fresh export.
       - key: SURVEY_ASSIGN_KEY
         generateValue: true
-      # The magic link is a public route, so it is rate-limited per client address per 10 minutes.
-      # Raise these only if a centre behind one shared connection is being turned away.
+      # The magic link is a public route, so it is rate-limited per 10 minutes. The limit that matters is
+      # the per-token one: one token is one respondent. The two address caps are a wide flood cap only —
+      # a whole centre answers from the centre's one connection, and behind Cloudflare several centres
+      # can look like one client, so a tight address cap turns real respondents away.
       - key: SURVEY_RATE_GETS
-        value: 40
+        value: 300
       - key: SURVEY_RATE_POSTS
-        value: 10
+        value: 300
+      - key: SURVEY_RATE_TOKEN_POSTS
+        value: 5
       # Default admin (change password after first login)
       - key: ADMIN_EMAIL
         sync: false

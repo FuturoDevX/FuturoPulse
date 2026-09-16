@@ -285,6 +285,90 @@ test('eNPS survey trial',async(t)=>{
   surveyRoutes.resetRateLimit();
  });
 
+ await t.test('a whole centre answering from one connection is not turned away',async()=>{
+  surveyRoutes.resetRateLimit();
+  // The bucket used to be the client ADDRESS, so a cap of ten posts meant the eleventh answer in ten
+  // minutes was refused — and an address is shared twice over: 57 staff at Austral answer on the
+  // centre's one wifi, and behind Cloudflare the address the app sees is the CDN's edge, not the
+  // respondent's, so all 221 staff landed in a handful of buckets. Twelve people, one address, one
+  // round: every one of them must get through, because one token is one respondent.
+  //
+  // Its own round, so the counts the reporting tests below assert on are untouched. It opens in
+  // November, after every other frozen date here, so currentRound() on 16 September is unchanged.
+  const OPEN='2026-11-02', WHEN=OPEN+'T03:00:00Z';
+  const r3=await freeze(WHEN,()=>survey.createRound({name:'eNPS trial — November 2026',opens_on:OPEN,closes_on:'2026-11-16'}));
+  const ex3=await freeze(WHEN,()=>survey.exportRows(r3.id,{baseUrl:'https://pulse.example'}));
+  const crowd=ex3.rows.filter((x)=>x.centre==='Alpha'||x.centre==='Beta').map((x)=>x.token);
+  assert.equal(crowd.length,12,'the fixture needs more respondents than the old per-address cap of 10');
+  const before=db.prepare('SELECT COUNT(*) n FROM survey_responses').get().n;
+  for(const [i,tok] of crowd.entries()){
+   const r=await freeze(WHEN,()=>fetch(base+'/s/'+tok,{method:'POST',body:new URLSearchParams({score:'9',reason:'november '+i}),redirect:'manual'}));
+   assert.equal(r.status,200,'respondent '+(i+1)+' of 12 on the same connection was refused');
+   assert.match(await r.text(),/Thank you/);
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_responses').get().n,before+12,'answers were dropped by the rate limit');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=? AND used=1').get(r3.id).n,12);
+  // Merely opening the link is the same story: every one of them can read the page first.
+  for(const tok of crowd){
+   const r=await freeze(WHEN,()=>fetch(base+'/s/'+tok,{redirect:'manual'}));
+   assert.notEqual(r.status,429,'opening a link from a shared connection must not be throttled'); await r.text();
+  }
+ });
+
+ await t.test('a throttled respondent is told to wait, not that their link is spent',async()=>{
+  surveyRoutes.resetRateLimit();
+  // The per-token cap is the one that bites a real person — a mistyped score, a double tap. When it
+  // does, the page must not be the one for a link that is already used: the token is still unspent,
+  // and someone told their link is dead does not come back, so the round loses them silently.
+  const tok='aTokenThatDoesNotExistAtAll2';
+  let busy=null;
+  for(let i=0;i<8&&!busy;i++){
+   const r=await freeze(FROZEN,()=>fetch(base+'/s/'+tok,{method:'POST',body:new URLSearchParams({score:'10'}),redirect:'manual'}));
+   const html=await r.text();
+   if(r.status===429) busy={r,html};
+  }
+  assert.ok(busy,'the per-token cap must refuse a repeated post');
+  assert.match(busy.html,/Your link still works/,'a throttled respondent must be told their link is still good');
+  assert.match(busy.html,/wait a few minutes/);
+  assert.doesNotMatch(busy.html,/isn’t open|isn't open|already been used/,'the throttle must not wear the spent-link page');
+  assert.equal(busy.r.headers.get('retry-after'),String(10*60));
+  // And the throttle still says nothing about whether the token exists: a real, open token throttles
+  // to the same page.
+  surveyRoutes.resetRateLimit();
+  const real=exported.rows.find((r)=>r.centre==='Alpha').token;
+  let realBusy=null;
+  for(let i=0;i<8&&!realBusy;i++){
+   const r=await freeze(FROZEN,()=>fetch(base+'/s/'+real,{method:'POST',body:new URLSearchParams({score:'not-a-score'}),redirect:'manual'}));
+   const html=await r.text();
+   if(r.status===429) realBusy=html;
+  }
+  assert.ok(realBusy,'a real token is throttled too');
+  assert.equal(realBusy,busy.html,'the busy page must be the same whether or not the token exists');
+  assert.equal(survey.tokenState(real,TODAY).state,'open','being throttled must not spend the token');
+  surveyRoutes.resetRateLimit();
+ });
+
+ await t.test('the address bucket keys on the respondent, not on the proxy in front of it',async()=>{
+  // `trust proxy 1` strips the hop Render appends, which is Cloudflare's edge — so req.ip alone is the
+  // CDN for every respondent in the country. The wide flood cap has to key on cf-connecting-ip.
+  const keep=process.env.SURVEY_RATE_GETS;
+  process.env.SURVEY_RATE_GETS='3';
+  try {
+   surveyRoutes.resetRateLimit();
+   const get=(addr)=>freeze(FROZEN,()=>fetch(base+'/s/thisTokenWasNeverIssuedAtAll000',{headers:{'cf-connecting-ip':addr},redirect:'manual'}));
+   let last;
+   for(let i=0;i<4;i++){ last=await get('203.0.113.9'); await last.text(); }
+   assert.equal(last.status,429,'one address past the flood cap must be refused');
+   // Every one of these requests reaches the app from 127.0.0.1: if the bucket were req.ip, this
+   // second respondent would be refused along with the first.
+   const other=await get('203.0.113.10'); await other.text();
+   assert.notEqual(other.status,429,'a different respondent behind the same proxy shares no bucket');
+  } finally {
+   if(keep===undefined) delete process.env.SURVEY_RATE_GETS; else process.env.SURVEY_RATE_GETS=keep;
+   surveyRoutes.resetRateLimit();
+  }
+ });
+
  // ===== The severing =====
  let alphaTokens;
  await t.test('an answer cannot be traced back to an invitation',async()=>{

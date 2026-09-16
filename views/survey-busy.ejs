@@ -1,0 +1,10 @@
+<%- include('partials/survey-head', { title: title }) %>
+<%# NOT survey-closed. A throttled respondent's token is still unspent, so this page says so: told the
+    link was dead they would simply stop, and the round would lose them with nothing in the log. %>
+<h1>Please try again in a few minutes</h1>
+<p>Too many attempts from your network just now — please wait a few minutes and open your link again. Your link still works.</p>
+<div class="note">
+  <p>Nothing has been recorded: the staff survey is anonymous, and Futuro can’t see who has and hasn’t answered.</p>
+  <% if (locals.privacyContact) { %><p>Any privacy question: <%= privacyContact %>.</p><% } %>
+</div>
+<%- include('partials/survey-foot') %>
