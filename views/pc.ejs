@@ -345,6 +345,9 @@
 <% if (!tScoped) { %>
 <div class="card">
   <h2 style="margin-top:0;">Casuals — group-wide, <%= tMonthLbl %></h2>
+  <%# Same guard as the permanent table above: until the first payroll sync fills the classification in,
+      the casual mix is empty, and seven zeros against a real headcount is a breakdown that adds to 0. %>
+  <% if (showMix) { %>
   <div style="overflow-x:auto;"><table>
     <thead><tr>
       <th>Casual staff</th>
@@ -357,6 +360,9 @@
       </tr>
     </tbody>
   </table></div>
+  <% } else { %>
+  <p style="margin:0 0 10px;"><strong><%= talent.group.casual_headcount %></strong> casuals in total. Role mix arrives with the next payroll sync.</p>
+  <% } %>
   <p class="footnote">A casual works across every centre, so the centre payroll files them under is an administrative home rather than where the hours were worked — they are counted once here and against no centre.</p>
 </div>
 <% } %>
