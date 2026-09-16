@@ -395,6 +395,67 @@ test('eNPS survey trial',async(t)=>{
   }
  });
 
+ await t.test('a staff change between exports must not re-pair a centre\'s links',async()=>{
+  // The reminder is where this bites. Who takes which of a centre's tokens is a function of who else
+  // works there, and nothing here records who was sent what — so a joiner or a leaver silently re-pairs
+  // the whole centre, and the two ways that lands are both invisible on every page: a person who has
+  // NOT answered is handed a spent token and meets "this survey isn't open" with no way back in, and a
+  // person who already answered is handed an unspent one and a second vote into the same eNPS figure.
+  // Its own round, in December, so nothing above is disturbed. It opens after employee 53's end date,
+  // so the only thing that moves the staff list here is what this test moves.
+  const D1='2026-12-02', D2='2026-12-09';
+  const r4=await freeze(D1+'T03:00:00Z',()=>survey.createRound({name:'eNPS trial — December 2026',opens_on:D1,closes_on:'2026-12-16'}));
+  const sent=await freeze(D1+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'}));
+  const tokenOf=new Map(sent.rows.map((x)=>[x.email,x.token]));
+  const alpha=sent.rows.filter((x)=>x.centre==='Alpha').map((x)=>x.email);
+  assert.equal(alpha.length,6);
+  const answered=alpha.slice(0,2);
+  for(const e of answered) assert.deepEqual(survey.submit(tokenOf.get(e),{score:'10'},D1),{ok:true});
+
+  // First, the reminder that must still work: same staff list a week later, same link for everyone,
+  // and the two who answered still read closed rather than being handed a fresh one.
+  const again=await freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'}));
+  assert.equal(again.rows.length,sent.rows.length,'no second batch of tokens was minted');
+  for(const x of again.rows){
+   assert.equal(x.token,tokenOf.get(x.email),'the unchanged reminder moved '+x.email+'\'s link');
+   assert.equal(survey.tokenState(x.token,D2).state,answered.includes(x.email)?'closed':'open');
+  }
+
+  const real=eh.allEmployees;
+  const invitations=()=>db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r4.id).n;
+  const responses=()=>db.prepare('SELECT COUNT(*) n FROM survey_responses WHERE round_id=?').get(r4.id).n;
+  try {
+   // A leaver: one of the two who answered resigns mid-round. Regenerating would shift every Alpha
+   // slot after theirs.
+   const goneId=Number(answered[0].match(/staff(\d+)@/)[1]);
+   eh.allEmployees=async()=>EMPLOYEES.filter((e)=>e.id!==goneId).map((e)=>({...e}));
+   await assert.rejects(()=>freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'})),
+     /staff list has changed/,'the export re-paired a centre instead of stopping');
+   assert.equal(invitations(),sent.rows.length,'a refused export minted tokens anyway');
+   // Every link that is already out there still does exactly what it did: everyone who has not
+   // answered can still answer, and nobody who has can answer again.
+   for(const x of sent.rows)
+    assert.equal(survey.tokenState(tokenOf.get(x.email),D2).state,answered.includes(x.email)?'closed':'open',
+      x.email+' was locked out of a round that is still open');
+   for(const e of answered) assert.deepEqual(survey.submit(tokenOf.get(e),{score:'0'},D2),{ok:false,reason:'closed'});
+   assert.equal(responses(),2,'someone answered twice');
+   // And the admin is told why, in the words the route puts on the page.
+   const adminCookie=await login('admin');
+   const resp=await freeze(D2+'T03:00:00Z',()=>fetch(base+'/admin/survey/'+r4.id+'/export.csv',{headers:{cookie:adminCookie},redirect:'manual'}));
+   assert.equal(resp.status,302,'the download must not return a re-paired file'); await resp.text();
+   assert.match(decodeURIComponent(resp.headers.get('location')||''),/staff list has changed/);
+
+   // The mirror case, which is the worse one: a joiner shifts the pairing the other way, so someone
+   // who has already answered comes up holding an unspent token.
+   eh.allEmployees=async()=>[...EMPLOYEES,emp(19,'Futuro Alpha')].map((e)=>({...e}));
+   await assert.rejects(()=>freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'})),
+     /staff list has changed/,'a joiner re-paired the centre instead of stopping');
+   assert.equal(invitations(),sent.rows.length,'a refused export minted tokens anyway');
+   for(const e of answered) assert.deepEqual(survey.submit(tokenOf.get(e),{score:'0'},D2),{ok:false,reason:'closed'});
+   assert.equal(responses(),2,'someone answered twice');
+  } finally { eh.allEmployees=real; }
+ });
+
  // ===== The severing =====
  let alphaTokens;
  await t.test('an answer cannot be traced back to an invitation',async()=>{

@@ -69,7 +69,7 @@
     <p class="footnote" style="margin-top:12px;"><% if (lastSend.error) { %>Last send failed: <%= lastSend.error %><% } else { %>Last send: <%= lastSend.sent %> delivered, <%= lastSend.failed %> failed.<% } %></p>
   <% } %>
   <p class="footnote" style="margin-top:12px;">
-    <strong>Keep the file.</strong> Send the reminder by merging the same file again — everyone gets the reminder, because nothing here records who has answered. Generating it a second time gives the same person the same link only while the staff list is unchanged, so a file saved on the day you first sent is the reliable one.
+    <strong>Keep the file.</strong> Send the reminder by merging the same file again — everyone gets the reminder, because nothing here records who has answered. Generating it a second time gives the same person the same link only while the staff list is unchanged; once someone joins or leaves, both this button and <em>Send now</em> stop rather than re-pair the links, and the saved file is the only correct one.
     Email addresses are read from payroll to write the file and are not stored anywhere in this dashboard.
   </p>
 </div>

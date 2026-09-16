@@ -355,9 +355,13 @@ async function activeStaff({ today = cal.today() } = {}) {
 //
 // Stability is still exactly as good as the staff list, which is all it ever was: same key and same
 // people, same links; a joiner or a leaver re-shuffles that centre, where before it shifted every
-// position after theirs. Either way a changed list means changed links, which is why the admin page
-// says to keep the file and merge the reminder from it.
+// position after theirs. Either way a changed list means changed links — so once a centre's tokens have
+// been issued, an export that would re-shuffle that centre REFUSES rather than silently re-pairing. See
+// the guard in exportRows() for what re-pairing costs, and the admin page for the saved file it sends
+// the admin back to.
 const ASSIGN_KEY = process.env.SURVEY_ASSIGN_KEY || process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+// Reads after the admin route's "Could not build the export: " and after "Last send failed: ".
+const STAFF_LIST_MOVED = "the staff list has changed since this round was sent — merge the reminder from the file you saved";
 function assignRank(roundId, centreKey, payrollId) {
   return crypto.createHmac("sha256", ASSIGN_KEY).update(`enps-assign|${roundId}|${centreKey}|${payrollId}`).digest("hex");
 }
@@ -373,6 +377,24 @@ async function exportRows(roundId, { baseUrl, today = cal.today() } = {}) {
     if (!byCentre.has(k)) byCentre.set(k, []);
     byCentre.get(k).push(p);
   }
+  // >>> REFUSE TO RE-SHUFFLE. <<<
+  // Who takes which of a centre's tokens is a function of WHO ELSE works there, so once a centre's
+  // tokens are out, a joiner or a leaver re-pairs the whole centre — and nothing here records who was
+  // sent what, so the old pairing cannot be honoured, only guessed at. Handing out the new one costs
+  // two things, both invisible on every page: a person who has not answered is given a spent token and
+  // meets "this survey isn't open" with no way back in, and a person who has already answered is given
+  // an unspent one and a second vote into the same eNPS figure. So the export stops instead, and the
+  // admin merges the reminder from the file they saved, which still names the right links.
+  // Counted per centre, in both directions, and over the centres in the round as well as the centres in
+  // today's payroll, so a centre that has emptied out or appeared since is a change too.
+  const issued = db.prepare(`SELECT owna_id, COUNT(*) n FROM survey_invitations WHERE round_id = ? GROUP BY owna_id`).all(roundId);
+  if (issued.length) {
+    const have = new Map(issued.map((x) => [x.owna_id == null ? "" : x.owna_id, x.n]));
+    const moved = [...new Set([...have.keys(), ...byCentre.keys()])]
+      .some((k) => (have.get(k) || 0) !== (byCentre.get(k) || []).length);
+    if (moved) throw new Error(STAFF_LIST_MOVED);
+  }
+
   const pool = ensureInvitations(roundId, [...byCentre.values()].map((list) =>
     ({ owna_id: list[0].owna_id, centre_label: list[0].centre_label, want: list.length })), today);
 
@@ -388,6 +410,12 @@ async function exportRows(roundId, { baseUrl, today = cal.today() } = {}) {
   const rows = staff.map((p) => {
     const k = p.owna_id == null ? "" : p.owna_id;
     const inv = (pool.get(k) || [])[slot.get(String(p.id))];
+    // The guard above means every slot has an invitation; if one is ever missing the list moved anyway,
+    // and stopping says so instead of throwing a TypeError at the admin.
+    if (!inv) throw new Error(STAFF_LIST_MOVED);
+    // A spent token here is this person's own — the pairing is unchanged, so they answered — and it has
+    // to go back out spent. Minting them a fresh one because the flag is set would hand every
+    // respondent a second working link on every reminder, which is the same defect from the other side.
     return { email: p.email, centre: p.centre_label, token: inv.token, link: linkFor(baseUrl, inv.token) };
   });
   // Record that these tokens have been handed out, so the page can say when the round was last sent.
