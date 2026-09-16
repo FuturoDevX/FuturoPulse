@@ -203,18 +203,83 @@ test('Microsoft Graph sender for the eNPS invitations', async (t) => {
     assert.notEqual(waits[0], surveyMail.FALLBACK_RETRY_MS, 'and not the fallback, which is what a fixed backoff would give');
     assert.equal(sends().length, 2);
 
-    // 503 is treated the same way, and a header saying "come back in a day" is capped rather than obeyed.
+    // 503 is treated the same way: the header is obeyed as written, not replaced by a fixed backoff.
     reset();
     const round3 = newRound('unavailable'); const rows3 = (await rowsFor(round3)).slice(0, 1);
     let m = 0;
     handler = async (u) => {
       if (u.includes('/oauth2/v2.0/token')) return tokenResponse();
       m += 1;
-      return m === 1 ? new Response(null, { status: 503, headers: { 'retry-after': '86400' } }) : accepted();
+      return m === 1 ? new Response(null, { status: 503, headers: { 'retry-after': '4' } }) : accepted();
     };
     ({ waits, sleep } = noWait());
     assert.equal((await surveyMail.graphSendRound(rows3, { roundId: round3.id, sleep, log: quiet })).sent, 1);
-    assert.equal(waits[0], 10 * 60 * 1000, 'a wait longer than the cap is the cap');
+    assert.deepEqual(waits, [4000], 'a 503 waits what it asked for too');
+  });
+
+  // ===== The wait that would have wedged the run =====
+  // A Retry-After past MAX_RETRY_WAIT_MS is a stopped run, not a wait. Sleeping it — even clamped to the
+  // cap — costs that wait once per attempt per recipient, and because Exchange throttles per MAILBOX the
+  // next recipient pays it too: a round of 221 would not return for days, with `send.running` stuck true,
+  // no cancel control, and the page showing "Sending…" until the process is restarted.
+  await t.test('a Retry-After past the cap fails that recipient instead of sleeping, and two in a row stop the run', async () => {
+    const HOUR = { 'retry-after': '3600' };   // 3,600,000ms — six times the cap
+    assert.ok(3600 * 1000 > surveyMail.MAX_RETRY_WAIT_MS, 'the fixture must actually be past the line');
+
+    // One unlucky recipient. Not slept on, not retried three more times, and the round keeps going.
+    reset();
+    const round = newRound('over-cap-one'); const rows = (await rowsFor(round)).slice(0, 3);
+    let n = 0;
+    handler = async (u) => {
+      if (u.includes('/oauth2/v2.0/token')) return tokenResponse();
+      n += 1;
+      return n === 1 ? new Response(null, { status: 429, headers: HOUR }) : accepted();
+    };
+    let { waits, sleep } = noWait();
+    const out = await surveyMail.graphSendRound(rows, { roundId: round.id, closesOn: CLOSES, sleep, log: quiet });
+    assert.deepEqual({ sent: out.sent, failed: out.failed }, { sent: 2, failed: 1 }, 'the other two still get their link');
+    assert.equal(sends().length, 3, 'the throttled one is tried ONCE, not MAX_ATTEMPTS times');
+    assert.deepEqual(waits, [2000, 2000], 'the pacing pauses and nothing else — the hour is never slept');
+    assert.ok(!waits.some((w) => w >= surveyMail.MAX_RETRY_WAIT_MS), 'and no wait anywhere near the cap');
+    const counts = surveyMail.deliveryCounts(round.id);
+    assert.deepEqual({ sent: counts.sent, failed: counts.failed, last_error: counts.last_error },
+      { sent: 2, failed: 1, last_error: 'throttled' }, 'recorded as failed, so Retry can pick them up');
+
+    // Two in a row is the mailbox, not luck: the run stops the way a 403 does, with its counts.
+    reset();
+    const round2 = newRound('over-cap-run'); const rows2 = await rowsFor(round2);
+    assert.ok(rows2.length >= 4, 'enough rows that stopping is visibly different from finishing');
+    let k = 0;
+    handler = async (u) => {
+      if (u.includes('/oauth2/v2.0/token')) return tokenResponse();
+      k += 1;
+      return k === 1 ? accepted() : new Response(null, { status: 429, headers: HOUR });
+    };
+    ({ waits, sleep } = noWait());
+    await assert.rejects(
+      () => surveyMail.graphSendRound(rows2, { roundId: round2.id, closesOn: CLOSES, sleep, log: quiet }),
+      (e) => {
+        assert.equal(e.stopped, true, 'a finished run with a real number, not a job that never returns');
+        assert.equal(e.klass, 'throttled');
+        assert.deepEqual({ sent: e.sent, failed: e.failed, done: e.done, total: e.total },
+          { sent: 1, failed: 2, done: 3, total: rows2.length });
+        assert.ok(e.message.includes(SENDER), 'and it names the mailbox being throttled');
+        assert.match(e.message, /Retry/, 'and says what to do about it');
+        return true;
+      });
+    assert.equal(sends().length, 3, 'it stops at the second over-cap recipient, not after walking the list');
+    assert.deepEqual(waits, [2000, 2000], 'again only the pacing: a stopped run sleeps nothing');
+    const delivered = sends().map(recipient)[0];
+
+    // And when the throttle clears, Retry covers exactly the undelivered — the one that landed is not
+    // sent a second link, which is the property a "fail rather than wait" change must not break.
+    reset();
+    const retry = await surveyMail.graphSendRound(await rowsFor(round2), { roundId: round2.id, closesOn: CLOSES, sleep: quiet, log: quiet });
+    assert.equal(retry.skipped, 1, 'the one already delivered is skipped');
+    assert.equal(retry.sent, rows2.length - 1);
+    const second = sends().map(recipient);
+    assert.ok(!second.includes(delivered), 'nobody is sent two links');
+    assert.equal(new Set(second).size, second.length, 'and nobody is sent two of anything');
   });
 
   // ===== The failure that will actually happen =====

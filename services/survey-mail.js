@@ -36,9 +36,15 @@ const TOKEN_SAFETY_MS = 2 * 60 * 1000;
 // Used ONLY when a throttling response carries no Retry-After. When the header is there it is
 // authoritative — Exchange knows when it will let us back in and a guess does not.
 const FALLBACK_RETRY_MS = 5000;
-// A Retry-After of an hour is a stopped run, not a wait. Cap it, fail that recipient, and let the retry
-// button pick them up later.
+// A Retry-After of an hour is a stopped run, not a wait. This is the LINE between the two, not a clamp:
+// a response asking for longer than this is not slept on. That recipient is failed immediately and the
+// retry button picks them up later. Clamping instead would sleep the cap once per attempt per recipient
+// — and because Exchange throttles per MAILBOX, the next recipient would pay it too, so a round of 221
+// would not return for days while the admin page showed "Sending…" with no way to cancel it.
 const MAX_RETRY_WAIT_MS = 10 * 60 * 1000;
+// Two recipients in a row asking for longer than the cap is the mailbox, not one unlucky message: every
+// remaining one would cost the same. The run stops at that point the way a 403 does.
+const MAX_CONSECUTIVE_THROTTLE_STOPS = 2;
 const MAX_ATTEMPTS = 4;
 // The link in a test message. A test send must not spend a real staff member's invitation, so it carries
 // the same sample link the draft on the admin page shows.
@@ -120,12 +126,16 @@ class SendFailure extends Error {
 
 // Honour what the response actually says. Graph sends Retry-After as seconds, but the HTTP-date form is
 // legal and Microsoft does use it, so both are read rather than assumed.
+//
+// This returns the interval the response ASKED FOR, unclamped. Capping here would hand the caller a
+// number it cannot tell apart from a short wait, and the caller is the only place that can judge it: a
+// wait longer than MAX_RETRY_WAIT_MS is a failure to be recorded, not a sleep to be served.
 function retryAfterMs(res, now = Date.now()) {
   const raw = String((res && res.headers && res.headers.get && res.headers.get("retry-after")) || "").trim();
   if (!raw) return null;
-  if (/^\d+$/.test(raw)) return Math.min(Number(raw) * 1000, MAX_RETRY_WAIT_MS);
+  if (/^\d+$/.test(raw)) return Number(raw) * 1000;
   const at = Date.parse(raw);
-  if (!Number.isNaN(at)) return Math.min(Math.max(at - now, 0), MAX_RETRY_WAIT_MS);
+  if (!Number.isNaN(at)) return Math.max(at - now, 0);
   return null;
 }
 
@@ -137,6 +147,15 @@ function forbiddenMessage(c) {
     + `stopped. Check that the role assignment's scope includes ${c.sender}, or set GRAPH_SENDER to a mailbox `
     + `it does cover. Nothing was sent to anyone this attempt would have reached.`;
 }
+// Why a run stops on throttling rather than waiting it out. Said in the same plain terms as the 403,
+// because the admin's next move is the same: fix nothing, press Retry when the mailbox is free again.
+function throttledMessage(c) {
+  return `Microsoft Graph is throttling ${c.sender} harder than this run will wait: ${MAX_CONSECUTIVE_THROTTLE_STOPS} `
+    + `recipients in a row came back asking for longer than ${Math.round(MAX_RETRY_WAIT_MS / 60000)} minutes. Exchange `
+    + `throttles per MAILBOX, so every remaining message would be told the same, and waiting would hold the run open `
+    + `for hours with no way to cancel it. The run has stopped instead. Nobody has been sent two links: everyone `
+    + `already delivered is recorded, so press Retry once the mailbox is out of throttling and it sends only the rest.`;
+}
 function unauthorizedMessage(c) {
   return `Microsoft Graph rejected a token it had just issued, sending as ${c.sender} (401). That is the app `
     + `registration, not the run: the Mail.Send application permission or its admin consent is missing, or `
@@ -145,10 +164,12 @@ function unauthorizedMessage(c) {
 
 function failureFor(res, c, now) {
   const s = res.status;
+  const asked = retryAfterMs(res, now);              // read once: the header cannot change between reads
+  const backoff = asked != null ? asked : FALLBACK_RETRY_MS;
   if (s === 429) return new SendFailure("throttled", `Microsoft Graph is throttling ${c.sender} (429).`,
-    { status: s, retryAfterMs: retryAfterMs(res, now) != null ? retryAfterMs(res, now) : FALLBACK_RETRY_MS });
+    { status: s, retryAfterMs: backoff });
   if (s === 503 || s === 504) return new SendFailure("unavailable", `Microsoft Graph is temporarily unavailable (${s}).`,
-    { status: s, retryAfterMs: retryAfterMs(res, now) != null ? retryAfterMs(res, now) : FALLBACK_RETRY_MS });
+    { status: s, retryAfterMs: backoff });
   if (s === 403) return new SendFailure("forbidden", forbiddenMessage(c), { status: s, fatal: true });
   if (s >= 500) return new SendFailure("server", `Microsoft Graph failed on its own side (${s}).`, { status: s, retryAfterMs: FALLBACK_RETRY_MS });
   return new SendFailure("rejected", `Microsoft Graph refused the message (${s}).`, { status: s });
@@ -293,12 +314,22 @@ async function graphSendRound(rows, {
     done: 0, sent: 0, failed: 0, stopped: null,
   };
   const report = () => { if (onProgress) { try { onProgress({ ...state }); } catch { /* progress must never break a send */ } } };
+  // How a run ends early: the counts as they stand, on an Error the route can read, with `stopped` set so
+  // the page shows a finished run with a real number instead of one that never returns.
+  const stop = (klass, message) => {
+    state.stopped = klass; report();
+    log(`[survey] send stopped after ${state.sent} delivered: ${redact(message, env)}`);
+    const err = new Error(redact(message, env));
+    Object.assign(err, { klass, stopped: true, sent: state.sent, failed: state.failed, skipped: state.skipped, done: state.done, total: state.total });
+    throw err;
+  };
   report();
 
+  let consecutiveOverCap = 0;   // recipients in a row whose Retry-After was past MAX_RETRY_WAIT_MS
   for (let i = 0; i < queue.length; i++) {
     const row = queue[i];
     const mail = survey.invitationEmail({ centre: row.centre, link: row.link, closesOn, contact });
-    let attempts = 0, delivered = false, klass = "error";
+    let attempts = 0, delivered = false, overCap = false, klass = "error";
     while (attempts < MAX_ATTEMPTS && !delivered) {
       attempts += 1;
       try {
@@ -308,12 +339,13 @@ async function graphSendRound(rows, {
         klass = (e && e.klass) || "error";
         if (e && e.fatal) {
           recordDelivery({ token: row.token, roundId, status: "failed", attempts, errorClass: klass, today });
-          state.failed += 1; state.done += 1; state.stopped = klass; report();
-          log(`[survey] send stopped after ${state.sent} delivered: ${redact(e.message, env)}`);
-          const stop = new Error(redact(e.message, env));
-          Object.assign(stop, { klass, stopped: true, sent: state.sent, failed: state.failed, skipped: state.skipped, done: state.done, total: state.total });
-          throw stop;
+          state.failed += 1; state.done += 1;
+          stop(klass, e.message);
         }
+        // Past the line, so not a wait: fail this recipient NOW rather than sleep the response's number
+        // (or a cap standing in for it) once per remaining attempt. The delivery log keeps them for the
+        // retry button, which is a better place to spend the wait than a blocked background job.
+        if (e && e.retryAfterMs != null && e.retryAfterMs > MAX_RETRY_WAIT_MS) { overCap = true; break; }
         if (attempts < MAX_ATTEMPTS && e && e.retryAfterMs != null) { await sleep(e.retryAfterMs); continue; }
         break;
       }
@@ -323,6 +355,10 @@ async function graphSendRound(rows, {
     if (delivered) state.sent += 1;
     else { state.failed += 1; log(`[survey] one invitation was not delivered (${klass}) after ${attempts} attempt(s)`); } // the class, never the recipient
     state.done += 1;
+    // One recipient past the line is bad luck. Two in a row is the mailbox, and every remaining message
+    // would cost the same — so the run ends the way a 403 does, with counts the admin can act on.
+    consecutiveOverCap = overCap ? consecutiveOverCap + 1 : 0;
+    if (consecutiveOverCap >= MAX_CONSECUTIVE_THROTTLE_STOPS) stop(klass, throttledMessage(graphConfig(env)));
     report();
     if (i < queue.length - 1 && intervalMs > 0) await sleep(intervalMs);
   }
@@ -387,6 +423,7 @@ function senders(env = process.env) {
 
 module.exports = {
   MESSAGES_PER_MINUTE, SEND_INTERVAL_MS, TOKEN_SAFETY_MS, MAX_ATTEMPTS, FALLBACK_RETRY_MS, TEST_LINK_TOKEN,
+  MAX_RETRY_WAIT_MS, MAX_CONSECUTIVE_THROTTLE_STOPS,
   senders, graphAvailability, graphConfig, sendMailBody, redact,
   graphToken, resetGraphToken, graphSend, graphSendRound, graphDryRun, graphSendTest,
   deliveredTokens, recordDelivery, deliveryCounts, SendFailure,
