@@ -39,13 +39,40 @@ const pctOrNull = (num, den) => (den > 0 ? pct(num, den) : null);
 // toISOString is UTC regardless of TZ, so before 10am Sydney it reads a day behind.
 const todayStr = () => cal.today();
 
+// ===== Actual vs forecast: where the observed data really stops =====
+// daily_metrics holds forward bookings as well as history — OWNA's attendance endpoint returns booked days
+// out to the end of the campaign window. On those forward rows `booked` is real (a booking is a fact the
+// moment it is made) but `attended` is NOT a measurement: it is OWNA's default attending flag on a day that
+// has not happened. Anything derived from attended/absent is only true up to the last successful pull.
+//
+// So the boundary is the last SNAPSHOT date, not today. Writing `metric_date <= today` reads as correct and
+// is wrong the moment the feed misses a night — and it had. On 2026-09-17 the last good run was 2026-09-10,
+// so six days of forward bookings were being counted as observed attendance: the group read 98.7% and Heath
+// Rd read a flat 100%, against real figures of 89.7% and 81.1%. Every attendance guard goes through here.
+function lastActualDate() {
+  const today = todayStr();
+  const row = db.prepare(`SELECT MAX(finished_at) AS ts FROM snapshot_runs WHERE status = 'ok'`).get();
+  if (!row || !row.ts) return today;                       // nothing has ever run: fall back to today
+  // finished_at is UTC (SQLite datetime('now')); the day it landed on is the Sydney one, not the UTC one.
+  const day = cal.sydneyDate(new Date(String(row.ts).replace(" ", "T") + "Z"));
+  return day < today ? day : today;                        // never claim actuals past today
+}
+// How stale the observed data is, in whole days — 0 when the feed ran today. Pages show this so a figure
+// is never read as "now" when it is a week old.
+function actualsLagDays() {
+  const a = lastActualDate(), t = todayStr();
+  return Math.round((Date.parse(t + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000);
+}
+
 // Default range = the last 7 days up to today (history). Future data exists in the table
 // but the default view is "to date"; forward presets expose the forecast.
 function defaultRange() {
   const row = db.prepare(`SELECT MAX(metric_date) AS maxd FROM daily_metrics`).get();
-  const today = todayStr();
-  const maxd = (row && row.maxd) || today;
-  const to = maxd < today ? maxd : today; // never default into the future
+  // End at the last day we actually observed, not at today. daily_metrics runs well into the future, so
+  // MAX(metric_date) is a booking horizon, and today is only meaningful if the feed is current.
+  const bound = lastActualDate();
+  const maxd = (row && row.maxd) || bound;
+  const to = maxd < bound ? maxd : bound;
   return { from: cal.addDays(to, -6), to };
 }
 
@@ -67,7 +94,7 @@ function centres() {
 // when the centre is closed and nobody attends, so counting them would understate occupancy and
 // contradict the seats and utilisation tiles beside it. booked/days stay raw for the child-day totals.
 function overview(from, to) {
-  const today = todayStr();
+  const today = lastActualDate(); // the day observation stops, which is only "today" when the feed is current
   const opDays = JSON.stringify(cal.operatingDayList(from, to));
   const rows = db.prepare(`
     SELECT c.owna_id, c.name, c.alias, c.suburb, c.capacity, c.approved_places,
@@ -162,18 +189,22 @@ function centreDaily(ownaId, from, to) {
     WHERE owna_id = ? AND metric_date BETWEEN ? AND ?
     ORDER BY metric_date
   `).all(ownaId, from, to);
+  // views/centre.ejs already refuses to print a rate for a future day, but the model must not hand one out
+  // at all: the next caller (an export, an AI tool, a new page) will not know to repeat that check.
+  const observedTo = lastActualDate();
   return rows.map((r) => ({
     ...r,
     places,
+    observed: r.metric_date <= observedTo,
     fee_total: round(r.fee_total),
     occupancy: pctOrNull(r.booked, places),
-    attendance_rate: pct(r.attended, r.booked),
+    attendance_rate: r.metric_date <= observedTo ? pct(r.attended, r.booked) : null,
   }));
 }
 
 // Monthly occupancy trend for one centre (past months only), most recent `months` back.
 function occupancyTrend(ownaId, months = 18) {
-  const today = todayStr();
+  const today = lastActualDate();
   const places = placesOf(ownaId); // licensed places, not the month's room sum
   const rows = db.prepare(`
     SELECT substr(metric_date,1,7) AS month,
@@ -196,7 +227,7 @@ function occupancyTrend(ownaId, months = 18) {
 
 // Group monthly occupancy trend (all centres combined).
 function occupancyTrendGroup(months = 18) {
-  const today = todayStr();
+  const today = lastActualDate();
   const rows = db.prepare(`
     SELECT substr(d.metric_date,1,7) AS month,
            COALESCE(SUM(d.booked),0) AS booked,
@@ -219,6 +250,9 @@ function occupancyTrendGroup(months = 18) {
 // projected=true for the current (partial) month and any future month.
 function occupancyTrendGroupFwd(pastMonths = 12, fwdMonths = 2) {
   const now = todayStr().slice(0, 7);
+  // A month is only fully observed if the actuals boundary has passed its end; otherwise its attendance
+  // rate would average real days against forward bookings that all claim a perfect attendance.
+  const observedThrough = lastActualDate().slice(0, 7);
   const rows = db.prepare(`
     SELECT substr(d.metric_date,1,7) AS month,
            COALESCE(SUM(d.booked),0) AS booked, COALESCE(SUM(d.attended),0) AS attended,
@@ -231,7 +265,7 @@ function occupancyTrendGroupFwd(pastMonths = 12, fwdMonths = 2) {
   return rows.filter((r) => r.month >= lo && r.month <= hi).map((r) => ({
     month: r.month,
     occupancy: pct(r.booked, r.cap_days),
-    attendance_rate: r.month < now ? pct(r.attended, r.booked) : null, // attendance only known for past
+    attendance_rate: r.month < observedThrough ? pct(r.attended, r.booked) : null, // observed months only
     fee_total: round(r.fee),
     projected: r.month >= now,
   }));
@@ -2705,6 +2739,7 @@ function talentPayScales() {
 
 module.exports = {
   defaultRange, forwardRange, centres, overview, totals,
+  lastActualDate, actualsLagDays,
   centreDowOccupancy, centreLabourLatest, occupancyCalculator, centreInsights,
   rosterWeeks, rosterForWeek, rosterCentre, latestReconciledRosterWeek,
   centre, centreDaily, centreCcs, ccsTotal, round, pct,
