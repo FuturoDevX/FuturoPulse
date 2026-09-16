@@ -40,8 +40,52 @@ function matchLlCentre(ownaName, llCentres) {
 // the approved places on the service approval live in centres.approved_places (maintained at /admin/places)
 // and are what every licensed-places denominator divides by. Keep writing this one — it is the figure the
 // discrepancy on /admin/places is measured against — but never let it stand in for the licence.
+const upsertRoom = db.prepare(`
+  INSERT INTO rooms (owna_id, room_id, name, capacity, ratio, age_min, age_max, seen_at)
+  VALUES (@owna_id, @room_id, @name, @capacity, @ratio, @age_min, @age_max, datetime('now'))
+  ON CONFLICT(owna_id, room_id) DO UPDATE SET
+    name=@name, capacity=@capacity, ratio=@ratio, age_min=@age_min, age_max=@age_max, seen_at=datetime('now')
+`);
+
+// OWNA has never promised these field names beyond `capacity`, which is the only one this code has ever
+// read. Rather than guess one spelling and silently store nulls, try the plausible ones and keep null when
+// none of them is present — a null here renders as "not configured" on the page, which is the truth.
+function num(row, ...keys) {
+  for (const k of keys) {
+    const v = row[k];
+    if (v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v))) return Number(v);
+  }
+  return null;
+}
+function str(row, ...keys) {
+  for (const k of keys) {
+    const v = row[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+// Sum of the centre's OWNA room capacities, and — since the rows are already in hand — a record of the
+// rooms themselves. This used to reduce the response to a single integer and throw the rest away, which is
+// why nothing on the dashboard could be said per room.
 async function centreCapacity(centreId) {
   const rooms = await owna.listRooms(centreId);
+  const write = db.transaction((rows) => {
+    for (const r of rows) {
+      const room_id = str(r, "id", "roomId", "_id");
+      if (!room_id) continue;                       // without an id there is nothing stable to key on
+      upsertRoom.run({
+        owna_id: centreId,
+        room_id,
+        name: str(r, "name", "roomName", "title"),
+        capacity: num(r, "capacity", "places", "maxChildren"),
+        ratio: num(r, "ratio", "educatorRatio", "staffRatio"),
+        age_min: num(r, "ageMin", "minAge", "ageFrom"),
+        age_max: num(r, "ageMax", "maxAge", "ageTo"),
+      });
+    }
+  });
+  write(rooms);
   return rooms.reduce((s, r) => s + (Number(r.capacity) || 0), 0);
 }
 

@@ -370,6 +370,37 @@ router.get("/exits", blockScoped, requireIdentified, (req, res) => {
 });
 
 // Drill-down: one centre.
+// ===== Centre manager =====
+// The operational screen: this centre, this week, and what is worth doing about it. Distinct from
+// /centre/:id, which is a report — this one leads with the actions and draws the week as seats.
+//
+// Deliberately NOT behind requireIdentified: it names no child, family or staff member, only counts.
+// A scoped `centre` login lands on its own centre and cannot select another; everyone else may pick.
+router.get("/manager", (req, res) => {
+  const scoped = scopedOwnaId(req);
+  const all = m.centres().filter((c) => !c.opening);
+  const centres = scoped ? all.filter((c) => c.owna_id === scoped) : all;
+  const owna = scoped || (centres.find((c) => c.owna_id === req.query.owna) ? req.query.owna : (centres[0] && centres[0].owna_id));
+  const centre = owna ? m.centre(owna) : null;
+  if (!centre) return res.status(404).render("error", { message: "No operating centre to show." });
+
+  // The week to show. Defaults to the week containing today — a manager opens this to run today, not to
+  // review the last observed week — so most of it is forward bookings, and the view says which is which.
+  const week = /^\d{4}-\d{2}-\d{2}$/.test(req.query.week) ? m.mondayOf(req.query.week) : m.mondayOf(m.todayStr());
+  const w = m.managerWeek(owna, week);
+  res.render("manager", {
+    title: centre.name.replace(/Futuro Childcare (and|&) Education\s*-?\s*/i, "") + " — This week",
+    centres, owna, centre, week: w,
+    actions: m.managerActions(owna, w),
+    rooms: m.roomsFor(owna),
+    today: m.todayStr(),
+    lagDays: m.actualsLagDays(),
+    prevWeek: cal.addDays(w.monday, -7),
+    nextWeek: cal.addDays(w.monday, 7),
+    thisWeek: m.mondayOf(m.todayStr()),
+  });
+});
+
 router.get("/centre/:id", (req, res) => {
   const { from, to } = resolveRange(req);
   const c = m.centre(req.params.id);

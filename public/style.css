@@ -709,3 +709,106 @@ details.working > *:last-child { padding-bottom: 16px; }
 /* A completed audit action, struck through. The tags used to be concatenated into an escaped
    EJS expression, which printed them literally. */
 .struck { text-decoration: line-through; color: var(--muted); }
+
+/* ===== The week as seats (views/manager.ejs) ============================= */
+/* The centre manager's screen draws the week as one tile per approved place, so
+   "we have room on Monday" is something you see rather than read off a number.
+   It is drawn at CENTRE level, against centres.approved_places, because that is
+   the only capacity this database actually knows: OWNA carries room capacities
+   but the snapshot has never stored them, and until it does a per-room seat map
+   would be a picture of an assumption. See db/schema.sql on the rooms table.
+
+   Four seat states, and the distinction between the last two is the whole point
+   of the screen:
+     .seat.booked   a booking exists and the child is expected
+     .seat.gap      booked, but this weekday historically runs below its bookings
+                    — the seat that is likely to sit empty. Hatched, not solid:
+                    it is a forecast, and it must not read as a free place.
+     .seat.free     licensed place with no booking against it
+     .seat.over     a booking beyond the approved places (legitimate — a booking
+                    holds a place whether the child attends or not) */
+.seat-week { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.seat-day { background: var(--card-sunk); border: 1px solid var(--border); border-radius: 10px; padding: 12px 12px 13px; min-width: 0; }
+.seat-day.is-today { border-color: var(--brand-soft-line); box-shadow: inset 0 0 0 1px var(--brand-soft-line); background: var(--brand-soft); }
+.seat-day.is-closed { opacity: .55; }
+.sd-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+.sd-day { font-size: 13px; font-weight: 700; color: var(--text); }
+.sd-date { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sd-basis { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; color: var(--muted); }
+.sd-basis.forecast { color: var(--plum); }
+
+/* auto-fill so the block reflows at any width instead of overflowing; the seats
+   are decorative-in-aggregate, so the whole grid carries one accessible label
+   and the individual tiles are hidden from the reader. */
+.seat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11px, 1fr)); gap: 3px; margin: 0 0 10px; }
+.seat { aspect-ratio: 1; border-radius: 2px; background: var(--track); }
+.seat.booked { background: var(--brand); }
+.seat.gap { background: var(--plum-bg); box-shadow: inset 0 0 0 1px var(--plum-line); }
+.seat.free { background: var(--sage-bg); box-shadow: inset 0 0 0 1px var(--sage); }
+.seat.over { background: var(--warn); }
+.sd-figs { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.sd-figs b { color: var(--text); font-variant-numeric: tabular-nums; }
+.sd-figs .free-n { color: var(--good); font-weight: 700; }
+.sd-figs .over-n { color: var(--warn-ink); font-weight: 700; }
+
+/* Legend — the same four swatches, so the colours are never left to be guessed. */
+.seat-key { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+.seat-key span { display: inline-flex; align-items: center; gap: 6px; }
+.seat-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+
+/* The action list reuses .priority-row; these are the parts it does not carry. */
+.pr-impact { font-size: 12px; font-weight: 700; color: var(--brand-ink); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+.pr-none { padding: 18px 4px; color: var(--muted); font-size: 13.5px; }
+
+/* Week stepper in the card head. */
+.wk-nav { display: inline-flex; align-items: center; gap: 2px; }
+.wk-nav a, .wk-nav span { font-size: 12.5px; padding: 4px 9px; border-radius: 6px; text-decoration: none; color: var(--brand-ink); font-weight: 600; }
+.wk-nav a:hover { background: var(--brand-soft); }
+.wk-nav span { color: var(--muted); font-weight: 500; }
+
+/* The day column has to stay wide enough that ~125 seats form a block rather than a
+   ribbon. Five across needs a real desktop; below that, fewer columns and taller
+   cards beat a 20-row-deep strip of 6 seats. */
+@media (max-width: 1150px) { .seat-week { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) {
+  .seat-week { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .seat-day { padding: 10px; }
+}
+
+/* Two equal columns that collapse to one on a phone — the action list beside the room table.
+   .grid's own auto-fit would put them side by side at 340px each, which is too narrow for either. */
+.grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+@media (max-width: 900px) { .grid.cols-2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* The supplied Futuro wordmark (views/partials/wordmark.ejs). One path, fill:currentColor, so the same
+   markup is white in the sidebar and brand ink on the login page — no second coloured copy of the file. */
+.wordmark { display: block; width: auto; }
+.sidebar .brand .wordmark { height: 30px; color: var(--on-brand-strong); }
+.brand-lg .wordmark { height: 40px; color: var(--brand-ink); margin-bottom: 2px; }
+
+/* ===== The sidebar as a disclosure on a phone ============================ */
+/* Desktop is unchanged: the <details> is forced open and its summary hidden, so
+   the rail renders exactly as it did before it was wrapped. Only below 760px
+   does it behave as a real disclosure. */
+.nav-disclosure { min-height: 0; display: flex; flex-direction: column; flex: 1; }
+.nav-toggle { display: none; }
+@media (min-width: 761px) {
+  /* The UA hides every non-summary child of a closed <details>; this overrides
+     that, which is what lets one piece of markup serve both layouts. */
+  .nav-disclosure:not([open]) > .side-nav { display: flex; }
+}
+@media (max-width: 760px) {
+  .nav-toggle {
+    display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none;
+    margin: 0 14px; padding: 9px 12px; border-radius: 8px;
+    font-size: 14px; font-weight: 600; color: var(--on-brand-strong);
+    background: var(--sidebar-hover);
+  }
+  .nav-toggle::-webkit-details-marker { display: none; }   /* Safari's default triangle */
+  .nav-toggle-bars { width: 16px; height: 2px; background: currentColor; border-radius: 2px; position: relative; flex-shrink: 0; }
+  .nav-toggle-bars::before, .nav-toggle-bars::after { content: ""; position: absolute; left: 0; width: 16px; height: 2px; background: currentColor; border-radius: 2px; }
+  .nav-toggle-bars::before { top: -5px; } .nav-toggle-bars::after { top: 5px; }
+  .nav-disclosure[open] .nav-toggle { margin-bottom: 8px; }
+  /* Closed, the rail is just the brand and the button — content starts straight away. */
+  .nav-disclosure:not([open]) + .side-nav-footer { border-top: none; }
+}

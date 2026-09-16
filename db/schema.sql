@@ -35,6 +35,28 @@ CREATE TABLE IF NOT EXISTS centres (
   opening_month INTEGER               -- 1-12 when the month is known (e.g. 11 = November); NULL = year only
 );
 
+-- The centre's rooms as OWNA has them configured. The nightly snapshot has always FETCHED these
+-- (services/snapshot.js centreCapacity) but kept only the capacity sum and discarded the rest, so the
+-- dashboard could say how many places a centre has and nothing whatever about where they are.
+--
+-- Room-level figures are only as honest as this table. A room whose capacity, ratio or age band OWNA
+-- does not carry must render as "not configured" — never as a seat count, and never as a percentage of
+-- an assumed denominator. Anything drawn per room reads these columns and refuses when they are null.
+CREATE TABLE IF NOT EXISTS rooms (
+  owna_id     TEXT NOT NULL,          -- centre
+  room_id     TEXT NOT NULL,          -- OWNA room id
+  name        TEXT,                   -- OWNA's own label. NOT canonical across centres: Austral spells them
+                                      -- "Room One".."Room Six" while the others use "Room 1".."Room 6", so
+                                      -- never GROUP BY this across centres without normalising first.
+  capacity    INTEGER,                -- physical places in the room; NULL = OWNA does not say
+  ratio       REAL,                   -- educator-to-child ratio; NULL = not configured (it is set on very few)
+  age_min     REAL,                   -- age band in years; NULL = not configured
+  age_max     REAL,
+  seen_at     TEXT NOT NULL DEFAULT (datetime('now')),  -- when the snapshot last saw this room
+  PRIMARY KEY (owna_id, room_id),
+  FOREIGN KEY (owna_id) REFERENCES centres(owna_id)
+);
+
 -- One aggregated row per centre per calendar day.
 CREATE TABLE IF NOT EXISTS daily_metrics (
   owna_id     TEXT NOT NULL,
