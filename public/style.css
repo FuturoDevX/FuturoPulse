@@ -235,6 +235,19 @@ h3 { color: var(--brand-ink); }
    An invented comparison would be a number nobody could check. */
 .stat-card { padding: 18px; transition: transform .12s, box-shadow .12s; }
 .stat-card:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+/* The four tiles share the row's rhythm instead of each stacking on its own.
+   .sc-top puts the label ABOVE the number, so a label that wraps to more lines
+   than its neighbour's used to push that tile's number down — 'Fees: billed to
+   date + booked ahead' ran to three lines at 375px and dropped $1,849,866 16px
+   below the 94.9% beside it. Subgrid lends the tile the parent grid's own rows,
+   so badge, number and each delta line land on the row's tracks rather than
+   wherever the label above them happened to end. Four tracks is the tallest
+   tile (label, number, two delta lines); a tile with fewer leaves the trailing
+   tracks empty. row-gap: 0 because the tile keeps its own margins for the
+   spacing — the grid's 14px gutter between tiles is not the gap wanted here. */
+@supports (grid-template-rows: subgrid) {
+  .stat-card { display: grid; grid-template-rows: subgrid; grid-row: span 4; row-gap: 0; }
+}
 .sc-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .sc-label { font-size: 12.5px; color: var(--muted); font-weight: 500; line-height: 1.3; }
 .sc-n { font-size: 29px; font-weight: 700; color: var(--brand-ink); letter-spacing: -.025em; line-height: 1.1; margin-top: 13px; font-variant-numeric: tabular-nums; }
