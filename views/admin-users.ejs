@@ -34,7 +34,7 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Existing users</h2>
-  <table>
+  <div class="table-scroll"><table>
     <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Centre</th><th></th></tr></thead>
     <tbody>
       <% users.forEach(function(u){ var c = centres.find(x=>x.owna_id===u.location_id); %>
@@ -57,6 +57,6 @@
         </tr>
       <% }); %>
     </tbody>
-  </table>
+  </table></div>
 </div>
 <%- include('partials/footer') %>

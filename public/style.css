@@ -299,9 +299,9 @@ tfoot .total-row td { font-weight: 700; border-top: 2px solid var(--border); bor
 a.row-link { color: var(--brand-ink); text-decoration: none; font-weight: 600; font-size: 13px; }
 a.row-link:hover { text-decoration: underline; }
 /* A table too wide for a phone scrolls inside its own box rather than dragging the page sideways with
-   it. Several views already do this with an inline style="overflow-x:auto" wrapper; this is the same
-   thing as a class, for the tables on /exits, /projection, /pc and the centre page that still have no
-   wrapper. Wrap the <table> in <div class="table-scroll">. */
+   it. Several views do the same thing with an inline style="overflow-x:auto" wrapper; this is that as a
+   class, and the one to reach for. Wrap the <table> in <div class="table-scroll">. Every page now
+   measures 0 document overflow at 375px — a new wide table needs this or it undoes that. */
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 /* ===== Status pill ====================================================== */
@@ -668,10 +668,8 @@ tr.coe-anchor td { background: var(--row-total); }
   .topbar { margin: 0 0 14px; }
   .page-head { display: block; }
   .head-actions { margin-top: 12px; justify-content: flex-start; }
-  /* Tables: tighter cells and a smaller face on a phone. Several tables are not inside a scrolling
-     wrapper — /exits, /projection, /pc and the centre page all push the whole document sideways at
-     375px, which predates this restyle — and every column saved here is one less pixel of that.
-     The structural fix is .table-scroll around those tables. */
+  /* Tables: tighter cells and a smaller face on a phone. This is comfort only — the structural fix for
+     a table wider than the screen is .table-scroll around it, which every wide table now carries. */
   table { font-size: 13px; }
   th, td { padding: 9px 7px; }
   th { letter-spacing: .04em; }
