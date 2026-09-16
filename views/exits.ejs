@@ -34,7 +34,7 @@
 
 <div class="card">
   <h2 style="margin-top:0;">By centre</h2>
-  <table>
+  <div class="table-scroll"><table>
     <thead>
       <tr><th>Centre</th><th class="num">Departures</th><th class="num">Scheduled</th><th class="num">Avg tenure</th><th class="num">Reason known</th><th>Top reason</th><th></th></tr>
     </thead>
@@ -57,7 +57,7 @@
         <td class="num"><%= totKnown %></td><td></td><td></td>
       </tr>
     </tfoot>
-  </table>
+  </table></div>
 </div>
 
 <div class="card">
@@ -120,7 +120,7 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Average tenure of departed children <span class="muted" style="font-weight:400;font-size:13px;">· years from OWNA start date to finish date</span></h2>
-  <table>
+  <div class="table-scroll"><table>
     <thead><tr><th>Centre</th><th class="num">Departed</th><th class="num">With recorded tenure</th><th class="num">Average (yrs)</th><th class="num">Median (yrs)</th></tr></thead>
     <tbody>
       <% tenure.rows.forEach(function(r){ %>
@@ -128,7 +128,7 @@
       <% }); %>
     </tbody>
     <tfoot><tr class="total-row"><td>All centres</td><td class="num"><%= tenure.group.departed %></td><td class="num"><%= tenure.group.n %></td><td class="num"><%= yrs(tenure.group.avg_years) %></td><td class="num"><%= yrs(tenure.group.median_years) %></td></tr></tfoot>
-  </table>
+  </table></div>
   <p class="footnote" style="margin-bottom:0;">Tenure = days from the child’s earliest OWNA start date to their finish date, ÷ 365.25, averaged over departed children (not those still scheduled to leave). Children with no start date or a zero-day tenure are excluded — “with recorded tenure” is the count each average rests on, so a centre with many exclusions is a weaker figure. Newer centres naturally show shorter tenure. These averages use the last 12 months of departure detail; the monthly aggregate keeps the tenure totals of older departures so this can be extended over more history later.</p>
 </div>
 
