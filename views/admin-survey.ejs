@@ -61,6 +61,10 @@
       <% } else { %>
         <%
           const delivered = deliveries.sent || 0, failedOut = deliveries.failed || 0;
+          // Microsoft never said whether these were accepted. They are NOT sent again by the button
+          // above — a second copy of an invitation in a personal inbox cannot be recalled — so they are
+          // shown on their own line for a person to decide about.
+          const unconfirmed = deliveries.unknown || 0;
           const running = send.running, retrying = delivered > 0;
         %>
         <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
@@ -86,11 +90,18 @@
           <button type="submit" class="secondary" <%= running ? 'disabled' : '' %>>Send one test</button>
         </form>
         <% } %>
-        <% if (s.available || delivered || failedOut) { %>
+        <% if (s.available || delivered || failedOut || unconfirmed) { %>
         <div class="muted" style="font-size:13.5px;margin-top:10px;">
           Delivered <strong><%= delivered %></strong> of <%= counts.invited || 0 %> invitation(s)<% if (failedOut) { %>, <strong><%= failedOut %></strong> not delivered<% if (deliveries.last_error) { %> (last failure: <%= deliveries.last_error %>)<% } %><% } %>.
           Paced at <%= sendRate %> a minute, which is Exchange's ceiling for one mailbox — a full round takes about eight minutes.
           The test message carries a sample link, not a real invitation.
+        </div>
+        <% } %>
+        <% if (unconfirmed) { %>
+        <div class="flash bad" style="margin-top:10px;">
+          <strong><%= unconfirmed %></strong> invitation(s) may or may not have been delivered: Microsoft never answered — a timeout, or a gateway that gave up — so whether the message was queued is not known.
+          They are deliberately <strong>not</strong> included in “Retry the undelivered”: sending again is how somebody gets a second copy of an anonymous survey invitation at a personal address, and an email cannot be recalled.
+          If one of them says they never received a link, download the mail-merge file and send that person their row — it carries the same link.
         </div>
         <% } %>
         <% if (send.unpaired) { %>
@@ -99,7 +110,7 @@
         <% if (send.finishedAt && send.error) { %>
           <div class="flash bad" style="margin-top:10px;">Last send failed: <%= send.error %></div>
         <% } else if (send.finishedAt) { %>
-          <div class="muted" style="font-size:13.5px;margin-top:6px;">Last run: <%= send.sent %> delivered<%= send.failed ? ', ' + send.failed + ' failed' : '' %><%= send.skipped ? ', ' + send.skipped + ' already had a link' : '' %>.</div>
+          <div class="muted" style="font-size:13.5px;margin-top:6px;">Last run: <%= send.sent %> delivered<%= send.failed ? ', ' + send.failed + ' failed' : '' %><%= send.unknown ? ', ' + send.unknown + ' unconfirmed' : '' %><%= send.skipped ? ', ' + send.skipped + ' already had a link' : '' %><%= send.heldBack ? ', ' + send.heldBack + ' held back as unconfirmed' : '' %>.</div>
         <% } %>
         <div id="send-progress" style="margin-top:10px;font-size:13.5px;<%= running ? '' : 'display:none;' %>"></div>
       <% } %>
@@ -109,7 +120,7 @@
     <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;">
       <div style="font-weight:600;">Dry run — <%= dryRun.at %>. Nothing was sent.</div>
       <div class="muted" style="font-size:13.5px;margin-top:4px;">
-        <%= dryRun.queued %> message(s) would go out from <%= dryRun.sender || 'GRAPH_SENDER (not set)' %><% if (dryRun.alreadyDelivered) { %>, <%= dryRun.alreadyDelivered %> already delivered and skipped<% } %><% if (dryRun.unsendable) { %>, <%= dryRun.unsendable %> unsendable<% } %><% if (dryRun.noEmail) { %>, <%= dryRun.noEmail %> staff member(s) with no address in payroll<% } %> — about <%= dryRun.minutes %> minute(s).
+        <%= dryRun.queued %> message(s) would go out from <%= dryRun.sender || 'GRAPH_SENDER (not set)' %><% if (dryRun.alreadyDelivered) { %>, <%= dryRun.alreadyDelivered %> already delivered and skipped<% } %><% if (dryRun.heldBack) { %>, <%= dryRun.heldBack %> held back because Microsoft never confirmed them<% } %><% if (dryRun.unsendable) { %>, <%= dryRun.unsendable %> unsendable<% } %><% if (dryRun.noEmail) { %>, <%= dryRun.noEmail %> staff member(s) with no address in payroll<% } %> — about <%= dryRun.minutes %> minute(s).
       </div>
       <% if (dryRun.unpaired) { %><div class="flash bad" style="margin-top:8px;"><%= dryRun.unpaired %></div><% } %>
       <table class="data" style="margin-top:10px;">
@@ -183,7 +194,9 @@
     var head = s.running ? ('Sending… ' + (s.done || 0) + ' of ' + of) : ((s.done || 0) + ' of ' + of + ' done');
     var bits = [head, (s.sent || 0) + ' delivered'];
     if (s.failed) bits.push(s.failed + ' failed');
+    if (s.unknown) bits.push(s.unknown + ' unconfirmed');
     if (s.skipped) bits.push(s.skipped + ' already had a link');
+    if (s.heldBack) bits.push(s.heldBack + ' held back as unconfirmed');
     return bits.join(' · ');
   }
   function poll(){

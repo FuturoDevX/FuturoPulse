@@ -234,7 +234,7 @@ function publicBase(req) {
 // nothing else needs it afterwards — the durable record of what was delivered is survey_deliveries,
 // keyed on the token. `dry` is the last dry run's report for this round.
 const IDLE_SEND = { running: false, mode: null, roundId: null, startedAt: null, finishedAt: null,
-  total: 0, queued: 0, done: 0, sent: 0, failed: 0, skipped: 0, stopped: null, error: null,
+  total: 0, queued: 0, done: 0, sent: 0, failed: 0, unknown: 0, skipped: 0, heldBack: 0, stopped: null, error: null,
   // Set when a round issued by the previous release holds links this export could not place, so the
   // people it left out are said out loud rather than quietly missing from the count. A sentence, not a
   // list of people: see survey.unpairedNote.
@@ -276,7 +276,7 @@ function surveyPageModel(req) {
     // run in flight if there is one. Delivery counts come off survey_deliveries, so they survive a
     // restart and are what the Retry button counts.
     graph: surveyMail.graphAvailability(),
-    deliveries: selected ? surveyMail.deliveryCounts(selected.id) : { sent: 0, failed: 0, last_error: null, last_on: null },
+    deliveries: selected ? surveyMail.deliveryCounts(selected.id) : { sent: 0, failed: 0, unknown: 0, last_error: null, last_on: null },
     send: selected && send.roundId === selected.id ? send : { ...IDLE_SEND },
     dryRun: dryRun && selected && dryRun.roundId === selected.id ? dryRun : null,
     sendRate: surveyMail.MESSAGES_PER_MINUTE,
@@ -333,7 +333,9 @@ const backToSurvey = (res, id, kind, text) =>
 // — far longer than a request may hold open. The page polls /admin/survey/:id/send-status.
 //
 // THIS IS ALSO THE RETRY. graphSendRound skips every token already recorded as delivered, so pressing it
-// again after a failure covers exactly the people who never got a link and nobody is sent two.
+// again after a failure covers exactly the people who never got a link and nobody is sent two. It also
+// holds back anyone whose send Microsoft never confirmed either way — 'not recorded as delivered' is not
+// the same fact as 'was not delivered', and the page reports those separately for a person to judge.
 router.post("/survey/:id/send", requireAdminOrOps, (req, res) => {
   const id = parseInt(req.params.id, 10);
   const avail = surveyMail.graphAvailability();
@@ -357,7 +359,7 @@ router.post("/survey/:id/send", requireAdminOrOps, (req, res) => {
     .then((r) => { Object.assign(send, r, { error: null }); })
     .catch((e) => {
       // A stopped run carries its own counts; anything else (payroll unreachable, say) sent nothing.
-      if (typeof e.sent === "number") Object.assign(send, { sent: e.sent, failed: e.failed, skipped: e.skipped, done: e.done, total: e.total, stopped: e.klass || "stopped" });
+      if (typeof e.sent === "number") Object.assign(send, { sent: e.sent, failed: e.failed, unknown: e.unknown, skipped: e.skipped, heldBack: e.heldBack, done: e.done, total: e.total, stopped: e.klass || "stopped" });
       // redact(): nothing here should ever carry the client secret, and this line is rendered.
       send.error = surveyMail.redact(e.message);
     })

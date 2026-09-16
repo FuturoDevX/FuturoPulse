@@ -282,6 +282,88 @@ test('Microsoft Graph sender for the eNPS invitations', async (t) => {
     assert.equal(new Set(second).size, second.length, 'and nobody is sent two of anything');
   });
 
+  // ===== The outcome nobody can see: accepted, or not? =====
+  // Every retry above rests on Microsoft having SAID the message was not taken — a 429, or a 503 naming
+  // when to come back. Three outcomes say no such thing: the 45-second client timeout on a sendMail
+  // Graph may already have queued, a 504 from a gateway that stopped waiting for Exchange, and a bare
+  // 5xx. The request was fully written in all three; Graph cannot know the client left. And the body is
+  // byte-identical every time — sendMailBody has no internetMessageId, there is no createMessage-then-
+  // send, and Exchange does not de-duplicate identical submissions — so a retry is not a retry, it is a
+  // second message. At four attempts a run, and a Retry button that re-queued anything not marked sent,
+  // that was up to eight copies of an anonymous survey invitation in one person's PERSONAL inbox, while
+  // the page called them 'not delivered' and offered to send again. None of it can be recalled.
+  await t.test('an ambiguous outcome is sent once, recorded unknown, and never re-queued by Retry', async () => {
+    const timeout = () => { const e = new Error('The operation was aborted due to timeout'); e.name = 'TimeoutError'; throw e; };
+    const cases = [
+      ['the 45s timeout on sendMail', timeout],
+      ['a 504 with no Retry-After', () => new Response(null, { status: 504 })],
+      ['a bare 500', () => new Response(null, { status: 500 })],
+      ['a 503 that never says when to come back', () => new Response(null, { status: 503 })],
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      const [label, outcome] = cases[i];
+      reset();
+      const round = newRound('ambiguous-' + i);
+      const rows = (await rowsFor(round)).slice(0, 1);
+      handler = async (u) => (u.includes('/oauth2/v2.0/token') ? tokenResponse() : outcome());
+      const { waits, sleep } = noWait();
+      const out = await surveyMail.graphSendRound(rows, { roundId: round.id, closesOn: CLOSES, sleep, log: quiet });
+
+      assert.equal(sends().length, 1, label + ': POSTed more than once — each extra one is a real copy in a real inbox');
+      assert.equal(recipient(sends()[0]), rows[0].email);
+      assert.deepEqual(waits, [], label + ': nothing is waited on either, because there is nothing safe to wait for');
+      assert.deepEqual({ sent: out.sent, failed: out.failed, unknown: out.unknown }, { sent: 0, failed: 0, unknown: 1 },
+        label + ': it is neither a delivery nor a failure, and counting it as either loses the fact');
+      assert.deepEqual(db.prepare('SELECT status, attempts, last_error FROM survey_deliveries WHERE token = ?').get(rows[0].token),
+        { status: 'unknown', attempts: 1, last_error: 'unknown' }, label + ': recorded as unknown, not as failed');
+      const counts = surveyMail.deliveryCounts(round.id);
+      assert.equal(counts.unknown, 1, label + ': and counted where the page can put it in front of a person');
+      assert.equal(counts.failed, 0, label + ': calling it failed is what invited the second copy');
+      assert.equal(surveyMail.deliveredTokens(round.id).size, 0, label + ': nor is it claimed as delivered');
+
+      // THE ASSERTION THAT MATTERS: the owner presses "Retry the undelivered" and this one does NOT go.
+      reset();
+      const retry = await surveyMail.graphSendRound((await rowsFor(round)).slice(0, 1),
+        { roundId: round.id, closesOn: CLOSES, sleep: quiet, log: quiet });
+      assert.equal(sends().length, 0, label + ': Retry re-sent a message that may already be in somebody\'s inbox');
+      assert.deepEqual({ queued: retry.queued, heldBack: retry.heldBack, sent: retry.sent, skipped: retry.skipped },
+        { queued: 0, heldBack: 1, sent: 0, skipped: 0 }, label + ': held back, and not counted as someone who already has their link');
+      // The dry run has to predict the send, or it promises a message the send will not make.
+      const dry = await surveyMail.graphDryRun((await rowsFor(round)).slice(0, 1), { roundId: round.id, closesOn: CLOSES });
+      assert.deepEqual({ queued: dry.queued, heldBack: dry.heldBack, alreadyDelivered: dry.alreadyDelivered },
+        { queued: 0, heldBack: 1, alreadyDelivered: 0 }, label + ': the dry run must say what the send will actually do');
+    }
+
+    // A 503 that DOES name a Retry-After is the opposite fact — Exchange refusing the message and saying
+    // when — so that one is still retried, and one ambiguous recipient does not stop the round.
+    reset();
+    const mixed = newRound('ambiguous-mixed');
+    const rows = (await rowsFor(mixed)).slice(0, 3);
+    let n = 0;
+    handler = async (u) => {
+      if (u.includes('/oauth2/v2.0/token')) return tokenResponse();
+      n += 1;
+      if (n === 1) return new Response(null, { status: 504 });                                   // ambiguous: once only
+      if (n === 2) return new Response(null, { status: 503, headers: { 'retry-after': '3' } });  // refused: try again
+      return accepted();
+    };
+    const { waits, sleep } = noWait();
+    const out = await surveyMail.graphSendRound(rows, { roundId: mixed.id, closesOn: CLOSES, sleep, log: quiet });
+    assert.deepEqual({ sent: out.sent, failed: out.failed, unknown: out.unknown }, { sent: 2, failed: 0, unknown: 1 },
+      'the other two still get their link, and the 503 is still retried');
+    assert.equal(sends().length, 4, 'one POST for the ambiguous one, two for the 503, one for the last');
+    assert.ok(waits.includes(3000), 'a 503 carrying Retry-After is still obeyed as written');
+    const addressed = sends().map(recipient);
+    assert.equal(new Set(addressed).size, addressed.length - 1, 'only the deliberately retried 503 address appears twice');
+
+    // And the page says so, rather than calling it 'not delivered' beside a button offering to send again.
+    const cookie = await login('admin');
+    const html = await freeze(FROZEN, () => realFetch(base + '/admin/survey?round=' + mixed.id, { headers: { cookie } }).then((r) => r.text()));
+    assert.match(html, /may or may not have been delivered/, 'the page must say the outcome is unknown');
+    assert.match(html, /not<\/strong> included in/, 'and that Retry deliberately leaves them out');
+    assert.match(html, /mail-merge file/, 'and say what a person can do about one');
+  });
+
   // ===== The failure that will actually happen =====
   await t.test('a 403 stops the run and the message names the address it was refused for', async () => {
     reset();

@@ -110,12 +110,25 @@ function sendMailBody({ to, subject, body }) {
 }
 
 // ---- Failures -------------------------------------------------------------------------------------
-// A send fails in three materially different ways and the run has to tell them apart:
-//   retryable  — 429/503/504 and the odd 5xx: wait as long as the response says, then try again.
+// A send fails in FOUR materially different ways and the run has to tell them apart:
+//   retryable  — 429, and a 503 that carries a Retry-After. Exchange has REFUSED this message and said
+//                when to come back: nothing was queued, so posting it again cannot duplicate it.
+//   ambiguous  — a 504, a bare 5xx, or the request never coming back at all (the 45s timeout in
+//                graphSend). NOBODY HAS SAID whether the message was accepted: a sendMail that Graph
+//                took in and queued, and one it never saw, look identical from here. Re-POSTing is how
+//                one staff member gets two copies of an anonymous survey invitation at a personal
+//                address, and an email cannot be recalled. So these are not retried, not re-queued by
+//                the Retry button, and not counted as failures: they are recorded 'unknown' and put in
+//                front of a person, who is the only one who can find out which it was.
+//                Retrying them safely would need an idempotent send — createMessage with a per-token
+//                internetMessageId, then look for that id in the mailbox before posting again — which
+//                is a larger change than this one and has to come before any automatic retry here.
 //   fatal      — 403 and a 401 on a fresh token: configuration, not luck. Every remaining message would
 //                fail identically, so the run stops and says which mailbox it was refused for.
 //   rejected   — a 4xx about this one message: skip the recipient, keep the round going.
 // `klass` is the single word written to survey_deliveries.last_error. Never a body, never an address.
+// retryAfterMs is set on the RETRYABLE kind only — it is the single thing the run's loop reads before
+// it sends the same message again, so anything carrying it is a promise that nothing was accepted.
 class SendFailure extends Error {
   constructor(klass, message, { status = 0, retryAfterMs = null, fatal = false } = {}) {
     super(message);
@@ -165,13 +178,17 @@ function unauthorizedMessage(c) {
 function failureFor(res, c, now) {
   const s = res.status;
   const asked = retryAfterMs(res, now);              // read once: the header cannot change between reads
-  const backoff = asked != null ? asked : FALLBACK_RETRY_MS;
+  // 429 is Exchange turning the message away at the door and it always means the same thing, header or
+  // no header: come back later, this one was not taken.
   if (s === 429) return new SendFailure("throttled", `Microsoft Graph is throttling ${c.sender} (429).`,
-    { status: s, retryAfterMs: backoff });
-  if (s === 503 || s === 504) return new SendFailure("unavailable", `Microsoft Graph is temporarily unavailable (${s}).`,
-    { status: s, retryAfterMs: backoff });
+    { status: s, retryAfterMs: asked != null ? asked : FALLBACK_RETRY_MS });
+  // A 503 that names a Retry-After is the same statement — the service is saying it did not take this
+  // message and when it will. A 503 with no header, and every 504, says only that something upstream
+  // did not answer in time, which is NOT the same as saying it did nothing: fall through to ambiguous.
+  if (s === 503 && asked != null) return new SendFailure("unavailable", `Microsoft Graph is temporarily unavailable (${s}).`,
+    { status: s, retryAfterMs: asked });
   if (s === 403) return new SendFailure("forbidden", forbiddenMessage(c), { status: s, fatal: true });
-  if (s >= 500) return new SendFailure("server", `Microsoft Graph failed on its own side (${s}).`, { status: s, retryAfterMs: FALLBACK_RETRY_MS });
+  if (s >= 500) return new SendFailure("unknown", `Microsoft Graph did not say whether it accepted the message (${s}).`, { status: s });
   return new SendFailure("rejected", `Microsoft Graph refused the message (${s}).`, { status: s });
 }
 
@@ -193,7 +210,10 @@ async function requestToken(env, now) {
       body: new URLSearchParams({ client_id: c.clientId, client_secret: c.clientSecret, scope: GRAPH_SCOPE, grant_type: "client_credentials" }),
     });
   } catch (e) {
-    throw new SendFailure("network", `Could not reach Microsoft to sign in (${redact(e && e.message, env)}).`, { retryAfterMs: FALLBACK_RETRY_MS });
+    // No retryAfterMs, so the run does not sit in a loop re-signing-in per recipient. A sign-in that
+    // never completed sent nothing — that much IS known — so the recipient is recorded 'failed' and the
+    // Retry button picks them up, which is a better place to spend the wait than a blocked send.
+    throw new SendFailure("network", `Could not reach Microsoft to sign in (${redact(e && e.message, env)}).`, {});
   }
   // The failure body is never read and never logged. A client-credentials error quotes the request back
   // at you, and the request carries the secret.
@@ -235,7 +255,10 @@ async function graphSend({ to, subject, body }, env = process.env, { now = Date.
       body: payload,
     });
   } catch (e) {
-    throw new SendFailure("network", `Could not reach Microsoft Graph (${redact(e && e.message, env)}).`, { retryAfterMs: FALLBACK_RETRY_MS });
+    // The POST left this machine. Whether Graph read it, queued the mail and then lost the connection —
+    // or the 45s timeout above fired on a request Graph had already accepted — cannot be told from here,
+    // and Exchange does not de-duplicate identical submissions. Ambiguous, therefore never retried.
+    throw new SendFailure("unknown", `Microsoft Graph did not answer, so whether it accepted the message is not known (${redact(e && e.message, env)}).`, {});
   }
   if (res.status === 202 || res.ok) return { ok: true, status: res.status };   // 202, no body
   if (res.status === 401) {
@@ -255,6 +278,14 @@ function deliveredTokens(roundId) {
   if (roundId == null) return new Set();
   return new Set(db.prepare("SELECT token FROM survey_deliveries WHERE round_id = ? AND status = 'sent'").all(roundId).map((r) => r.token));
 }
+// The tokens whose send was never answered either way — see 'ambiguous' above. A run must not queue
+// these, because "not recorded as sent" is not the same fact as "was not sent": pressing Retry on one
+// is how the duplicate the Retry button exists to prevent would actually happen. They are held back and
+// counted on the page instead, for a person to decide about one at a time.
+function ambiguousTokens(roundId) {
+  if (roundId == null) return new Set();
+  return new Set(db.prepare("SELECT token FROM survey_deliveries WHERE round_id = ? AND status = 'unknown'").all(roundId).map((r) => r.token));
+}
 function recordDelivery({ token, roundId, status, attempts = 1, errorClass = null, today = cal.today() }) {
   if (roundId == null || !token) return; // a send outside a round (the test message) logs nothing
   db.prepare(`INSERT INTO survey_deliveries (token, round_id, status, attempts, last_error, updated_on)
@@ -272,7 +303,7 @@ function deliveryCounts(roundId) {
   const last = db.prepare(`SELECT last_error, updated_on FROM survey_deliveries
                            WHERE round_id = ? AND status <> 'sent' AND last_error IS NOT NULL
                            ORDER BY updated_on DESC LIMIT 1`).get(roundId) || null;
-  return { sent: get("sent"), failed: get("failed"), last_error: last && last.last_error, last_on: last && last.updated_on };
+  return { sent: get("sent"), failed: get("failed"), unknown: get("unknown"), last_error: last && last.last_error, last_on: last && last.updated_on };
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms || 0)));
@@ -282,6 +313,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms || 0)));
 // throttle that outlasts the retries, a crash, a 403 half way — leaves an exact record of who already
 // has their link. Running this again is therefore the retry: anyone already delivered is skipped, which
 // is what makes "send two links to the same person" impossible rather than unlikely.
+//
+// That guarantee holds only while every message this re-sends is one Microsoft SAID it did not take. A
+// recipient whose send came back ambiguous (see 'ambiguous' in Failures) is held back from the queue
+// rather than sent again, and reported separately — the count is the page's, and the decision a
+// person's, because the alternative is a second copy in a real inbox that cannot be recalled.
 //
 // `sleep` and `now` are injectable so the pacing and the Retry-After behaviour can be tested without
 // spending eight minutes of wall clock in the test runner.
@@ -307,11 +343,15 @@ async function graphSendRound(rows, {
   if ((rows || []).some((r) => r && r.token === survey.PREVIEW_TOKEN))
     throw new Error("These rows are a preview, not a send — the round's invitations have not been issued.");
   const already = deliveredTokens(roundId);
-  const queue = (rows || []).filter((r) => r && !already.has(r.token))
+  const unsure = ambiguousTokens(roundId);
+  const queue = (rows || []).filter((r) => r && !already.has(r.token) && !unsure.has(r.token))
     .sort((a, b) => (a.token < b.token ? -1 : a.token > b.token ? 1 : 0)); // see above: never the order they arrived in
+  const present = (rows || []).filter((r) => r && r.token);
   const state = {
-    total: (rows || []).length, queued: queue.length, skipped: (rows || []).length - queue.length,
-    done: 0, sent: 0, failed: 0, stopped: null,
+    total: (rows || []).length, queued: queue.length,
+    skipped: present.filter((r) => already.has(r.token)).length,               // already has their link
+    heldBack: present.filter((r) => !already.has(r.token) && unsure.has(r.token)).length, // may already have it
+    done: 0, sent: 0, failed: 0, unknown: 0, stopped: null,
   };
   const report = () => { if (onProgress) { try { onProgress({ ...state }); } catch { /* progress must never break a send */ } } };
   // How a run ends early: the counts as they stand, on an Error the route can read, with `stopped` set so
@@ -320,7 +360,8 @@ async function graphSendRound(rows, {
     state.stopped = klass; report();
     log(`[survey] send stopped after ${state.sent} delivered: ${redact(message, env)}`);
     const err = new Error(redact(message, env));
-    Object.assign(err, { klass, stopped: true, sent: state.sent, failed: state.failed, skipped: state.skipped, done: state.done, total: state.total });
+    Object.assign(err, { klass, stopped: true, sent: state.sent, failed: state.failed, unknown: state.unknown,
+      skipped: state.skipped, heldBack: state.heldBack, done: state.done, total: state.total });
     throw err;
   };
   report();
@@ -338,6 +379,8 @@ async function graphSendRound(rows, {
       } catch (e) {
         klass = (e && e.klass) || "error";
         if (e && e.fatal) {
+          // Fatal is always a refusal BEFORE the message was processed — a 403 on the mailbox, a 401 on
+          // a fresh token, a sign-in that will not work. Nothing was queued, so 'failed' is the truth.
           recordDelivery({ token: row.token, roundId, status: "failed", attempts, errorClass: klass, today });
           state.failed += 1; state.done += 1;
           stop(klass, e.message);
@@ -350,9 +393,13 @@ async function graphSendRound(rows, {
         break;
       }
     }
-    // Written as the 202 arrives — before the pacing pause, so an interruption cannot lose it.
-    recordDelivery({ token: row.token, roundId, status: delivered ? "sent" : "failed", attempts, errorClass: delivered ? null : klass, today });
+    // Written as the 202 arrives — before the pacing pause, so an interruption cannot lose it. Three
+    // statuses, because there are three things that can be true: it went, it did not go, or nobody
+    // knows. The third one used to be written as 'failed', which invited the next run to send it again.
+    const status = delivered ? "sent" : klass === "unknown" ? "unknown" : "failed";
+    recordDelivery({ token: row.token, roundId, status, attempts, errorClass: delivered ? null : klass, today });
     if (delivered) state.sent += 1;
+    else if (status === "unknown") { state.unknown += 1; log(`[survey] one invitation was left unconfirmed (${klass}) — it is not sent again automatically`); }
     else { state.failed += 1; log(`[survey] one invitation was not delivered (${klass}) after ${attempts} attempt(s)`); } // the class, never the recipient
     state.done += 1;
     // One recipient past the line is bad luck. Two in a row is the mailbox, and every remaining message
@@ -362,7 +409,8 @@ async function graphSendRound(rows, {
     report();
     if (i < queue.length - 1 && intervalMs > 0) await sleep(intervalMs);
   }
-  return { total: state.total, queued: state.queued, skipped: state.skipped, sent: state.sent, failed: state.failed, done: state.done };
+  return { total: state.total, queued: state.queued, skipped: state.skipped, heldBack: state.heldBack,
+    sent: state.sent, failed: state.failed, unknown: state.unknown, done: state.done };
 }
 
 // ---- Dry run --------------------------------------------------------------------------------------
@@ -372,24 +420,26 @@ async function graphSendRound(rows, {
 async function graphDryRun(rows, { roundId = null, closesOn = "", contact = "" } = {}, env = process.env) {
   const c = graphConfig(env);
   const already = deliveredTokens(roundId);
+  const unsure = ambiguousTokens(roundId);   // the send holds these back, so the prediction must too
   const byCentre = new Map();
-  let queued = 0, alreadyDelivered = 0, unsendable = 0;
+  let queued = 0, alreadyDelivered = 0, unsendable = 0, heldBack = 0;
   for (const row of (rows || [])) {
     const mail = survey.invitationEmail({ centre: row.centre, link: row.link, closesOn, contact });
     let ok = true;
     try { sendMailBody({ to: row.email, subject: mail.subject, body: mail.body }); } catch { ok = false; }
     const centre = row.centre || survey.NO_CENTRE_LABEL;
-    const e = byCentre.get(centre) || { centre, total: 0, queued: 0, delivered: 0, unsendable: 0 };
+    const e = byCentre.get(centre) || { centre, total: 0, queued: 0, delivered: 0, unsendable: 0, heldBack: 0 };
     e.total += 1;
     if (!ok) { e.unsendable += 1; unsendable += 1; }
     else if (already.has(row.token)) { e.delivered += 1; alreadyDelivered += 1; }
+    else if (unsure.has(row.token)) { e.heldBack += 1; heldBack += 1; }
     else { e.queued += 1; queued += 1; }
     byCentre.set(centre, e);
   }
   const avail = graphAvailability(env);
   return {
     sender: c.sender, available: avail.available, reason: avail.reason,
-    total: (rows || []).length, queued, alreadyDelivered, unsendable,
+    total: (rows || []).length, queued, alreadyDelivered, unsendable, heldBack,
     centres: [...byCentre.values()].sort((a, b) => a.centre.localeCompare(b.centre)),
     ratePerMinute: MESSAGES_PER_MINUTE,
     minutes: Math.ceil((queued * SEND_INTERVAL_MS) / 60000),
@@ -426,5 +476,5 @@ module.exports = {
   MAX_RETRY_WAIT_MS, MAX_CONSECUTIVE_THROTTLE_STOPS,
   senders, graphAvailability, graphConfig, sendMailBody, redact,
   graphToken, resetGraphToken, graphSend, graphSendRound, graphDryRun, graphSendTest,
-  deliveredTokens, recordDelivery, deliveryCounts, SendFailure,
+  deliveredTokens, ambiguousTokens, recordDelivery, deliveryCounts, SendFailure,
 };

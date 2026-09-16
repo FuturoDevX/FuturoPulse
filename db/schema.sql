@@ -693,7 +693,10 @@ CREATE INDEX IF NOT EXISTS idx_survey_resp_round ON survey_responses(round_id, o
 CREATE TABLE IF NOT EXISTS survey_deliveries (
   token      TEXT PRIMARY KEY,          -- the invitation's token; the only identifier in this table
   round_id   INTEGER NOT NULL,
-  status     TEXT NOT NULL,             -- 'sent' (Graph returned 202) | 'failed'
+  status     TEXT NOT NULL,             -- 'sent' (Graph returned 202) | 'failed' (Graph said it did not
+                                        -- take it) | 'unknown' (a timeout or a 504: nobody said either
+                                        -- way). 'unknown' is NOT re-sent by a retry — a second copy of
+                                        -- an invitation cannot be recalled. See services/survey-mail.js
   attempts   INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,                      -- an error CLASS ('throttled', 'forbidden', …) — never a
                                         -- message, a body or an address
