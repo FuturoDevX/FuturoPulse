@@ -362,12 +362,17 @@ router.get("/survey/:id/send-status", requireAdminOrOps, (req, res) => {
 
 // Dry run: resolve the recipients, build every message, report what would go where — and send nothing.
 // It makes no network call to Microsoft at all, so it is safe before the tenant work is finished.
+//
+// { preview: true } because it must also WRITE nothing. Without it this route minted the round's tokens
+// and stamped them sent, which armed the re-shuffle guard in exportRows: one resignation between a dry
+// run and the real send then left the round impossible to export or send, with nothing sent and no file
+// saved to merge a reminder from. A dry run is looking, not handing links out.
 router.post("/survey/:id/dry-run", requireAdminOrOps, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const round = survey.round(id);
   if (!round) return backToSurvey(res, null, "err", "No such round.");
   try {
-    const out = await survey.exportRows(id, { baseUrl: publicBase(req) });
+    const out = await survey.exportRows(id, { baseUrl: publicBase(req), preview: true });
     const report = await surveyMail.graphDryRun(out.rows, { roundId: id, closesOn: round.closes_on, contact: req.app.locals.privacyContact });
     dryRun = { roundId: id, at: cal.today(), noEmail: out.noEmail, ...report };
     backToSurvey(res, id, "msg", `Dry run: ${report.queued} message(s) would be sent, nothing was. About ${report.minutes} minute(s) at ${report.ratePerMinute} a minute.`);

@@ -128,9 +128,16 @@ function ensureInvitations(roundId, wantByCentre, today = cal.today()) {
       for (let i = have; i < want; i++) ins.run(newToken(), roundId, owna_id, centre_label, today);
     }
   })();
-  // rowid order is creation order. It is a STABLE order, which is what lets a pool be indexed the same
-  // way twice, and it is not a meaningful one: which person takes which of these rows is decided by the
-  // keyed shuffle in exportRows(), so a rowid is not an employee number.
+  return invitationPool(roundId);
+}
+
+// The invitations a round already has, grouped by centre. Reads, and only reads — the preview in
+// exportRows() runs on this alone, so that looking at a round cannot bring its tokens into existence.
+//
+// rowid order is creation order. It is a STABLE order, which is what lets a pool be indexed the same
+// way twice, and it is not a meaningful one: which person takes which of these rows is decided by the
+// keyed shuffle in exportRows(), so a rowid is not an employee number.
+function invitationPool(roundId) {
   const all = db.prepare(`SELECT rowid AS rid, token, owna_id, centre_label, used FROM survey_invitations WHERE round_id = ? ORDER BY rowid`).all(roundId);
   const byCentre = new Map();
   for (const inv of all) {
@@ -366,7 +373,25 @@ function assignRank(roundId, centreKey, payrollId) {
   return crypto.createHmac("sha256", ASSIGN_KEY).update(`enps-assign|${roundId}|${centreKey}|${payrollId}`).digest("hex");
 }
 
-async function exportRows(roundId, { baseUrl, today = cal.today() } = {}) {
+// The link a PREVIEW row carries where the round has no invitation yet. It is deliberately not a token:
+// it matches nothing in survey_invitations, it opens the "this survey isn't open" page like any unknown
+// token, and graphSendRound() refuses a batch containing it. See `preview` below for why it exists.
+const PREVIEW_TOKEN = "PREVIEW-LINK-NOT-A-REAL-TOKEN";
+
+// { preview: true } is READ-ONLY: it mints no token and stamps no sent_on, so it can be run on a whim.
+//
+// That is not tidiness. The guard below arms on a round's invitations EXISTING, and the dry run on the
+// admin page — the owner's pre-flight, run repeatedly before the real send — used to go through here in
+// full: it minted the round's tokens and stamped them sent. One resignation between that dry run and the
+// send then re-shuffled a centre, the guard fired, and the round could no longer be exported or sent at
+// all — while nothing had been sent and no file had been saved to merge the reminder from. So the guard
+// is armed by handing links out, and looking is not handing out.
+//
+// A preview reports against the invitations that already exist (after a real export or send, that is all
+// of them, and the report is exact). Where a round has none yet, the row carries PREVIEW_TOKEN so the
+// count, the centre and the address are still real — which is what the dry run is for — and the link is
+// visibly not anyone's.
+async function exportRows(roundId, { baseUrl, today = cal.today(), preview = false } = {}) {
   const r = round(roundId);
   if (!r) throw new Error("No such round.");
   const { staff, noEmail } = await activeStaff({ today });
@@ -395,8 +420,9 @@ async function exportRows(roundId, { baseUrl, today = cal.today() } = {}) {
     if (moved) throw new Error(STAFF_LIST_MOVED);
   }
 
-  const pool = ensureInvitations(roundId, [...byCentre.values()].map((list) =>
-    ({ owna_id: list[0].owna_id, centre_label: list[0].centre_label, want: list.length })), today);
+  const pool = preview ? invitationPool(roundId)
+    : ensureInvitations(roundId, [...byCentre.values()].map((list) =>
+      ({ owna_id: list[0].owna_id, centre_label: list[0].centre_label, want: list.length })), today);
 
   // The shuffle. Each centre's people are ordered by their keyed rank and take that centre's pool in
   // rowid order, so a person's slot is a function of the key and of who else works there — never of
@@ -411,17 +437,22 @@ async function exportRows(roundId, { baseUrl, today = cal.today() } = {}) {
     const k = p.owna_id == null ? "" : p.owna_id;
     const inv = (pool.get(k) || [])[slot.get(String(p.id))];
     // The guard above means every slot has an invitation; if one is ever missing the list moved anyway,
-    // and stopping says so instead of throwing a TypeError at the admin.
-    if (!inv) throw new Error(STAFF_LIST_MOVED);
+    // and stopping says so instead of throwing a TypeError at the admin. A preview is the exception: a
+    // round whose tokens have not been minted is exactly what it is there to look at.
+    if (!inv && !preview) throw new Error(STAFF_LIST_MOVED);
     // A spent token here is this person's own — the pairing is unchanged, so they answered — and it has
     // to go back out spent. Minting them a fresh one because the flag is set would hand every
     // respondent a second working link on every reminder, which is the same defect from the other side.
-    return { email: p.email, centre: p.centre_label, token: inv.token, link: linkFor(baseUrl, inv.token) };
+    const token = inv ? inv.token : PREVIEW_TOKEN;
+    return { email: p.email, centre: p.centre_label, token, link: linkFor(baseUrl, token) };
   });
   // Record that these tokens have been handed out, so the page can say when the round was last sent.
-  const stamp = db.prepare("UPDATE survey_invitations SET sent_on = ? WHERE token = ?");
-  db.transaction(() => { for (const row of rows) stamp.run(today, row.token); })();
-  return { rows, noEmail: noEmail.length, round: r };
+  // A preview hands nothing out and writes nothing.
+  if (!preview) {
+    const stamp = db.prepare("UPDATE survey_invitations SET sent_on = ? WHERE token = ?");
+    db.transaction(() => { for (const row of rows) stamp.run(today, row.token); })();
+  }
+  return { rows, noEmail: noEmail.length, round: r, preview };
 }
 
 function linkFor(baseUrl, token) {
@@ -474,8 +505,8 @@ module.exports = {
   MIN_RESPONSES, PROMOTER_FROM, DETRACTOR_TO, NO_CENTRE_LABEL, MAX_TEXT,
   centreLabel, questions,
   createRound, round, rounds, setClosesOn, roundState, currentRound,
-  newToken, ensureInvitations, invitation, tokenState, parseScore, submit,
+  newToken, ensureInvitations, invitationPool, invitation, tokenState, parseScore, submit,
   enps, results, comments,
-  isActiveStaff, activeStaff, exportRows, linkFor, csv,
+  isActiveStaff, activeStaff, exportRows, PREVIEW_TOKEN, linkFor, csv,
   invitationEmail, friendlyDate,
 };

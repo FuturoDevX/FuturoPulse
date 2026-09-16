@@ -281,6 +281,10 @@ async function graphSendRound(rows, {
 } = {}, env = process.env) {
   const avail = graphAvailability(env);
   if (!avail.available) throw new Error(avail.reason);
+  // Preview rows (exportRows({ preview: true })) carry real addresses and a link that is nobody's. They
+  // exist to be counted, never sent: this is the one place that mistake would reach a staff inbox.
+  if ((rows || []).some((r) => r && r.token === survey.PREVIEW_TOKEN))
+    throw new Error("These rows are a preview, not a send — the round's invitations have not been issued.");
   const already = deliveredTokens(roundId);
   const queue = (rows || []).filter((r) => r && !already.has(r.token))
     .sort((a, b) => (a.token < b.token ? -1 : a.token > b.token ? 1 : 0)); // see above: never the order they arrived in

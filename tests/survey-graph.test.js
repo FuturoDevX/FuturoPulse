@@ -375,6 +375,60 @@ test('Microsoft Graph sender for the eNPS invitations', async (t) => {
     assert.equal(unconfigured.total, STAFF);
   });
 
+  // The owner's pre-flight is: dry run, dry run again, then send. So a dry run must leave the round
+  // exactly as it found it. It used to mint the round's tokens and stamp them sent, and since the
+  // re-shuffle guard in exportRows arms on those rows EXISTING, one resignation between the pre-flight
+  // and the send left the round impossible to export or send — with nothing sent, and no saved file to
+  // merge the reminder from.
+  await t.test('a dry run writes nothing, so a resignation before the send cannot brick the round', async () => {
+    reset();
+    const round = newRound('pre-flight');
+    const cookie = await login('admin');
+    const invs = () => db.prepare('SELECT COUNT(*) n, COUNT(sent_on) stamped FROM survey_invitations WHERE round_id = ?').get(round.id);
+    assert.deepEqual(invs(), { n: 0, stamped: 0 });
+
+    const dry = async () => {
+      const r = await freeze(FROZEN, () => realFetch(base + '/admin/survey/' + round.id + '/dry-run',
+        { method: 'POST', headers: { cookie }, redirect: 'manual' }));
+      await r.text(); return decodeURIComponent(r.headers.get('location') || '');
+    };
+    const said = await dry();
+    assert.match(said, new RegExp('Dry run: ' + STAFF + ' message\\(s\\) would be sent'), 'it still reports the whole round');
+    await dry();                                   // and again, as the owner does
+    assert.deepEqual(invs(), { n: 0, stamped: 0 }, 'a dry run must mint no token and stamp none sent');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_deliveries WHERE round_id = ?').get(round.id).n, 0);
+    assert.equal(calls.length, 0, 'and must not reach Microsoft');
+
+    // Someone leaves payroll between the pre-flight and the send. The send must still be possible.
+    const full = eh.allEmployees;
+    eh.allEmployees = async () => EMPLOYEES.slice(1).map((e) => ({ ...e }));
+    let out;
+    try {
+      out = await freeze(FROZEN, () => survey.exportRows(round.id, { baseUrl: 'https://pulse.example' }));
+      assert.equal(out.rows.length, STAFF - 1);
+      assert.equal(out.preview, false);
+      assert.deepEqual(invs(), { n: STAFF - 1, stamped: STAFF - 1 }, 'the real export is what issues and stamps');
+      for (const r of out.rows) assert.notEqual(r.token, survey.PREVIEW_TOKEN, 'a real export hands out real tokens');
+
+      // A dry run AFTER the tokens are out reports on those tokens, and still changes nothing.
+      const after = await freeze('2026-09-17T03:00:00Z', () => survey.exportRows(round.id, { baseUrl: 'https://pulse.example', preview: true }));
+      assert.deepEqual(after.rows.map((r) => r.token), out.rows.map((r) => r.token), 'the same people, the same links');
+      assert.deepEqual(invs(), { n: STAFF - 1, stamped: STAFF - 1 });
+      assert.equal(db.prepare('SELECT DISTINCT sent_on FROM survey_invitations WHERE round_id = ?').get(round.id).sent_on, TODAY,
+        'a later dry run must not re-date the send');
+    } finally { eh.allEmployees = full; }
+
+    // Preview rows carry real addresses and a link that is nobody's, so the sender refuses them outright.
+    const fresh = newRound('preview-never-sends');
+    const preview = await freeze(FROZEN, () => survey.exportRows(fresh.id, { baseUrl: 'https://pulse.example', preview: true }));
+    assert.equal(preview.rows.length, STAFF);
+    assert.ok(preview.rows.every((r) => r.token === survey.PREVIEW_TOKEN));
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id = ?').get(fresh.id).n, 0);
+    await assert.rejects(() => surveyMail.graphSendRound(preview.rows, { roundId: fresh.id, sleep: quiet, log: quiet }), /preview/);
+    assert.equal(sends().length, 0, 'not one message, and no delivery recorded');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_deliveries WHERE round_id = ?').get(fresh.id).n, 0);
+  });
+
   // ===== A single real message =====
   await t.test('the test send is one real message, carrying the sample link and recorded nowhere', async () => {
     reset();
