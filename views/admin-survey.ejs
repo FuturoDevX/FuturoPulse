@@ -66,6 +66,10 @@
           // shown on their own line for a person to decide about.
           const unconfirmed = deliveries.unknown || 0;
           const running = send.running, retrying = delivered > 0;
+          // A link only opens between the round's two dates, so sending outside them hands somebody an
+          // invitation they cannot answer. Gated here the same way `running` is, and refused again by
+          // POST /admin/survey/:id/send.
+          const openNow = state === 'open';
         %>
         <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
           <% if (payrollReady) { %>
@@ -77,12 +81,17 @@
           <% if (s.available && payrollReady) { %>
           <form method="POST" action="/admin/survey/<%= selected.id %>/send"
                 onsubmit="return confirm('<%= retrying ? "Send to the staff who have not been delivered a link yet?" : "Send the invitation to every active staff member?" %>');">
-            <button type="submit" <%= running ? 'disabled' : '' %>>
+            <button type="submit" <%= running || !openNow ? 'disabled' : '' %>>
               <%= running ? 'Sending…' : (retrying ? 'Retry the undelivered' : 'Send now') %>
             </button>
           </form>
           <% } %>
         </div>
+        <% if (s.available && payrollReady && !openNow) { %>
+        <div class="muted" style="font-size:13.5px;margin-top:8px;">
+          Sending is unavailable: this round is <%= state === 'closed' ? 'closed' : 'not open yet' %>, and a link only opens between <%= selected.opens_on %> and <%= selected.closes_on %> — an invitation sent now would carry a link the recipient cannot open. Change the closing date first.
+        </div>
+        <% } %>
         <% if (s.available) { %>
         <form method="POST" action="/admin/survey/<%= selected.id %>/test" style="margin-top:10px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
           <div><label style="display:block;font-size:13px;color:var(--muted);">Test send — one real message to</label>

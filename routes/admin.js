@@ -343,6 +343,16 @@ router.post("/survey/:id/send", requireAdminOrOps, (req, res) => {
   if (send.running) return backToSurvey(res, id, "msg", "A send is already running.");
   const round = survey.round(id);
   if (!round) return backToSurvey(res, null, "err", "No such round.");
+  // Only a round that is OPEN may be sent. A link is only answerable between opens_on and closes_on
+  // (survey.tokenState), and views/survey-closed.ejs is deliberately the same dead end for a spent link
+  // as for a closed round — so an invitation sent outside those dates tells the recipient they may have
+  // already answered, with no way in and nothing to distinguish it from a broken system. The realistic
+  // path is the retry: a run stops on a 403, the tenant fix takes days, and "Retry the undelivered" then
+  // mails exactly the people who never got a link. Nothing downstream checks this: exportRows and
+  // graphSendRound both send a closed round happily.
+  const st = survey.roundState(round);
+  if (st !== "open") return backToSurvey(res, id, "err", "This round is " + (st === "closed" ? "closed" : "not open yet")
+    + " — an invitation sent now carries a link that cannot be opened. Change the closing date first.");
 
   send = { ...IDLE_SEND, running: true, mode: "send", roundId: id, startedAt: Date.now() };
   const contact = req.app.locals.privacyContact;

@@ -581,6 +581,69 @@ test('Microsoft Graph sender for the eNPS invitations', async (t) => {
     } finally { eh.allEmployees = real; }
   });
 
+  // ===== A round that is not open =====
+  // A token only answers between opens_on and closes_on — survey.tokenState returns {state:'closed'}
+  // outside them, and views/survey-closed.ejs is deliberately the same dead end for a closed round as
+  // for a link already spent ("already been used, or the survey it belongs to has closed"). So an
+  // invitation sent outside those dates is not a broken link somebody can report: it tells a staff
+  // member they may already have answered, with no way in and nothing separating it from a fault.
+  // The route checked Graph, the in-flight flag and that the round existed, and nothing else, and
+  // nothing downstream compensates — exportRows and graphSendRound both send a closed round happily.
+  // The realistic way in is the retry: a 403 stops a run the day before closes_on, fixing the Exchange
+  // scope needs a tenant admin, and two days later "Retry the undelivered" is pressed on a closed round
+  // and mails precisely the hundred-odd people who never got a link.
+  await t.test('a round that is closed, or not open yet, is refused rather than sent', async () => {
+    const cookie = await login('admin');
+    const post = (id) => realFetch(base + '/admin/survey/' + id + '/send', { method: 'POST', headers: { cookie }, redirect: 'manual' });
+    const where = async (r) => { await r.text(); return decodeURIComponent(r.headers.get('location') || ''); };
+
+    await freeze(FROZEN, async () => {
+      for (const [want, opens, closes, wording] of [
+        ['closed', '2026-08-18', '2026-09-01', /this round is closed/i],
+        ['upcoming', '2026-10-01', '2026-10-14', /not open yet/i]]) {
+        reset();
+        const round = survey.createRound({ name: 'not-open-' + want, opens_on: opens, closes_on: closes });
+        assert.equal(survey.roundState(round), want, 'the fixture must actually be ' + want);
+        const said = await where(await post(round.id));
+        assert.match(said, /err=/, want + ': the send was accepted');
+        assert.doesNotMatch(said, /Sending started/, want + ': the send started');
+        assert.match(said, wording, want + ': the refusal must say which way it is shut');
+        assert.match(said, /cannot be opened/, want + ': and why that matters to the person receiving it');
+        // Nothing was sent, nothing was logged as delivered — and the guard sits ahead of exportRows,
+        // so the round's tokens were never even minted.
+        assert.equal(sends().length, 0, want + ': a real invitation reached Microsoft');
+        assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_deliveries WHERE round_id = ?').get(round.id).n, 0);
+        assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id = ?').get(round.id).n, 0);
+        // And the page does not offer a button that the route will only refuse.
+        const page = await realFetch(base + '/admin/survey?round=' + round.id, { headers: { cookie } });
+        const html = await page.text();
+        assert.match(html, /Sending is unavailable/, want + ': the page must say why');
+        assert.match(html, /<button type="submit" disabled>\s*Send now/, want + ': Send now is still live on the page');
+      }
+    });
+
+    // And it refuses only what it must: an OPEN round still sends, and the link that goes out opens.
+    // One employee for this one, so the mailbox pacing does not hold the test open for ten seconds.
+    const realStaff = eh.allEmployees;
+    try {
+      eh.allEmployees = async () => [{ ...EMPLOYEES[0] }];
+      await freeze(FROZEN, async () => {
+        reset();
+        const round = survey.createRound({ name: 'not-open-control', opens_on: TODAY, closes_on: CLOSES });
+        assert.equal(survey.roundState(round), 'open');
+        assert.match(await where(await post(round.id)), /msg=/, 'an open round must still send');
+        for (let i = 0; i < 400; i++) {
+          const s = await realFetch(base + '/admin/survey/' + round.id + '/send-status', { headers: { cookie } });
+          if (!(await s.json()).running) break;
+          await new Promise((done) => setTimeout(done, 25));
+        }
+        assert.equal(sends().length, 1, 'the open round did not send');
+        const token = payload(sends()[0]).message.body.content.match(/\/s\/([A-Za-z0-9_-]+)/)[1];
+        assert.equal(survey.tokenState(token, TODAY).state, 'open', 'the link in the message must be one that opens');
+      });
+    } finally { eh.allEmployees = realStaff; }
+  });
+
   // ===== The order the log is written in, which is a column nobody declared =====
   await t.test('the delivery log records nothing about the order the round was sent in', async () => {
     reset();
