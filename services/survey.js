@@ -1,0 +1,397 @@
+// eNPS survey — the owner's spec of 16 September 2026: "trial the eNPS first, all centres, magic links
+// emailed, anonymous, 3 questions."
+//
+// ============================ THE ANONYMITY GUARANTEE ============================
+// Two tables, deliberately severed, with no foreign key between them:
+//
+//   survey_invitations   token, round, centre, issued/sent/used — and NOTHING about a person. No name,
+//                        no employee id, no email address. The address is needed at SEND TIME only: the
+//                        export reads it from payroll, writes it into the file the admin mail-merges
+//                        from, and drops it. It is never written to this database.
+//   survey_responses     round, centre, score, the two free-text answers, the DAY it was submitted —
+//                        and nothing that says which invitation it came from.
+//
+// When someone submits, submit() below marks the token used in one table and inserts the answer in the
+// other, in one transaction, with no value passed from the first row to the second beyond the round and
+// the centre. That is what makes the response rate and the chase-up possible while leaving nobody —
+// including an administrator with the database file in front of them — able to connect an answer to a
+// person.
+//
+// The obvious leak is time. Stored to the second, the two tables could be sorted by timestamp and lined
+// up row for row, which would undo all of the above. So both sides store a DAY: survey_responses.
+// submitted_on and survey_invitations.used_on. The invitation rowid is no help either — it is assigned
+// when the round is generated, not when the token is spent.
+//
+// The round and the centre ARE carried on both sides, because per-centre reporting is the point. They
+// are group attributes, not a joining value: the smallest centre has four staff, which is exactly why
+// MIN_RESPONSES below exists and why no centre is reported until at least that many answers stand
+// behind it.
+// ================================================================================
+const crypto = require("crypto");
+const db = require("../db/db");
+const cal = require("./calendar");
+const { eh } = require("./eh");
+// One mapping, not two: which OWNA centre a payroll location belongs to is already solved for wages and
+// for the talent pipeline, and is reused here rather than copied.
+const talent = require("./eh-talent");
+
+// A centre is not reported until this many people have answered for it. Oran Park has 4 staff and
+// Cobbitty 9, so a per-centre figure below this would identify people rather than describe a centre.
+// Answers below the threshold are NOT discarded — they count in the group total.
+const MIN_RESPONSES = 5;
+
+// eNPS, the standard definition: 9-10 promote, 0-6 detract, 7-8 are passive and count in the
+// denominator only.
+const PROMOTER_FROM = 9;
+const DETRACTOR_TO = 6;
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Free text is two boxes on a page anyone can open. Cap them so a single submission cannot fill the disk.
+const MAX_TEXT = 2000;
+
+// The centre as question 1 words it. The stored name is "Futuro Childcare & Education - Austral"; the
+// question is "How likely are you to recommend Futuro Austral?", so the label is the tail. Same
+// transformation the views already use for the nav and the page headings.
+function centreLabel(name) {
+  return String(name || "").replace(/Futuro Childcare (and|&) Education\s*-?\s*/i, "").replace(/^Futuro\s+/i, "").trim();
+}
+// A payroll location that is not a centre — head office and similar. They are staff and they get the
+// survey; their question reads "…recommend Futuro Early Learning?", which is the thing they work for.
+const NO_CENTRE_LABEL = "Early Learning";
+
+// ---- The three questions, verbatim ---------------------------------------------------------------
+// Only the first is required. Kept here so the page, the email draft and the tests cannot drift apart.
+function questions(label) {
+  return [
+    { key: "score", required: true, text: `How likely are you to recommend Futuro ${label}?` },
+    { key: "reason", required: false, text: "What is the reason for your score?" },
+    { key: "other", required: false, text: "Any other feedback you would like to add?" },
+  ];
+}
+
+// ---- Rounds --------------------------------------------------------------------------------------
+function createRound({ name, opens_on, closes_on, kind = "enps" }) {
+  const nm = String(name || "").trim().slice(0, 120);
+  if (!nm) throw new Error("Give the round a name.");
+  if (!DATE_RE.test(opens_on) || !DATE_RE.test(closes_on)) throw new Error("Opening and closing dates are required (YYYY-MM-DD).");
+  if (closes_on < opens_on) throw new Error("The closing date cannot be before the opening date.");
+  const info = db.prepare(`INSERT INTO survey_rounds (kind, name, opens_on, closes_on, created_at)
+    VALUES (?,?,?,?,datetime('now'))`).run(kind, nm, opens_on, closes_on);
+  return round(info.lastInsertRowid);
+}
+function round(id) { return db.prepare("SELECT * FROM survey_rounds WHERE id = ?").get(id) || null; }
+function rounds() { return db.prepare("SELECT * FROM survey_rounds ORDER BY opens_on DESC, id DESC").all(); }
+// Move a round's closing date — the one thing an admin realistically needs to change mid-flight.
+function setClosesOn(id, closes_on) {
+  const r = round(id);
+  if (!r) throw new Error("No such round.");
+  if (!DATE_RE.test(closes_on)) throw new Error("A closing date is required (YYYY-MM-DD).");
+  if (closes_on < r.opens_on) throw new Error("The closing date cannot be before the opening date.");
+  db.prepare("UPDATE survey_rounds SET closes_on = ? WHERE id = ?").run(closes_on, id);
+  return round(id);
+}
+// upcoming | open | closed, on the Sydney date. Both dates are inclusive.
+function roundState(r, today = cal.today()) {
+  if (!r) return "closed";
+  if (today < r.opens_on) return "upcoming";
+  if (today > r.closes_on) return "closed";
+  return "open";
+}
+// The round a result page should show by default: the one that is open, else the most recently closed.
+function currentRound(today = cal.today()) {
+  const all = rounds();
+  return all.find((r) => roundState(r, today) === "open")
+    || all.filter((r) => roundState(r, today) === "closed").sort((a, b) => (a.closes_on < b.closes_on ? 1 : -1))[0]
+    || all[0] || null;
+}
+
+// ---- Invitations ---------------------------------------------------------------------------------
+// 32 random bytes, base64url. Long enough that guessing one is not a strategy, and URL-safe so the
+// magic link survives a mail merge intact.
+function newToken() { return crypto.randomBytes(32).toString("base64url"); }
+
+// Issue tokens for a round so that each centre has at least `want` of them, and return every invitation
+// for that round grouped by centre, in creation order. Called by the export; safe to call again.
+function ensureInvitations(roundId, wantByCentre, today = cal.today()) {
+  const r = round(roundId);
+  if (!r) throw new Error("No such round.");
+  const ins = db.prepare(`INSERT INTO survey_invitations (token, round_id, owna_id, centre_label, issued_on) VALUES (?,?,?,?,?)`);
+  db.transaction(() => {
+    for (const { owna_id, centre_label, want } of wantByCentre) {
+      const have = db.prepare(`SELECT COUNT(*) n FROM survey_invitations WHERE round_id = ? AND owna_id IS ?`).get(roundId, owna_id).n;
+      for (let i = have; i < want; i++) ins.run(newToken(), roundId, owna_id, centre_label, today);
+    }
+  })();
+  // rowid order is creation order, which is what keeps a regenerated export stable — see exportRows().
+  const all = db.prepare(`SELECT rowid AS rid, token, owna_id, centre_label, used_on FROM survey_invitations WHERE round_id = ? ORDER BY rowid`).all(roundId);
+  const byCentre = new Map();
+  for (const inv of all) {
+    const k = inv.owna_id == null ? "" : inv.owna_id;
+    if (!byCentre.has(k)) byCentre.set(k, []);
+    byCentre.get(k).push(inv);
+  }
+  return byCentre;
+}
+
+function invitation(token) {
+  if (typeof token !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(token)) return null;
+  return db.prepare("SELECT * FROM survey_invitations WHERE token = ?").get(token) || null;
+}
+
+// What the public magic-link page should do with this token. Deliberately ONE unusable outcome rather
+// than several: an unknown token, a spent token and a closed round all come back as `closed`, so the
+// page cannot be used to find out which tokens exist. See routes/survey.js.
+function tokenState(token, today = cal.today()) {
+  const inv = invitation(token);
+  if (!inv) return { state: "closed" };
+  const r = round(inv.round_id);
+  if (!r || roundState(r, today) !== "open" || inv.used_on) return { state: "closed" };
+  return { state: "open", invitation: inv, round: r, label: inv.centre_label, questions: questions(inv.centre_label) };
+}
+
+function parseScore(v) {
+  if (v === undefined || v === null || String(v).trim() === "") return null;
+  if (!/^(10|[0-9])$/.test(String(v).trim())) return null;
+  return Number(String(v).trim());
+}
+const cleanText = (v) => {
+  const s = String(v == null ? "" : v).replace(/\r\n/g, "\n").trim().slice(0, MAX_TEXT);
+  return s || null;
+};
+
+// Record an answer. Returns { ok: true } or { ok: false, reason: 'closed' | 'score' }.
+//
+// >>> THE SEVERING HAPPENS HERE. <<<
+// One transaction, two tables, and the only values that cross from the invitation to the response are
+// the round and the centre — group attributes both, never the token, never the invitation's rowid,
+// never a timestamp finer than a day. After this returns there is nothing in the database, and nothing
+// derivable from it, that ties this answer back to the invitation that produced it, and therefore
+// nothing that ties it back to a person. A test in tests/enps.test.js proves it.
+function submit(token, answers, today = cal.today()) {
+  const st = tokenState(token, today);
+  if (st.state !== "open") return { ok: false, reason: "closed" };
+  const score = parseScore(answers && answers.score);
+  if (score === null) return { ok: false, reason: "score", label: st.label, questions: st.questions };
+  const inv = st.invitation;
+  const reason = cleanText(answers && answers.reason);
+  const other = cleanText(answers && answers.other);
+  const done = db.transaction(() => {
+    // Spend the token. `used_on` is a day, never an instant. The WHERE clause re-checks used_on so two
+    // submissions racing on the same token cannot both write an answer.
+    const spent = db.prepare("UPDATE survey_invitations SET used_on = ? WHERE token = ? AND used_on IS NULL").run(today, token).changes;
+    if (!spent) return false;
+    db.prepare(`INSERT INTO survey_responses (round_id, owna_id, centre_label, score, reason, other, submitted_on)
+      VALUES (?,?,?,?,?,?,?)`).run(inv.round_id, inv.owna_id, inv.centre_label, score, reason, other, today);
+    return true;
+  })();
+  return done ? { ok: true } : { ok: false, reason: "closed" };
+}
+
+// ---- The arithmetic ------------------------------------------------------------------------------
+// eNPS = %promoters (9-10) − %detractors (0-6). 7-8 are passives: they are in the denominator and in
+// neither percentage, which is what drags a score of all-sevens to zero rather than leaving it undefined.
+function enps(scores) {
+  // Number(null) is 0 and Number(false) is 0, and a 0 is a detractor — so the coercion has to be fenced
+  // off, or a missing value would silently count as the worst possible answer.
+  const list = (scores || [])
+    .filter((v) => typeof v === "number" || (typeof v === "string" && v.trim() !== ""))
+    .map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= 10);
+  const n = list.length;
+  const promoters = list.filter((s) => s >= PROMOTER_FROM).length;
+  const detractors = list.filter((s) => s <= DETRACTOR_TO).length;
+  const passives = n - promoters - detractors;
+  return {
+    n, promoters, passives, detractors,
+    // Rounded to a whole number, like every other NPS figure on the dashboard.
+    enps: n ? Math.round((promoters / n) * 100 - (detractors / n) * 100) : null,
+  };
+}
+
+// ---- Results -------------------------------------------------------------------------------------
+// The group figure, one row per centre, and the response rate. `scoped` is a centre-scoped user's
+// owna_id: they get their own centre's row and nothing else.
+//
+// A centre with fewer than MIN_RESPONSES answers is shown as "too few responses to report" — its
+// answers still count in the group total, they are simply not reported as that centre's figure.
+function results(roundId, { scoped = null, today = cal.today() } = {}) {
+  const r = round(roundId);
+  if (!r) return null;
+  const responses = db.prepare("SELECT owna_id, centre_label, score FROM survey_responses WHERE round_id = ?").all(roundId);
+  const invited = db.prepare(`SELECT owna_id, centre_label, COUNT(*) invited, SUM(CASE WHEN used_on IS NOT NULL THEN 1 ELSE 0 END) used
+                              FROM survey_invitations WHERE round_id = ? GROUP BY owna_id, centre_label`).all(roundId);
+
+  const group = enps(responses.map((x) => x.score));
+  const totalInvited = invited.reduce((a, x) => a + x.invited, 0);
+
+  const key = (id) => (id == null ? "" : id);
+  const byCentre = new Map();
+  for (const inv of invited) byCentre.set(key(inv.owna_id), { owna_id: inv.owna_id, label: inv.centre_label, invited: inv.invited, scores: [] });
+  for (const x of responses) {
+    const k = key(x.owna_id);
+    if (!byCentre.has(k)) byCentre.set(k, { owna_id: x.owna_id, label: x.centre_label, invited: 0, scores: [] });
+    byCentre.get(k).scores.push(x.score);
+  }
+  let centres = [...byCentre.values()].map((c) => {
+    const e = enps(c.scores);
+    const reportable = e.n >= MIN_RESPONSES;
+    return {
+      owna_id: c.owna_id, label: c.label, invited: c.invited, responses: e.n,
+      // The response rate is a count over a count and identifies nobody, so it is shown even for a
+      // centre whose score is withheld — otherwise the chase-up has no number to work from.
+      response_rate: c.invited ? Math.round((e.n / c.invited) * 1000) / 10 : null,
+      reportable,
+      enps: reportable ? e.enps : null,
+      promoters: reportable ? e.promoters : null,
+      passives: reportable ? e.passives : null,
+      detractors: reportable ? e.detractors : null,
+    };
+  }).sort((a, b) => a.label.localeCompare(b.label));
+  if (scoped) centres = centres.filter((c) => c.owna_id === scoped);
+
+  return {
+    round: r, state: roundState(r, today),
+    group: { ...group, invited: totalInvited, response_rate: totalInvited ? Math.round((group.n / totalInvited) * 1000) / 10 : null },
+    centres,
+    min_responses: MIN_RESPONSES,
+    withheld: centres.filter((c) => !c.reportable).length,
+  };
+}
+
+// The free text. GROUP LEVEL ONLY and admin/ops only — a comment read beside the centre it came from is
+// a much smaller haystack than a comment read beside the whole group. The centre is deliberately not
+// returned. Ordered by id, which is submission order within a day and tells a reader nothing, because
+// the invitation side carries no order of use to line it up against.
+function comments(roundId) {
+  return db.prepare(`SELECT submitted_on, score, reason, other FROM survey_responses
+                     WHERE round_id = ? AND (reason IS NOT NULL OR other IS NOT NULL) ORDER BY id`).all(roundId);
+}
+
+// ---- Who gets one ---------------------------------------------------------------------------------
+// Everyone employed today. `eh.allEmployees()` returns past staff as well, so a leaver is filtered out
+// here by status and end date rather than assumed away.
+function isActiveStaff(e, today) {
+  if (!e) return false;
+  if (String(e.status || "") === "Terminated") return false;
+  const end = String(e.endDate || "").slice(0, 10);
+  if (DATE_RE.test(end) && end < today) return false;   // finished before today
+  return true;
+}
+
+// Active staff, each reduced to the three facts the export needs: a payroll id (to keep the order
+// stable between runs — never written to the database), an email address (used to write the file and
+// then dropped) and the centre. Nothing else is read off the record.
+async function activeStaff({ today = cal.today() } = {}) {
+  const employees = await eh.allEmployees();
+  if (!Array.isArray(employees)) throw new Error("Employment Hero returned an invalid employee list.");
+  const locations = await eh.locations();
+  if (!Array.isArray(locations)) throw new Error("Employment Hero returned an invalid location list.");
+  const index = talent.buildLocationIndex(locations);
+  const centres = db.prepare("SELECT owna_id, name FROM centres").all();
+  const nameById = new Map(centres.map((c) => [c.owna_id, c.name]));
+
+  const staff = [], noEmail = [];
+  for (const e of employees) {
+    if (!isActiveStaff(e, today)) continue;
+    const resolved = talent.centreOf(e && e.primaryLocation, index, locations, centres);
+    const owna_id = resolved === talent.NO_CENTRE ? null : resolved;
+    const centre_label = owna_id ? centreLabel(nameById.get(owna_id)) : NO_CENTRE_LABEL;
+    const email = String((e && e.emailAddress) || "").trim();
+    // A staff member with no address cannot be invited. Count them and say so on the page rather than
+    // writing a blank row into the merge file, which would send nowhere and silently lose a person.
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { noEmail.push({ owna_id, centre_label }); continue; }
+    staff.push({ id: e.id, email, owna_id, centre_label });
+  }
+  // A stable order, so regenerating the file for the same round hands the same person the same link.
+  staff.sort((a, b) => (Number(a.id) - Number(b.id)) || String(a.id).localeCompare(String(b.id)));
+  return { staff, noEmail };
+}
+
+// ---- The mail-merge export -------------------------------------------------------------------------
+// One row per active staff member: their address, their magic link, their centre. Generated on demand;
+// the address goes into the file and nowhere else.
+//
+// Tokens are assigned by POSITION within a centre, over staff in payroll-id order, so generating the
+// file a second time for the same round gives the same person the same link — that is what makes a
+// reminder possible without storing anything about who was sent what. It holds as long as the staff
+// list has not changed; the admin page therefore says to keep the file and merge the reminder from it.
+async function exportRows(roundId, { baseUrl, today = cal.today() } = {}) {
+  const r = round(roundId);
+  if (!r) throw new Error("No such round.");
+  const { staff, noEmail } = await activeStaff({ today });
+
+  const want = new Map();
+  for (const p of staff) {
+    const k = p.owna_id == null ? "" : p.owna_id;
+    if (!want.has(k)) want.set(k, { owna_id: p.owna_id, centre_label: p.centre_label, want: 0 });
+    want.get(k).want += 1;
+  }
+  const pool = ensureInvitations(roundId, [...want.values()], today);
+  const taken = new Map();
+  const rows = staff.map((p) => {
+    const k = p.owna_id == null ? "" : p.owna_id;
+    const i = taken.get(k) || 0;
+    taken.set(k, i + 1);
+    const inv = (pool.get(k) || [])[i];
+    return { email: p.email, centre: p.centre_label, token: inv.token, link: linkFor(baseUrl, inv.token) };
+  });
+  // Record that these tokens have been handed out, so the page can say when the round was last sent.
+  const stamp = db.prepare("UPDATE survey_invitations SET sent_on = ? WHERE token = ?");
+  db.transaction(() => { for (const row of rows) stamp.run(today, row.token); })();
+  return { rows, noEmail: noEmail.length, round: r };
+}
+
+function linkFor(baseUrl, token) {
+  return String(baseUrl || "").replace(/\/+$/, "") + "/s/" + token;
+}
+
+// RFC 4180 quoting, and a leading apostrophe on anything Excel would otherwise evaluate as a formula —
+// this file is opened in Excel by definition, and an address starting with '=' must not become one.
+function csv(rows) {
+  const cell = (v) => {
+    let s = String(v == null ? "" : v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    return '"' + s.replace(/"/g, '""') + '"';
+  };
+  const head = ["email", "centre", "link"];
+  return [head.join(","), ...rows.map((r) => [r.email, r.centre, r.link].map(cell).join(","))].join("\r\n") + "\r\n";
+}
+
+// ---- The invitation email --------------------------------------------------------------------------
+// 217 of the 221 addresses are personal ones (gmail and similar), so this lands in a personal inbox. It
+// has to say who it is from, why they got it, that it is anonymous and how, how long it takes and when
+// it closes — or it reads as spam and nobody opens it.
+function invitationEmail({ centre = "Early Learning", link = "", closesOn = "", contact = "" } = {}) {
+  const close = closesOn ? friendlyDate(closesOn) : "the closing date";
+  const subject = `Your say at Futuro ${centre} — 2 minutes, completely anonymous`;
+  const body =
+`Hi,
+
+You're getting this because you work at Futuro ${centre}. We'd like to know what it's actually like to work here, so we're running a short anonymous survey — three questions, about two minutes.
+
+Your link: ${link}
+
+It's anonymous, and here is exactly how: the link doesn't carry your name, your email address or your employee number, and the answers are stored in a separate place from the list of links, with nothing joining the two. We can see how many people answered at each centre. We cannot see who said what — and neither can anyone else at Futuro, including whoever has access to the system.
+
+Please don't name colleagues in your answers, so the comments stay safe for everyone to read.
+
+The survey closes on ${close}. The link works once, from any phone or computer, and you don't need to log in to anything.
+
+Thank you — it genuinely changes what we do next.
+
+Futuro Early Learning — People & Culture${contact ? `\nQuestions about privacy: ${contact}` : ""}`;
+  return { subject, body };
+}
+function friendlyDate(d) {
+  if (!DATE_RE.test(String(d || ""))) return String(d || "");
+  return new Date(d + "T00:00:00Z").toLocaleDateString("en-AU", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
+}
+
+module.exports = {
+  MIN_RESPONSES, PROMOTER_FROM, DETRACTOR_TO, NO_CENTRE_LABEL, MAX_TEXT,
+  centreLabel, questions,
+  createRound, round, rounds, setClosesOn, roundState, currentRound,
+  newToken, ensureInvitations, invitation, tokenState, parseScore, submit,
+  enps, results, comments,
+  isActiveStaff, activeStaff, exportRows, linkFor, csv,
+  invitationEmail, friendlyDate,
+};

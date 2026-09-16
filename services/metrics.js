@@ -1312,7 +1312,14 @@ function actionPlanAuto(ownaId) {
   if (pm) { const pr = pcForMonth(pm, ownaId)[0]; const t = pcTargets();
     if (pr && pr.family_nps != null) out.family = { rating: rag(pr.family_nps, t.family_nps || 30, (t.family_nps || 30) - 15, false), reason: `Family NPS ${pr.family_nps}` };
     if (pr && pr.enps != null) out.enps = { rating: rag(pr.enps, t.enps || 30, (t.enps || 30) - 15, false), reason: `eNPS ${pr.enps}` };
-    if (pr && pr.turnover != null) out.team = { rating: rag(pr.turnover, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${pr.turnover}%` };
+  }
+  // Turnover is the figure the OWNER enters (rolling 12 months, resignations + terminations). The
+  // spreadsheet column in pc_metrics is the fallback for a centre he has not entered yet.
+  { const t = pcTargets();
+    const tr = pcTurnoverReport(ownaId);
+    let v = tr ? tr.rates.combined : null, why = tr && tr.window ? `rolling ${tr.window.entered} month${tr.window.entered === 1 ? "" : "s"}` : "";
+    if (v == null) { const pm = pcMonths(1)[0]; const pr = pm ? pcForMonth(pm, ownaId)[0] : null; if (pr && pr.turnover != null) { v = pr.turnover; why = "HR spreadsheet"; } }
+    if (v != null) out.team = { rating: rag(v, t.turnover || 15, (t.turnover || 15) + 5, true), reason: `Turnover ${v}%${why ? ` (${why})` : ""}` };
   }
   // Safety: serious child incidents (reg 12: emergency services or medical attention) in the latest complete month.
   const inc = incidentsMonth(ownaId, null, true);
@@ -1596,6 +1603,146 @@ function pcGroupLatest() {
   };
   return { month, enps: avg("enps"), family_nps: avg("family_nps"), turnover: avg("turnover"),
     checkin_pct: avg("checkin_pct"), psych_safety: avg("psych_safety"), targets: pcTargets() };
+}
+
+// ===== Turnover as the owner enters it (his decision of 16 September 2026) =====
+// THE turnover figure. Payroll records that someone left; it cannot know whether the business counts the
+// departure as turnover, so the owner types three numbers per centre per month — resignations,
+// terminations, headcount — on /admin/pc, and everything below is arithmetic on them.
+//
+// THE BASIS, once, so every caller reports the same thing:
+//   * Blank is NOT ZERO. A month nobody entered is left out of the average headcount and adds no
+//     leavers; a month entered as 0 is a measurement and counts. Blank must round-trip as blank.
+//   * The rate is ROLLING TWELVE MONTHS, the same basis the HR spreadsheet used: the twelve months
+//     ending in the selected month, leavers summed and headcount averaged over the months that have an
+//     entry. Where fewer than twelve are entered the caller is told how many it actually covers, so a
+//     five-month figure is never read as a year.
+//   * Three rates, all of them: combined (resignations + terminations), resignations only, and
+//     terminations only. The difference between them is the point of the exercise.
+//   * An average headcount of 0 — or no entered headcount at all — yields null, never a division.
+const PC_TURNOVER_WINDOW = 12;
+const pcTurnoverInt = (v) => {
+  const s = String(v == null ? "" : v).trim();
+  if (!s) return null;                                     // blank = not entered
+  const n = parseInt(s.replace(/[^0-9-]/g, ""), 10);
+  return isNaN(n) || n < 0 ? null : n;
+};
+// n months ending at `last` (YYYY-MM), oldest first.
+function monthsEndingAt(last, n) {
+  const [y, mo] = last.split("-").map(Number);
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const t = y * 12 + (mo - 1) - i;
+    out.push(`${String(Math.floor(t / 12)).padStart(4, "0")}-${String(((t % 12) + 12) % 12 + 1).padStart(2, "0")}`);
+  }
+  return out;
+}
+// Centres the owner enters figures for: the ones actually operating.
+function pcTurnoverCentres() {
+  return db.prepare("SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();
+}
+function pcTurnoverMonths(limit = 36) {
+  return db.prepare("SELECT DISTINCT month FROM pc_turnover_entry ORDER BY month DESC LIMIT ?").all(limit).map((r) => r.month);
+}
+function pcTurnoverLatestMonth(ownaId = null) {
+  const r = db.prepare(`SELECT MAX(month) m FROM pc_turnover_entry WHERE (resignations IS NOT NULL OR terminations IS NOT NULL OR headcount IS NOT NULL)${ownaId ? " AND owna_id = ?" : ""}`)
+    .get(...(ownaId ? [ownaId] : [])) || {};
+  return r.m || null;
+}
+// One row per operating centre for the entry form. A field never entered comes back null, not 0.
+function pcTurnoverEntries(month, ownaId = null) {
+  const saved = {};
+  db.prepare("SELECT * FROM pc_turnover_entry WHERE month = ?").all(month).forEach((r) => { saved[r.owna_id] = r; });
+  return pcTurnoverCentres().filter((c) => !ownaId || c.owna_id === ownaId).map((c) => {
+    const r = saved[c.owna_id] || {};
+    return { owna_id: c.owna_id, name: c.name, resignations: r.resignations ?? null, terminations: r.terminations ?? null, headcount: r.headcount ?? null };
+  });
+}
+// Write one centre-month. All three blank deletes the row, so "not entered" stays distinguishable from
+// zero on re-read rather than being stored as a row of nulls that later reads as an entered month.
+function savePcTurnoverEntry(ownaId, month, v) {
+  const res = pcTurnoverInt(v.resignations), term = pcTurnoverInt(v.terminations), head = pcTurnoverInt(v.headcount);
+  if (res == null && term == null && head == null) {
+    db.prepare("DELETE FROM pc_turnover_entry WHERE owna_id=? AND month=?").run(ownaId, month);
+    return { deleted: true };
+  }
+  db.prepare(`INSERT INTO pc_turnover_entry (owna_id, month, resignations, terminations, headcount, updated_at)
+    VALUES (?,?,?,?,?,datetime('now'))
+    ON CONFLICT(owna_id, month) DO UPDATE SET
+      resignations=excluded.resignations, terminations=excluded.terminations,
+      headcount=excluded.headcount, updated_at=datetime('now')`).run(ownaId, month, res, term, head);
+  return { resignations: res, terminations: term, headcount: head };
+}
+// The arithmetic, once, for the group and for a single centre alike. `byMonth` maps YYYY-MM to
+// { res, term, head } with nulls preserved.
+function _pcTurnoverRoll(win, byMonth) {
+  const months = win.map((mth) => {
+    const r = byMonth[mth] || {};
+    return { month: mth, resignations: r.res ?? null, terminations: r.term ?? null, headcount: r.head ?? null };
+  });
+  const entered = months.filter((x) => x.resignations != null || x.terminations != null || x.headcount != null);
+  const heads = months.map((x) => x.headcount).filter((v) => v != null);
+  const avgHead = heads.length ? heads.reduce((a, b) => a + b, 0) / heads.length : null;
+  const sum = (k) => { const vs = months.map((x) => x[k]).filter((v) => v != null); return vs.length ? vs.reduce((a, b) => a + b, 0) : null; };
+  const res = sum("resignations"), term = sum("terminations");
+  const leavers = (res == null && term == null) ? null : (res || 0) + (term || 0);
+  // No entered headcount, or an entered headcount of zero, gives no rate — never a division.
+  const rate = (n) => (n == null || avgHead == null || avgHead <= 0) ? null : Math.round((n / avgHead) * 1000) / 10;
+  const last = months[months.length - 1];
+  const mLeavers = (last.resignations == null && last.terminations == null) ? null : (last.resignations || 0) + (last.terminations || 0);
+  const mRate = (n) => (n == null || !last.headcount || last.headcount <= 0) ? null : Math.round((n / last.headcount) * 1000) / 10;
+  return {
+    months,
+    window: { from: win[0], to: win[win.length - 1], months: win.length, entered: entered.length, complete: entered.length >= win.length },
+    headcount_months: heads.length,
+    avg_headcount: avgHead == null ? null : Math.round(avgHead * 10) / 10,
+    resignations: res, terminations: term, leavers,
+    rates: { combined: rate(leavers), resignations: rate(res), terminations: rate(term) },
+    month: { month: last.month, headcount: last.headcount, resignations: last.resignations, terminations: last.terminations, leavers: mLeavers,
+      rates: { combined: mRate(mLeavers), resignations: mRate(last.resignations), terminations: mRate(last.terminations) } },
+  };
+}
+// Scope-level roll (one centre, or the group when ownaId is null). SUM over an all-null column is NULL
+// and COUNT(col) ignores nulls, so a month nobody entered stays null instead of collapsing to 0.
+function _pcTurnoverScope(ownaId, win) {
+  const rows = db.prepare(`SELECT month, SUM(resignations) res, SUM(terminations) term, SUM(headcount) head,
+      COUNT(resignations) nres, COUNT(terminations) nterm, COUNT(headcount) nhead
+      FROM pc_turnover_entry WHERE month BETWEEN ? AND ?${ownaId ? " AND owna_id = ?" : ""} GROUP BY month`)
+    .all(...(ownaId ? [win[0], win[win.length - 1], ownaId] : [win[0], win[win.length - 1]]));
+  const byMonth = {};
+  rows.forEach((r) => { byMonth[r.month] = { res: r.nres ? r.res : null, term: r.nterm ? r.term : null, head: r.nhead ? r.head : null }; });
+  return _pcTurnoverRoll(win, byMonth);
+}
+// The whole entered-turnover picture for one centre (`ownaId`) or the group (null), as at `month`
+// (default: the latest month anything was entered for). Null when nothing has been entered at all.
+function pcTurnoverReport(ownaId = null, month = null) {
+  const to = month || pcTurnoverLatestMonth(ownaId) || pcTurnoverLatestMonth(null);
+  if (!to) return null;
+  const win = monthsEndingAt(to, PC_TURNOVER_WINDOW);
+  const out = _pcTurnoverScope(ownaId, win);
+  const perCentre = {};
+  db.prepare("SELECT * FROM pc_turnover_entry WHERE month BETWEEN ? AND ?").all(win[0], to).forEach((r) => {
+    (perCentre[r.owna_id] ||= {})[r.month] = { res: r.resignations, term: r.terminations, head: r.headcount };
+  });
+  const centreRows = pcTurnoverCentres().filter((c) => !ownaId || c.owna_id === ownaId).map((c) => {
+    const roll = _pcTurnoverRoll(win, perCentre[c.owna_id] || {});
+    return { owna_id: c.owna_id, name: c.name, ...roll };
+  });
+  return { ...out, scoped: ownaId || null, centres: centreRows };
+}
+// The combined rolling rate month by month, in the shape the P&C chart tabs already consume. Only
+// months with an entry become points, so the line is sparse-but-honest like every other P&C series.
+function pcTurnoverSeries(ownaId = null, full = false, limit = 12) {
+  const months = db.prepare(`SELECT DISTINCT month FROM pc_turnover_entry WHERE (resignations IS NOT NULL OR terminations IS NOT NULL OR headcount IS NOT NULL)${ownaId ? " AND owna_id = ?" : ""} ORDER BY month`)
+    .all(...(ownaId ? [ownaId] : [])).map((r) => r.month);
+  const pts = months.map((mth) => ({ month: mth, value: _pcTurnoverScope(ownaId, monthsEndingAt(mth, PC_TURNOVER_WINDOW)).rates.combined }))
+    .filter((p) => p.value != null);
+  const shown = (!full && limit && limit < pts.length) ? pts.slice(-limit) : pts;
+  return {
+    labels: shown.map((p) => _pcPeriodLabel(p.month, "month")),
+    points: shown.map((p) => p.value),
+    cadence: "month", full: pts.length, shown: shown.length,
+  };
 }
 
 // ===== Employment Hero labour + margin =====
@@ -2345,15 +2492,7 @@ const { CATEGORIES: PAY_CATEGORIES, classify: classifyScale, NO_SCALE_LABEL } = 
 const TALENT_WINDOW = 12; // months in the rolling turnover window
 const VOLUNTARY_KEYS = new Set(CESSATION_REASONS.filter((r) => r.voluntary).map((r) => r.key));
 
-const talentMonthsBack = (last, n) => { // n months ending at `last`, oldest first
-  const [y, mo] = last.split("-").map(Number);
-  const out = [];
-  for (let i = n - 1; i >= 0; i--) {
-    const t = y * 12 + (mo - 1) - i;
-    out.push(`${String(Math.floor(t / 12)).padStart(4, "0")}-${String(((t % 12) + 12) % 12 + 1).padStart(2, "0")}`);
-  }
-  return out;
-};
+const talentMonthsBack = monthsEndingAt; // n months ending at `last`, oldest first (P&C section)
 function talentLatestMonth() {
   const r = db.prepare("SELECT MAX(month) m FROM talent_group_monthly").get();
   return (r && r.m) || null;
@@ -2544,46 +2683,10 @@ function talentPayScales() {
   };
 }
 
-// Turnover has two sources and they measure different populations, so the page shows BOTH rather than
-// quietly preferring one: the HR spreadsheet uploaded into pc_metrics, and payroll counted here. They
-// are labelled by source and by basis wherever they appear together.
-function talentTurnoverSources(ownaId = null) {
-  const hrMonth = db.prepare(`SELECT MAX(month) m FROM pc_metrics WHERE turnover IS NOT NULL${ownaId ? " AND owna_id = ?" : ""}`)
-    .get(...(ownaId ? [ownaId] : [])) || {};
-  let hr = null;
-  if (hrMonth.m) {
-    const rows = ownaId
-      ? db.prepare("SELECT turnover, headcount FROM pc_metrics WHERE month=? AND owna_id=? AND turnover IS NOT NULL").all(hrMonth.m, ownaId)
-      : db.prepare("SELECT turnover, headcount FROM pc_metrics WHERE month=? AND turnover IS NOT NULL").all(hrMonth.m);
-    const vals = rows.map((r) => r.turnover).filter((v) => v != null);
-    const hc = rows.map((r) => r.headcount).filter((v) => v != null);
-    hr = {
-      source: "HR spreadsheet (SharePoint upload)",
-      basis: ownaId ? "rolling annual turnover as entered for this centre" : "rolling annual turnover, unweighted average of the centres that reported",
-      month: hrMonth.m,
-      value: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10 : null,
-      headcount: hc.length ? hc.reduce((a, b) => a + b, 0) : null,
-      centres: rows.length,
-    };
-  }
-  const rep = talentReport(ownaId, 1);
-  let payroll = null;
-  if (rep) {
-    const c = ownaId ? rep.centres.find((x) => x.owna_id === ownaId) : null;
-    payroll = {
-      source: "Employment Hero payroll",
-      basis: "rolling 12-month leavers ÷ average month-end headcount, casuals and never-started excluded",
-      month: rep.month,
-      value: ownaId ? (c ? c.turnover12 : null) : rep.group.turnover12,
-      headcount: ownaId ? (c ? c.headcount : null) : rep.group.headcount,
-      leavers: ownaId ? (c ? c.leavers12 : null) : rep.group.leavers12,
-      casual_headcount: ownaId ? null : rep.group.casual_headcount,
-    };
-  }
-  const diff = (hr && payroll && hr.value != null && payroll.value != null)
-    ? Math.round((payroll.value - hr.value) * 10) / 10 : null;
-  return { hr, payroll, diff, agree: diff != null ? Math.abs(diff) < 0.05 : null };
-}
+// Removed 16 September 2026: talentTurnoverSources(), which reported the HR spreadsheet figure and the
+// payroll figure side by side so neither silently stood in for the other. The owner now ENTERS turnover
+// (pcTurnoverReport above), so there is one figure and nothing left to compare. Payroll's leaver COUNTS
+// and its breakdown by ATO cessation code stay — they answer why people left, which no entered number does.
 
 module.exports = {
   defaultRange, forwardRange, centres, overview, totals,
@@ -2599,11 +2702,13 @@ module.exports = {
   occupancyTrend, occupancyTrendGroup, occupancyTrendGroupFwd,
   labourWeeks, labourForWeek, labourTrend, wagesTrend, compareTrend, COMPARE_METRICS, labourBudgets, saveLabourBudget,
   pcTargets, savePcTarget, savePcMetric, pcMonths, pcForMonth, pcGroupLatest, pcTrend, pcAllSeries, PC_TARGET_KEYS,
+  pcTurnoverCentres, pcTurnoverMonths, pcTurnoverLatestMonth, pcTurnoverEntries, savePcTurnoverEntry,
+  pcTurnoverReport, pcTurnoverSeries, PC_TURNOVER_WINDOW,
   qcSummary, qcCentre, qcTerms, qcTrend,
   AP_AREAS, actionPlanAuto, actionPlanMonths, actionPlanGet, saveActionPlan, replaceActionItems, incidentsMonth, incidentsReport,
   yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months, wagesPerChildDay, ownaWeek,
   funnelByCentre, funnelMonths, CONVERSION_STAGES, pipelineTargets, savePipelineTarget, deletePipelineTarget, pipelineTargetProgress, targetRag, placesByMonth,
   coeOutlook, coeMeasured, coeRunWeek, coeMonthKeys, COE_TARGET_PCT, COE_FIRM_STATUSES,
-  talentReport, talentTurnoverSources, talentLatestMonth, talentTurnoverPct, talentPayScales,
+  talentReport, talentLatestMonth, talentTurnoverPct, talentPayScales,
   TALENT_WINDOW, PAY_CATEGORIES,
 };

@@ -270,6 +270,23 @@ CREATE TABLE IF NOT EXISTS pc_targets (
   target  REAL
 );
 
+-- ===== Turnover as the OWNER enters it, per centre per month (his decision of 16 September 2026) =====
+-- This is the turnover of record. Payroll can say that someone left; it cannot say whether the business
+-- counts the departure as turnover, so the three numbers are typed in on /admin/pc rather than derived.
+-- NULL means NOT ENTERED and is not the same as 0: a blank month is left out of the average headcount
+-- and contributes no leavers, where a 0 is a measurement that counts. Counts only — no name, no
+-- employee id, no date of birth, exactly as every other table here.
+CREATE TABLE IF NOT EXISTS pc_turnover_entry (
+  owna_id      TEXT NOT NULL,
+  month        TEXT NOT NULL,             -- YYYY-MM
+  resignations INTEGER,                   -- people who resigned that month
+  terminations INTEGER,                   -- people the business terminated that month
+  headcount    INTEGER,                   -- staff headcount that month (the denominator)
+  updated_at   TEXT,
+  PRIMARY KEY (owna_id, month)
+);
+CREATE INDEX IF NOT EXISTS idx_pcturnover_month ON pc_turnover_entry(month);
+
 -- ===== Quality & Compliance (uploaded audit) =====
 CREATE TABLE IF NOT EXISTS qc_audits (
   owna_id     TEXT NOT NULL,
@@ -561,3 +578,54 @@ CREATE TABLE IF NOT EXISTS sessions (
   sess   JSON NOT NULL,             -- the serialised session; see the privacy note above
   expire TEXT NOT NULL              -- ISO-8601 UTC instant; compared with datetime('now'), i.e. in UTC
 );
+
+-- ===== eNPS survey trial (owner's spec, 16 September 2026) =====
+-- Three tables, and the severing between two of them is the whole design. Read the block comment at
+-- the top of services/survey.js before changing anything here.
+--
+-- A round of the survey: all centres at once, opens and closes on a date (Sydney dates, YYYY-MM-DD).
+CREATE TABLE IF NOT EXISTS survey_rounds (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL DEFAULT 'enps',
+  name       TEXT NOT NULL,          -- what a reader calls it, e.g. "eNPS trial — September 2026"
+  opens_on   TEXT NOT NULL,          -- YYYY-MM-DD, inclusive
+  closes_on  TEXT NOT NULL,          -- YYYY-MM-DD, inclusive: after this the link says the survey has closed
+  created_at TEXT
+);
+
+-- ONE: the invitations. A token, the round, the centre it was issued for, whether it has been used.
+-- PRIVACY: no name, no employee id, no email address. The address is needed at SEND TIME only — the
+-- export reads it from payroll, writes it into the file the admin mail-merges from, and drops it. It
+-- is never written to this database. `used_on` is a DAY, not an instant, for the reason set out in the
+-- comment on survey_responses below.
+CREATE TABLE IF NOT EXISTS survey_invitations (
+  token        TEXT PRIMARY KEY,     -- 32 random bytes, base64url; single-use
+  round_id     INTEGER NOT NULL,
+  owna_id      TEXT,                 -- the centre; NULL = a payroll location that is not a centre (support office)
+  centre_label TEXT NOT NULL,        -- what question 1 says: "…recommend Futuro <centre_label>?"
+  issued_on    TEXT,                 -- YYYY-MM-DD the token was created
+  sent_on      TEXT,                 -- YYYY-MM-DD it was last handed to an export / mail sender
+  used_on      TEXT                  -- YYYY-MM-DD it was spent; NULL = still open. NEVER a time of day
+);
+CREATE INDEX IF NOT EXISTS idx_survey_inv_round ON survey_invitations(round_id, owna_id);
+
+-- TWO: the answers. Deliberately severed from the table above — no foreign key, no token, no invitation
+-- id, nothing that identifies which invitation this came from. The only columns the two tables share are
+-- the round and the centre, which are group attributes rather than a joining value, and a centre is only
+-- ever reported once at least SURVEY_MIN_RESPONSES answers stand behind it.
+--
+-- submitted_on is a DAY, not an instant, and so is survey_invitations.used_on. Stored to the second, the
+-- two tables could be sorted by time and lined up row for row, which would undo the severing completely.
+-- The invitation rowid is assigned when the round is generated, not when the token is spent, so it
+-- carries no ordering of responses either.
+CREATE TABLE IF NOT EXISTS survey_responses (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  round_id      INTEGER NOT NULL,
+  owna_id       TEXT,                -- the centre, as above; NULL = not a centre
+  centre_label  TEXT NOT NULL,
+  score         INTEGER NOT NULL,    -- 0..10, question 1, the only required answer
+  reason        TEXT,                -- question 2, free text
+  other         TEXT,                -- question 3, free text
+  submitted_on  TEXT NOT NULL        -- YYYY-MM-DD. NEVER a time of day — see above
+);
+CREATE INDEX IF NOT EXISTS idx_survey_resp_round ON survey_responses(round_id, owna_id);

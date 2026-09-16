@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title><%= typeof title !== 'undefined' ? title : 'Futuro staff survey' %></title>
+  <%# The survey is a public page opened on a personal phone, so it is deliberately standalone: it does
+      not load the dashboard's stylesheet, carry its navigation, or look like an internal tool. %>
+  <style>
+    :root { --ink:#1b2333; --muted:#5b6478; --line:#dfe4ec; --brand:#2f6f4f; --bg:#f6f7f9; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    .wrap { max-width:620px; margin:0 auto; padding:28px 18px 64px; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:26px 22px; box-shadow:0 1px 3px rgba(20,30,60,.06); }
+    .brand { font-weight:700; letter-spacing:-.01em; font-size:19px; margin-bottom:4px; }
+    .brand span { display:block; font-weight:500; font-size:13px; color:var(--muted); letter-spacing:.02em; }
+    h1 { font-size:22px; line-height:1.3; margin:18px 0 8px; }
+    p { margin:0 0 14px; }
+    .muted { color:var(--muted); font-size:14px; }
+    label.q { display:block; font-weight:600; margin:26px 0 8px; font-size:17px; }
+    .req { color:var(--brand); font-weight:500; font-size:13px; }
+    textarea { width:100%; min-height:96px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; font-size:15px; resize:vertical; background:#fff; color:inherit; }
+    textarea:focus, .scale input:focus + span { outline:2px solid var(--brand); outline-offset:1px; }
+    .scale { display:grid; grid-template-columns:repeat(11,minmax(0,1fr)); gap:5px; margin-top:4px; }
+    .scale input { position:absolute; opacity:0; width:0; height:0; }
+    .scale span { display:block; text-align:center; padding:11px 0; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; font-variant-numeric:tabular-nums; }
+    .scale input:checked + span { background:var(--brand); border-color:var(--brand); color:#fff; font-weight:700; }
+    .ends { display:flex; justify-content:space-between; font-size:12.5px; color:var(--muted); margin-top:6px; }
+    button { margin-top:26px; width:100%; padding:13px 16px; font:inherit; font-weight:600; font-size:16px; color:#fff; background:var(--brand); border:0; border-radius:8px; cursor:pointer; }
+    .note { margin-top:22px; padding-top:18px; border-top:1px solid var(--line); font-size:13.5px; color:var(--muted); }
+    .err { background:#fdecec; border:1px solid #f3c3c3; color:#8a2020; padding:10px 12px; border-radius:8px; font-size:14.5px; margin:16px 0 0; }
+    /* Eleven buttons do not fit across a phone. Two rows of six is still one glance, where a wrapped
+       flex row leaves a stranded "10" on a line of its own. */
+    @media (max-width:560px) { .scale { grid-template-columns:repeat(6,minmax(0,1fr)); } .wrap { padding:18px 12px 48px; } .card { padding:20px 16px; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="brand">Futuro Early Learning<span>People &amp; Culture</span></div>

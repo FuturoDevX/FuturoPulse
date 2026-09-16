@@ -149,19 +149,47 @@ router.post("/users/:id/reset", requireAdmin, (req, res) => {
 });
 
 
-// ===== People & Culture entry (admin) =====
-router.get("/pc", requireAdmin, (req, res) => {
+// ===== People & Culture data (admin or ops) =====
+// Admin-or-ops, like every other standing-data form (/admin/wage-budget, /admin/places,
+// /admin/pipeline-targets): from 16 September this page is where the owner's turnover numbers are
+// typed, and an ops manager maintains them the same way they maintain a wage budget.
+router.get("/pc", requireAdminOrOps, (req, res) => {
   const month = (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) ? req.query.month : cal.currentMonth();
   const centres = db.prepare("SELECT owna_id, name FROM centres WHERE ll_id IS NOT NULL AND (opening IS NULL OR opening = 0) ORDER BY name").all();
   const data = {}; db.prepare("SELECT * FROM pc_metrics WHERE month = ?").all(month).forEach((r) => { data[r.owna_id] = r; });
-  // The dashboard reports payroll turnover. The spreadsheet figure is compared here, beside the upload
-  // that produces it, rather than on a card in front of every reader of People & Culture.
-  let turnoverSources = null;
-  try { turnoverSources = m.talentTurnoverSources(null); } catch { turnoverSources = null; }
-  res.render("admin-pc", { title: "P&C Entry", month, centres, data, targets: m.pcTargets(), turnoverSources, msg: req.query.msg, err: req.query.err });
+  // Removed 16 September: the spreadsheet-versus-payroll comparison card. The owner now enters
+  // turnover, so there is one figure and nothing to compare it against.
+  res.render("admin-pc", {
+    title: "P&C Entry", month, thisMonth: cal.currentMonth(), centres, data, targets: m.pcTargets(),
+    turnoverRows: m.pcTurnoverEntries(month),
+    turnoverMonths: m.pcTurnoverMonths(),
+    turnover: m.pcTurnoverReport(null, month),
+    msg: req.query.msg, err: req.query.err,
+  });
+});
+// The owner's turnover numbers: every operating centre saved at once, for the selected month.
+// A field left blank is stored as NOT ENTERED, which is not zero and must come back blank.
+router.post("/pc/turnover", requireAdminOrOps, (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(req.body.month || "") ? req.body.month : cal.currentMonth();
+  const rows = m.pcTurnoverEntries(month);
+  const sent = (k) => Object.prototype.hasOwnProperty.call(req.body, k);
+  db.transaction(() => {
+    for (const c of rows) {
+      // Only touch a centre the submission actually carried. The form posts all three fields for every
+      // centre, so clearing them is still how a row is removed; but a partial POST must not silently
+      // erase the centres it said nothing about.
+      if (!sent("res_" + c.owna_id) && !sent("term_" + c.owna_id) && !sent("head_" + c.owna_id)) continue;
+      m.savePcTurnoverEntry(c.owna_id, month, {
+        resignations: req.body["res_" + c.owna_id],
+        terminations: req.body["term_" + c.owna_id],
+        headcount: req.body["head_" + c.owna_id],
+      });
+    }
+  })();
+  res.redirect("/admin/pc?month=" + encodeURIComponent(month) + "&msg=" + encodeURIComponent("Turnover saved for " + month + "."));
 });
 // Upload the HR SharePoint P&C workbooks (eNPS Data / Turnover Analysis) — same flow as Q&C.
-router.post("/pc/import", requireAdmin, upload.single("workbook"), (req, res) => {
+router.post("/pc/import", requireAdminOrOps, upload.single("workbook"), (req, res) => {
   if (!req.file) return res.redirect("/admin/pc?err=" + encodeURIComponent("No file uploaded."));
   try {
     const r = importPcWorkbook(req.file.buffer);
@@ -170,8 +198,9 @@ router.post("/pc/import", requireAdmin, upload.single("workbook"), (req, res) =>
     res.redirect("/admin/pc?err=" + encodeURIComponent("Import failed: " + e.message));
   }
 });
-// P&C metric DATA comes from the SharePoint upload (POST /pc/import); this only saves target lines.
-router.post("/pc", requireAdmin, (req, res) => {
+// eNPS DATA comes from the SharePoint upload (POST /pc/import) and turnover from POST /pc/turnover;
+// this only saves target lines.
+router.post("/pc", requireAdminOrOps, (req, res) => {
   const num = (v) => { const n = parseFloat(String(v).replace(/[^0-9.-]/g, "")); return isNaN(n) ? null : n; };
   ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"].forEach((k) => { const v = num(req.body["target_" + k]); if (v != null) m.savePcTarget(k, v); });
   res.redirect("/admin/pc?msg=" + encodeURIComponent("Targets saved."));
@@ -185,6 +214,108 @@ router.post("/pc", requireAdmin, (req, res) => {
 // "Unclassified". Read-only for now: the mapping lives in services/classification.js.
 router.get("/pay-scales", requireAdminOrOps, (req, res) => {
   res.render("admin-pay-scales", { title: "Pay classification", scales: m.talentPayScales(), talentSync: sourceSyncFor("talent") });
+});
+
+
+// ===== eNPS survey rounds (admin / ops) =====
+// Round management lives here; the RESULTS live on People & Culture, which is where eNPS already is.
+const survey = require("../services/survey");
+const surveyMail = require("../services/survey-mail");
+
+// The address the magic links must point at. PUBLIC_HOSTNAME is the canonical one when it is set —
+// links in an email outlive the request that made them, so they must not be built from whatever host
+// header a proxy happened to forward.
+function publicBase(req) {
+  const host = (process.env.PUBLIC_HOSTNAME || "").trim();
+  return host ? "https://" + host.replace(/^https?:\/\//, "").replace(/\/+$/, "") : req.protocol + "://" + req.get("host");
+}
+
+let sending = false;
+let lastSend = null; // { at, roundId, sent, failed, error }
+
+function surveyPageModel(req) {
+  const all = survey.rounds();
+  const selected = all.find((r) => String(r.id) === String(req.query.round)) || survey.currentRound() || null;
+  const counts = selected
+    ? db.prepare(`SELECT COUNT(*) invited, SUM(CASE WHEN used_on IS NOT NULL THEN 1 ELSE 0 END) used,
+                         MAX(sent_on) last_sent FROM survey_invitations WHERE round_id = ?`).get(selected.id)
+    : { invited: 0, used: 0, last_sent: null };
+  const base = publicBase(req);
+  return {
+    title: "Staff survey",
+    rounds: all, selected,
+    state: selected ? survey.roundState(selected) : null,
+    counts,
+    senders: surveyMail.senders(),
+    // The draft the owner asked for, shown with a real centre name and a sample link so it can be read
+    // as a staff member would receive it. The sample token is not a real invitation.
+    draft: survey.invitationEmail({
+      centre: "Austral",
+      link: survey.linkFor(base, "EXAMPLE-LINK-NOT-A-REAL-TOKEN"),
+      closesOn: selected ? selected.closes_on : "",
+      contact: req.app.locals.privacyContact,
+    }),
+    base, today: cal.today(), sending, lastSend,
+    minResponses: survey.MIN_RESPONSES,
+    payrollReady: require("../services/eh").eh.hasCreds(),
+    msg: req.query.msg, err: req.query.err,
+  };
+}
+
+router.get("/survey", requireAdminOrOps, (req, res) => res.render("admin-survey", surveyPageModel(req)));
+
+router.post("/survey", requireAdminOrOps, (req, res) => {
+  try {
+    const r = survey.createRound({ name: req.body.name, opens_on: (req.body.opens_on || "").trim(), closes_on: (req.body.closes_on || "").trim() });
+    res.redirect("/admin/survey?round=" + r.id + "&msg=" + encodeURIComponent("Round created. Generate the mail-merge file when you are ready to send."));
+  } catch (e) {
+    res.redirect("/admin/survey?err=" + encodeURIComponent(e.message));
+  }
+});
+
+router.post("/survey/:id/closes", requireAdminOrOps, (req, res) => {
+  try {
+    survey.setClosesOn(parseInt(req.params.id, 10), (req.body.closes_on || "").trim());
+    res.redirect("/admin/survey?round=" + req.params.id + "&msg=" + encodeURIComponent("Closing date updated."));
+  } catch (e) {
+    res.redirect("/admin/survey?round=" + req.params.id + "&err=" + encodeURIComponent(e.message));
+  }
+});
+
+// The mail-merge export. Built in this request from payroll and streamed straight back: the addresses
+// are in the response and in nothing else — no file on the server, no row in the database.
+router.get("/survey/:id/export.csv", requireAdminOrOps, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  try {
+    const { rows, round, noEmail } = await survey.exportRows(id, { baseUrl: publicBase(req) });
+    res.set("Content-Type", "text/csv; charset=utf-8");
+    res.set("Cache-Control", "no-store");
+    res.set("X-Staff-Without-Email", String(noEmail)); // so the count is visible without opening the file
+    res.set("Content-Disposition", `attachment; filename="futuro-enps-${String(round.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${cal.today()}.csv"`);
+    res.send(survey.csv(rows));
+  } catch (e) {
+    res.redirect("/admin/survey?round=" + id + "&err=" + encodeURIComponent("Could not build the export: " + e.message));
+  }
+});
+
+// Send the round from a Futuro mailbox through Microsoft Graph. Backgrounded like the OWNA refresh —
+// 221 messages paced so the tenant does not read them as a compromised mailbox takes about a minute,
+// which is far longer than a request should hold open.
+router.post("/survey/:id/send", requireAdminOrOps, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const avail = surveyMail.graphAvailability();
+  if (!avail.available) return res.redirect("/admin/survey?round=" + id + "&err=" + encodeURIComponent(avail.reason));
+  if (sending) return res.redirect("/admin/survey?round=" + id + "&msg=" + encodeURIComponent("A send is already running."));
+  const round = survey.round(id);
+  if (!round) return res.redirect("/admin/survey?err=" + encodeURIComponent("No such round."));
+  sending = true;
+  const contact = req.app.locals.privacyContact;
+  survey.exportRows(id, { baseUrl: publicBase(req) })
+    .then((out) => surveyMail.graphSendRound(out.rows, { closesOn: round.closes_on, contact }))
+    .then((r) => { lastSend = { at: cal.today(), roundId: id, ...r, error: null }; })
+    .catch((e) => { lastSend = { at: cal.today(), roundId: id, sent: 0, failed: 0, error: e.message }; })
+    .finally(() => { sending = false; });
+  res.redirect("/admin/survey?round=" + id + "&msg=" + encodeURIComponent("Sending started — reload in a minute to see how many went."));
 });
 
 

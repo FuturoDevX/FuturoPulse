@@ -4,6 +4,7 @@ const db = require("../db/db");
 const ai = require("../services/ai");
 const brief = require("../services/ai-briefing");
 const fb = require("../services/feedback");
+const survey = require("../services/survey");
 const askAI = require("../services/ai-ask");
 const { blockScoped, scopedOwnaId, requireAdminOrOps, requireIdentified, canSeeIdentified } = require("../middleware/auth");
 const { lastRun, sourceSyncFor } = require("../services/snapshot");
@@ -266,10 +267,16 @@ router.get("/pc", (req, res) => {
   const full = req.query.full === "1";
   const PC_KEYS = ["enps", "family_nps", "turnover", "checkin_pct", "psych_safety"];
   const metric = PC_KEYS.includes(req.query.metric) ? req.query.metric : "enps";
+  // Turnover is the OWNER'S figure from 16 September: entered per centre per month on /admin/pc and
+  // rolled over twelve months here. It replaces the spreadsheet column in the turnover chart, so the
+  // page carries one turnover number rather than two that disagree.
+  const series = m.pcAllSeries(owna, full);
+  series.turnover = m.pcTurnoverSeries(owna, full);
   res.render("pc", {
     title: "People & Culture",
     centres: scoped ? centresList.filter(c => c.owna_id === scoped) : centresList, owna,
-    series: m.pcAllSeries(owna, full),
+    series,
+    turnover: m.pcTurnoverReport(owna),
     metric, full,
     latest: m.pcForMonth(latestMonth, owna || undefined),
     latestMonth,
@@ -277,11 +284,26 @@ router.get("/pc", (req, res) => {
     // Talent pipeline from payroll (counts only — no name, no employee id). A centre-scoped user gets
     // their own centre; everyone else gets the group, whose casual headcount is the ONLY casual figure
     // anywhere, because a casual works across all the centres rather than at the one payroll files them
-    // under. Turnover is deliberately reported twice, from the HR spreadsheet and from payroll, because
-    // the two count different populations and neither may silently stand in for the other.
+    // under. It carries no turnover PERCENTAGE any more: that is the owner's entered figure above.
     talent: m.talentReport(owna, 24),
-    turnoverSources: m.talentTurnoverSources(owna),
     talentSync: sourceSyncFor("talent"),
+    // ===== The eNPS survey trial =====
+    // A centre-scoped user sees their own centre's figure and nothing else. Below the reporting
+    // threshold nobody sees a per-centre figure at all, scoped or not — services/survey.js decides
+    // that, so the rule is enforced in one place rather than in this view.
+    surveyRounds: survey.rounds(),
+    survey: (function () {
+      const rounds = survey.rounds();
+      const chosen = rounds.find((r) => String(r.id) === String(req.query.round)) || survey.currentRound();
+      return chosen ? survey.results(chosen.id, { scoped }) : null;
+    })(),
+    // Free text is GROUP level and admin/ops only, and the centre it came from is not returned with it.
+    surveyComments: (function () {
+      if (!["admin", "ops_manager"].includes(req.session.user.role)) return null;
+      const rounds = survey.rounds();
+      const chosen = rounds.find((r) => String(r.id) === String(req.query.round)) || survey.currentRound();
+      return chosen ? survey.comments(chosen.id) : null;
+    })(),
     lastRun: lastRun(),
   });
 });

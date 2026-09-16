@@ -324,35 +324,33 @@ test('Talent pipeline — payroll people, counted', async (t) => {
       assert.ok(!html.includes(String(ID_MARKER)));
     });
 
-    await t.test('turnover is reported from BOTH sources, labelled, never silently preferred', async () => {
-      // The HR spreadsheet already holds a turnover figure on a different basis.
+    await t.test('payroll no longer reports a turnover PERCENTAGE anywhere, and nothing compares two', async () => {
+      // Changed 16 September 2026. Turnover used to be reported from two sources — the HR spreadsheet
+      // and payroll — labelled by basis so neither silently stood in for the other, with the comparison
+      // on the P&C admin page. The owner now ENTERS turnover himself (tests/turnover-entry.test.js),
+      // because payroll records that someone left but cannot know whether the business counts it. So
+      // there is one figure, it is his, and there is nothing left to compare: the payroll percentage is
+      // off /pc and the comparison card is off /admin/pc. Payroll's leaver COUNTS and the breakdown by
+      // cessation code stay — they answer why people left, which no entered number does.
       db.prepare("INSERT INTO pc_metrics (owna_id, month, turnover, headcount, updated_at) VALUES ('a','2026-05',12.5,40,datetime('now'))").run();
       db.prepare("INSERT INTO pc_metrics (owna_id, month, turnover, headcount, updated_at) VALUES ('b','2026-05',8.5,30,datetime('now'))").run();
-      const src = freeze(FROZEN, () => m.talentTurnoverSources(null));
-      assert.ok(src.hr && src.payroll, 'both sources must be returned');
-      assert.equal(src.hr.value, 10.5);
-      assert.match(src.hr.source, /spreadsheet/i);
-      assert.match(src.payroll.source, /Employment Hero/i);
-      assert.match(src.payroll.basis, /casuals and never-started excluded/i);
-      assert.equal(src.agree, false);
-      assert.equal(Math.round((src.payroll.value - src.hr.value) * 10) / 10, src.diff);
-      // Changed 15 Sept 2026. People & Culture used to carry a card headed "Turnover has two sources"
-      // whose whole job was to explain that two numbers on the page disagreed. Payroll is now the
-      // figure of record there — it comes from termination records rather than being typed in, and it
-      // is the one the owner's rules apply to. The spreadsheet figure is NOT dropped: it is compared
-      // on the P&C Data admin page, beside the upload that produces it and in front of the person who
-      // maintains it. Both sources must still be visible somewhere, neither corrected to match.
+      assert.equal(typeof m.talentTurnoverSources, 'undefined', 'the two-source reporter is gone');
+
+      const rep = freeze(FROZEN, () => m.talentReport(null, 1));
       const cookie = await login('exec');
       const html = await freeze(FROZEN, () => page('/pc', cookie));
-      assert.doesNotMatch(html, /Turnover has two sources/, 'the explainer card is gone from the reader-facing page');
-      assert.ok(html.includes(src.payroll.value + '%'), 'payroll is the figure reported there');
+      assert.doesNotMatch(html, /Turnover has two sources/);
+      assert.ok(!html.includes(rep.group.turnover12 + '%'), "payroll's rate is not printed on the page");
+      // What payroll still answers is on the page, unchanged.
+      assert.match(html, /Leavers 12m/);
+      assert.match(html, /Why people left/i);
+      assert.match(html, /Voluntary cessation/);
 
       const adminCookie = await login('admin');
       const adminHtml = await freeze(FROZEN, () => page('/admin/pc', adminCookie));
-      assert.match(adminHtml, /this spreadsheet vs payroll/i, 'the comparison moved to the admin page');
-      assert.ok(adminHtml.includes('10.5%'), "the spreadsheet's own figure is shown, not corrected towards payroll");
-      assert.ok(adminHtml.includes(src.payroll.value + '%'), "and payroll's is shown beside it");
-      assert.match(adminHtml, /count different people/i, 'and the page says they are different populations');
+      assert.doesNotMatch(adminHtml, /this spreadsheet vs payroll/i, 'nothing left to compare');
+      assert.ok(!adminHtml.includes('10.5%'), 'the spreadsheet average is not reported either');
+      assert.match(adminHtml, /Turnover — enter the numbers/, 'the owner enters it here instead');
     });
 
     await t.test('a centre-scoped user sees their centre and no group or casual figure', async () => {

@@ -48,7 +48,10 @@
         <div class="side-nav-divider">Admin</div>
         <% if (user.role === 'admin') { %>
           <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>
-          <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">P&amp;C Data</a>
+        <% } %>
+        <%# /admin/pc is requireAdminOrOps since the owner's turnover numbers are entered there. %>
+        <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">P&amp;C Data</a>
+        <% if (user.role === 'admin') { %>
           <a href="/admin/qc" class="<%= currentPath === '/admin/qc' ? 'active' : '' %>">Q&amp;C Data</a>
           <a href="/admin/pipeline-targets" class="<%= currentPath === '/admin/pipeline-targets' ? 'active' : '' %>">Pipeline targets</a>
         <% } %>
@@ -56,6 +59,7 @@
             page they can maintain would be unreachable from the nav. %>
         <a href="/admin/places" class="<%= currentPath === '/admin/places' ? 'active' : '' %>">Approved places</a>
         <a href="/admin/pay-scales" class="<%= currentPath === '/admin/pay-scales' ? 'active' : '' %>">Pay classification</a>
+        <a href="/admin/survey" class="<%= currentPath === '/admin/survey' ? 'active' : '' %>">Staff survey</a>
         <% if (user.role === 'admin') { %>
           <a href="/admin/feedback" class="<%= currentPath === '/admin/feedback' ? 'active' : '' %>">Feedback<% if (locals.fbNewCount) { %> <span class="nav-count"><%= fbNewCount %></span><% } %></a>
         <% } %>

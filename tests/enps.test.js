@@ -1,0 +1,490 @@
+// eNPS survey trial. Harness mirrors tests/week2.test.js: temp DB via DB_PATH, fixture users, app.listen(0).
+// No network: the payroll client is stubbed by replacing the methods on the shared `eh` object, which is
+// the object services/survey.js holds a reference to.
+const test = require('node:test'), assert = require('node:assert/strict');
+const fs = require('fs'), os = require('os'), path = require('path');
+const dir = fs.mkdtempSync(path.join(os.tmpdir(),'pulse-enps-'));
+process.env.DB_PATH=path.join(dir,'test.db');process.env.NODE_ENV='test';
+process.env.ADMIN_EMAIL='test-admin@example.test';process.env.ADMIN_DEFAULT_PASSWORD='FixturePasswordOnly!';
+process.env.SESSION_SECRET='fixture-session-only';process.env.ANTHROPIC_API_KEY='fixture';
+// Graph must be OFF for these tests: the export is the implementation that has to work with nothing set.
+delete process.env.GRAPH_TENANT_ID; delete process.env.GRAPH_CLIENT_ID;
+delete process.env.GRAPH_CLIENT_SECRET; delete process.env.SURVEY_FROM_MAILBOX;
+const db=require('../db/db'), bcrypt=require('bcryptjs');
+const pass='FixturePasswordOnly!';
+// Three operating centres: two big enough to report, one the size of Oran Park.
+for(const [id,name] of [['a','Futuro Childcare & Education - Alpha'],['b','Futuro Childcare & Education - Beta'],['s','Futuro Childcare & Education - Small']])
+  db.prepare('INSERT INTO centres(owna_id,name,capacity,opening,ll_id) VALUES(?,?,100,0,NULL)').run(id,name);
+for(const role of ['viewer','centre','exec','ops_manager','admin'])
+  db.prepare('INSERT INTO users(email,name,password_hash,role,location_id) VALUES(?,?,?,?,?)').run(role+'@example.test',role,bcrypt.hashSync(pass,4),role,role==='centre'?'a':null);
+
+const cal=require('../services/calendar');
+const survey=require('../services/survey');
+const surveyMail=require('../services/survey-mail');
+const surveyRoutes=require('../routes/survey');
+const { eh }=require('../services/eh');
+
+// Freeze the APP's clock only — never the global Date, which deadlocks the runner (see week2).
+function freeze(iso,fn){
+  cal.setNow(iso);
+  const restore=()=>{ cal.setNow(null); };
+  let out; try{ out=fn(); }catch(e){ restore(); throw e; }
+  if(out&&typeof out.then==='function') return out.then((v)=>{restore();return v;},(e)=>{restore();throw e;});
+  restore(); return out;
+}
+const FROZEN='2026-09-16T03:00:00Z', TODAY='2026-09-16'; // 1pm Sydney on the day of the owner's spec
+
+// ---- Payroll stub ---------------------------------------------------------------------------------
+// Employment Hero's location hierarchy: the organisation, then one node per centre, exactly the shape
+// services/eh-talent.js walks.
+const LOCATIONS=[{id:1,name:'Futuro Early Learning',parentId:null},
+  {id:2,name:'Futuro Alpha',parentId:1},{id:3,name:'Futuro Beta',parentId:1},
+  {id:4,name:'Futuro Small',parentId:1},{id:5,name:'Futuro HQ',parentId:1}];
+const at=(centre)=>'Futuro Early Learning / '+centre;
+function emp(id,centre,extra){ return Object.assign({id,emailAddress:'staff'+id+'@personal.example',primaryLocation:at(centre),status:'Active',startDate:'2025-01-06',endDate:null,employmentType:'Full Time'},extra||{}); }
+// 6 at Alpha, 5 at Beta, 4 at Small, 2 at head office = 17 active, plus four who must NOT be invited.
+const EMPLOYEES=[
+  ...[11,12,13,14,15,16].map((i)=>emp(i,'Futuro Alpha')),
+  ...[21,22,23,24,25].map((i)=>emp(i,'Futuro Beta')),
+  ...[31,32,33,34].map((i)=>emp(i,'Futuro Small')),
+  ...[41,42].map((i)=>emp(i,'Futuro HQ')),
+  emp(51,'Futuro Alpha',{status:'Terminated',endDate:'2026-06-30'}),   // left
+  emp(52,'Futuro Beta',{status:'Active',endDate:'2026-09-01'}),        // end date already past
+  emp(53,'Futuro Beta',{status:'Active',endDate:'2026-12-01'}),        // leaving later — still staff today
+  emp(54,'Futuro Small',{emailAddress:''}),                            // no address: counted, never a blank row
+];
+const ACTIVE_WITH_EMAIL=18; // 17 above + employee 53; employee 54 has no address
+eh.allEmployees=async()=>EMPLOYEES.map((e)=>({...e}));
+eh.locations=async()=>LOCATIONS.map((l)=>({...l}));
+eh.hasCreds=()=>true;
+
+const app=require('../server');
+let server,base;
+async function login(role){const r=await fetch(base+'/login',{method:'POST',body:new URLSearchParams({email:role+'@example.test',password:pass}),redirect:'manual'});assert.equal(r.status,302);return r.headers.get('set-cookie').split(';')[0];}
+async function page(url,cookie){const r=await fetch(base+url,{headers:cookie?{cookie}:{},redirect:'manual'});assert.equal(r.status,200,url+' '+r.status);return r.text();}
+
+test('eNPS survey trial',async(t)=>{
+ server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;
+ try {
+
+ // ===== The arithmetic =====
+ await t.test('eNPS is promoters minus detractors, with the passive band in the denominator only',()=>{
+  // 9 and 10 promote, 0-6 detract, 7 and 8 are passive.
+  assert.deepEqual(survey.enps([10,10,9,9]), {n:4,promoters:4,passives:0,detractors:0,enps:100});
+  assert.deepEqual(survey.enps([0,1,6]),      {n:3,promoters:0,passives:0,detractors:3,enps:-100});
+  // All passives: nobody promotes, nobody detracts, and the score is 0 rather than undefined. This is
+  // the band people get wrong — a 7 is not a mild promoter and an 8 is not neutral-and-excluded.
+  assert.deepEqual(survey.enps([7,8,7,8]),    {n:4,promoters:0,passives:4,detractors:0,enps:0});
+  // 10 answers: 5 promoters, 2 passives, 3 detractors -> 50 - 30 = 20. The passives are in the
+  // denominator: drop them and the same answers would read 62 - 38 = 24.
+  const mixed=[10,10,9,9,9,8,7,6,3,0];
+  assert.deepEqual(survey.enps(mixed), {n:10,promoters:5,passives:2,detractors:3,enps:20});
+  // A 6 detracts and a 7 does not — the boundary the definition turns on.
+  assert.equal(survey.enps([6]).detractors,1);
+  assert.equal(survey.enps([7]).detractors,0);
+  assert.equal(survey.enps([7]).passives,1);
+  assert.equal(survey.enps([8]).promoters,0);
+  assert.equal(survey.enps([9]).promoters,1);
+  // Rounded to a whole number, and no answers is no score rather than zero.
+  assert.equal(survey.enps([10,10,0]).enps, 33);   // 66.67 - 33.33
+  assert.equal(survey.enps([]).enps, null);
+  // Anything outside 0..10 is not an eNPS answer and is dropped rather than skewing the denominator.
+  // Number(null) is 0 and a 0 is a detractor, so a missing value must be dropped rather than coerced.
+  assert.equal(survey.enps([10,11,-1,'x',null,undefined,false,'']).n, 1);
+  assert.equal(survey.enps([10,null,null]).detractors, 0);
+ });
+
+ await t.test('the three questions are the owner\'s, verbatim, and only the first is required',()=>{
+  const q=survey.questions('Austral');
+  assert.equal(q[0].text,'How likely are you to recommend Futuro Austral?');
+  assert.equal(q[1].text,'What is the reason for your score?');
+  assert.equal(q[2].text,'Any other feedback you would like to add?');
+  assert.deepEqual(q.map((x)=>x.required),[true,false,false]);
+  // The centre in question 1 is the RESPONDENT'S OWN centre, so the label comes off the centre name.
+  assert.equal(survey.centreLabel('Futuro Childcare & Education - Gledswood Hills'),'Gledswood Hills');
+  assert.equal(survey.centreLabel('Futuro Childcare & Education Cobbitty'),'Cobbitty');
+ });
+
+ // ===== The export =====
+ let round, exported;
+ await t.test('a round can be created and the export has one row per active staff member',async()=>{
+  round=await freeze(FROZEN,()=>survey.createRound({name:'eNPS trial — September 2026',opens_on:TODAY,closes_on:'2026-09-30'}));
+  assert.equal(survey.roundState(round,TODAY),'open');
+  exported=await freeze(FROZEN,()=>survey.exportRows(round.id,{baseUrl:'https://pulse.example'}));
+  assert.equal(exported.rows.length,ACTIVE_WITH_EMAIL,'one row per active staff member with an address');
+  assert.equal(exported.noEmail,1,'the staff member with no address is counted, not silently dropped');
+  // Nobody who has left, and nobody twice.
+  const emails=exported.rows.map((r)=>r.email);
+  assert.equal(new Set(emails).size,emails.length);
+  assert.ok(!emails.includes('staff51@personal.example'),'a terminated staff member must not be invited');
+  assert.ok(!emails.includes('staff52@personal.example'),'someone whose end date has passed must not be invited');
+  assert.ok(emails.includes('staff53@personal.example'),'someone leaving later is still staff today');
+  // Every row carries a working magic link and the respondent's own centre.
+  for(const r of exported.rows){
+   assert.match(r.link,/^https:\/\/pulse\.example\/s\/[A-Za-z0-9_-]{20,}$/);
+   assert.ok(['Alpha','Beta','Small','Early Learning'].includes(r.centre),'unexpected centre label '+r.centre);
+   assert.equal(survey.tokenState(r.token,TODAY).state,'open');
+  }
+  // The question each person is asked names THEIR centre.
+  const alpha=exported.rows.find((r)=>r.email==='staff11@personal.example');
+  assert.equal(alpha.centre,'Alpha');
+  assert.equal(survey.tokenState(alpha.token,TODAY).questions[0].text,'How likely are you to recommend Futuro Alpha?');
+  // A payroll location that is not a centre still gets asked — about Futuro itself.
+  const hq=exported.rows.find((r)=>r.email==='staff41@personal.example');
+  assert.equal(hq.centre,'Early Learning');
+  assert.equal(survey.tokenState(hq.token,TODAY).questions[0].text,'How likely are you to recommend Futuro Early Learning?');
+ });
+
+ await t.test('no email address is written to the database, anywhere',()=>{
+  // Walk every table and every column in the file — sqlite_master, not a hard-coded list, so a table
+  // added later is covered too — and look for anything shaped like one of the fixture addresses.
+  const tables=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map((r)=>r.name);
+  const addresses=EMPLOYEES.map((e)=>e.emailAddress).filter(Boolean);
+  let scanned=0;
+  for(const t of tables){
+   const cols=db.prepare(`PRAGMA table_info(${t})`).all().map((c)=>c.name);
+   for(const row of db.prepare(`SELECT * FROM ${t}`).all()){
+    for(const c of cols){
+     const v=row[c]; if(v==null) continue;
+     const s=String(v); scanned++;
+     for(const a of addresses) assert.ok(!s.includes(a),`${t}.${c} contains the address ${a}`);
+     // And nothing that merely looks like a personal address either — a stored hash of one would
+     // still be a link back to a person, so the shape is banned outright in these two tables.
+     if(t.startsWith('survey_')) assert.ok(!/@/.test(s),`${t}.${c} holds something address-shaped: ${s}`);
+    }
+   }
+  }
+  assert.ok(scanned>0,'the scan found no rows at all, so it proved nothing');
+  // The invitation table holds a token, a round, a centre and three dates. Nothing else.
+  assert.deepEqual(db.prepare('PRAGMA table_info(survey_invitations)').all().map((c)=>c.name),
+    ['token','round_id','owna_id','centre_label','issued_on','sent_on','used_on']);
+ });
+
+ await t.test('generating the export again hands the same person the same link',async()=>{
+  const again=await freeze(FROZEN,()=>survey.exportRows(round.id,{baseUrl:'https://pulse.example'}));
+  assert.equal(again.rows.length,exported.rows.length,'no second batch of tokens was minted');
+  for(const r of again.rows){
+   const first=exported.rows.find((x)=>x.email===r.email);
+   assert.equal(r.token,first.token,'the reminder must reach '+r.centre+' staff with the link they already have');
+  }
+ });
+
+ // ===== The magic link =====
+ await t.test('the magic link needs no login',async()=>{
+  surveyRoutes.resetRateLimit();
+  const tok=exported.rows.find((r)=>r.centre==='Alpha').token;
+  // No cookie at all — not even a session. A 302 to /login would mean requireLogin caught it.
+  const r=await freeze(FROZEN,()=>fetch(base+'/s/'+tok,{redirect:'manual'}));
+  assert.equal(r.status,200);
+  const html=await r.text();
+  assert.match(html,/How likely are you to recommend Futuro Alpha\?/);
+  assert.match(html,/What is the reason for your score\?/);
+  assert.match(html,/Any other feedback you would like to add\?/);
+  assert.match(html,/anonymous/i);
+  // The token is in the URL, so the page must not leak it to another site or be indexed.
+  assert.equal(r.headers.get('referrer-policy'),'no-referrer');
+  assert.match(r.headers.get('x-robots-tag')||'',/noindex/);
+  assert.match(r.headers.get('cache-control')||'',/no-store/);
+  // And it must not carry the dashboard's navigation to someone who is not a dashboard user.
+  assert.doesNotMatch(html,/People &amp; Culture<\/a>|Wages &amp; Margin/);
+ });
+
+ await t.test('a token works once and then does not',async()=>{
+  surveyRoutes.resetRateLimit();
+  const tok=exported.rows.find((r)=>r.centre==='Beta').token;
+  const post=(body)=>freeze(FROZEN,()=>fetch(base+'/s/'+tok,{method:'POST',body:new URLSearchParams(body),redirect:'manual'}));
+  const first=await post({score:'9',reason:'Good team.',other:''});
+  assert.equal(first.status,200);
+  assert.match(await first.text(),/Thank you/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_responses').get().n,1);
+  // Second use: the friendly page, and NO second answer.
+  const second=await post({score:'0',reason:'Trying again.',other:''});
+  assert.equal(second.status,200);
+  assert.match(await second.text(),/isn’t open|isn't open/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_responses').get().n,1,'a spent token must not be able to vote twice');
+  // And the page for it now looks exactly like a link that never existed.
+  const get=await freeze(FROZEN,()=>fetch(base+'/s/'+tok,{redirect:'manual'}));
+  assert.equal(get.status,200);
+  assert.match(await get.text(),/isn’t open|isn't open/);
+ });
+
+ await t.test('an unknown token and a closed round both give the same friendly page',async()=>{
+  surveyRoutes.resetRateLimit();
+  const closed=await freeze(FROZEN,()=>survey.createRound({name:'Last quarter',opens_on:'2026-06-01',closes_on:'2026-06-30'}));
+  const closedTok=survey.newToken();
+  db.prepare('INSERT INTO survey_invitations (token,round_id,owna_id,centre_label,issued_on) VALUES (?,?,?,?,?)').run(closedTok,closed.id,'a','Alpha','2026-06-01');
+  assert.equal(survey.roundState(closed,TODAY),'closed');
+
+  const bodies=[];
+  for(const tok of ['thisTokenWasNeverIssuedAtAll000',closedTok]){
+   const r=await freeze(FROZEN,()=>fetch(base+'/s/'+tok,{redirect:'manual'}));
+   assert.equal(r.status,200,'a bad link is a friendly page, not an error status');
+   const html=await r.text();
+   assert.match(html,/isn’t open|isn't open/);
+   assert.doesNotMatch(html,/expired|already been used by|no such|invalid|unknown/i,'the page must not say WHICH it was');
+   bodies.push(html);
+  }
+  // Byte-identical: an unknown token and a closed round are indistinguishable from the outside, so the
+  // route cannot be used to find out which tokens exist or who has already answered.
+  assert.equal(bodies[0],bodies[1]);
+  // Posting to the closed round writes nothing.
+  const before=db.prepare('SELECT COUNT(*) n FROM survey_responses').get().n;
+  const p=await freeze(FROZEN,()=>fetch(base+'/s/'+closedTok,{method:'POST',body:new URLSearchParams({score:'10'}),redirect:'manual'}));
+  assert.equal(p.status,200);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_responses').get().n,before);
+  // A round that has not opened yet is the same page again.
+  const later=await freeze(FROZEN,()=>survey.createRound({name:'Next quarter',opens_on:'2026-12-01',closes_on:'2026-12-14'}));
+  assert.equal(survey.roundState(later,TODAY),'upcoming');
+ });
+
+ await t.test('the public route is rate-limited',async()=>{
+  surveyRoutes.resetRateLimit();
+  let limited=0;
+  for(let i=0;i<12;i++){
+   const r=await freeze(FROZEN,()=>fetch(base+'/s/aTokenThatDoesNotExistAtAll1',{method:'POST',body:new URLSearchParams({score:'10'}),redirect:'manual'}));
+   if(r.status===429) limited++;
+   await r.text();
+  }
+  assert.ok(limited>0,'a public route that writes must refuse a flood');
+  surveyRoutes.resetRateLimit();
+ });
+
+ // ===== The severing =====
+ let alphaTokens;
+ await t.test('an answer cannot be traced back to an invitation',async()=>{
+  surveyRoutes.resetRateLimit();
+  // Five people at Alpha answer, deliberately NOT in the order their invitations were created.
+  alphaTokens=exported.rows.filter((r)=>r.centre==='Alpha').map((r)=>r.token);
+  const order=[4,2,0,3,1], scores=[10,9,8,7,0];
+  for(let i=0;i<order.length;i++){
+   const r=await freeze(FROZEN,()=>fetch(base+'/s/'+alphaTokens[order[i]],{method:'POST',body:new URLSearchParams({score:String(scores[i]),reason:'answer '+i}),redirect:'manual'}));
+   assert.equal(r.status,200); await r.text();
+  }
+
+  // 1. No foreign key, and the only columns the two tables share are the round and the centre — group
+  //    attributes, not a joining value.
+  assert.equal(db.prepare('PRAGMA foreign_key_list(survey_responses)').all().length,0);
+  const invCols=db.prepare('PRAGMA table_info(survey_invitations)').all().map((c)=>c.name);
+  const respCols=db.prepare('PRAGMA table_info(survey_responses)').all().map((c)=>c.name);
+  assert.deepEqual(invCols.filter((c)=>respCols.includes(c)).sort(),['centre_label','owna_id','round_id']);
+
+  // 2. No token, and no invitation rowid, appears anywhere in the responses.
+  const tokens=new Set(db.prepare('SELECT token FROM survey_invitations').all().map((r)=>r.token));
+  for(const row of db.prepare('SELECT rowid AS rid, * FROM survey_responses').all())
+   for(const v of Object.values(row)) assert.ok(!tokens.has(String(v)),'a response carries a token');
+
+  // 3. Time cannot line the two tables up. Both sides store a DAY, never an instant — stored to the
+  //    second, sorting each table by time would pair them off row for row and undo everything above.
+  for(const r of db.prepare('SELECT used_on FROM survey_invitations WHERE used_on IS NOT NULL').all())
+   assert.match(r.used_on,/^\d{4}-\d{2}-\d{2}$/,'used_on must be a day, not an instant');
+  for(const r of db.prepare('SELECT submitted_on FROM survey_responses').all())
+   assert.match(r.submitted_on,/^\d{4}-\d{2}-\d{2}$/,'submitted_on must be a day, not an instant');
+
+  // 4. And the invitation rowid is no substitute for a timestamp: it is assigned when the round is
+  //    generated, not when the token is spent. Pairing the two tables in their own natural order gets
+  //    the wrong answer, which is the whole point.
+  const usedInOrder=db.prepare("SELECT token FROM survey_invitations WHERE round_id=? AND owna_id='a' AND used_on IS NOT NULL ORDER BY rowid").all(round.id).map((r)=>r.token);
+  const truth=order.map((i)=>alphaTokens[i]);
+  assert.notDeepEqual(usedInOrder,truth,'rowid order must not reproduce the order people answered in');
+
+  // 5. The proof itself: from the database alone, every Alpha response is equally consistent with
+  //    every Alpha invitation that was spent that day. Five candidates for each of five answers —
+  //    nobody, including an administrator holding this file, can say which person wrote which.
+  const alphaResponses=db.prepare("SELECT * FROM survey_responses WHERE round_id=? AND owna_id='a'").all(round.id);
+  assert.equal(alphaResponses.length,5);
+  for(const resp of alphaResponses){
+   const candidates=db.prepare(`SELECT token FROM survey_invitations
+     WHERE round_id=? AND owna_id IS ? AND used_on = ?`).all(resp.round_id,resp.owna_id,resp.submitted_on);
+   assert.equal(candidates.length,5,'an answer must not narrow to fewer invitations than were spent');
+  }
+ });
+
+ // ===== Reporting =====
+ await t.test('the five-response threshold hides a small centre and still counts it in the group',async()=>{
+  surveyRoutes.resetRateLimit();
+  // Small has four staff, like Oran Park. Two of them answer: below the threshold, and both are
+  // detractors, so if the rule leaked their answers out of the group figure it would be obvious.
+  const small=exported.rows.filter((r)=>r.centre==='Small').map((r)=>r.token);
+  for(const [i,tok] of [small[0],small[1]].entries()){
+   const r=await freeze(FROZEN,()=>fetch(base+'/s/'+tok,{method:'POST',body:new URLSearchParams({score:'0',reason:'small centre '+i}),redirect:'manual'}));
+   assert.equal(r.status,200); await r.text();
+  }
+  const res=survey.results(round.id,{today:TODAY});
+  assert.equal(res.min_responses,5);
+  const row=(label)=>res.centres.find((c)=>c.label===label);
+
+  // Alpha: five answers (10,9,8,7,0) -> 40% promote, 20% detract -> 20.
+  assert.equal(row('Alpha').responses,5);
+  assert.equal(row('Alpha').reportable,true);
+  assert.equal(row('Alpha').enps,20);
+
+  // Small: two answers, so no figure at all — not the score, not the bands.
+  assert.equal(row('Small').reportable,false);
+  assert.equal(row('Small').enps,null);
+  assert.equal(row('Small').promoters,null);
+  assert.equal(row('Small').detractors,null);
+  // The response RATE is still shown: it is a count over a count and identifies nobody, and without it
+  // there is nothing to chase a quiet centre with.
+  assert.equal(row('Small').invited,4);
+  assert.equal(row('Small').response_rate,50);
+  // Beta (1 answer), Small (2) and the head-office group (0) are all below it.
+  assert.equal(res.withheld,3);
+  assert.equal(row('Early Learning').reportable,false);
+  assert.equal(row('Early Learning').responses,0);
+
+  // ...and those two answers are still in the group figure. Group is 5 Alpha + 1 Beta (a 9) + 2 Small
+  // zeros = 8 answers: promoters 10,9,9 = 3, detractors 0,0,0 = 3, passives 8,7 = 2 -> 37.5-37.5 = 0.
+  assert.equal(res.group.n,8);
+  assert.equal(res.group.promoters,3);
+  assert.equal(res.group.passives,2);
+  assert.equal(res.group.detractors,3);
+  assert.equal(res.group.enps,0);
+  // Drop the two withheld answers and the same data would read 3/6 - 1/6 = +33. Folding them in is
+  // what the owner asked for, and this is the number that proves it happened.
+  assert.notEqual(res.group.enps,33);
+  assert.equal(res.group.invited,ACTIVE_WITH_EMAIL);
+  assert.equal(res.group.response_rate,Math.round(8/ACTIVE_WITH_EMAIL*1000)/10);
+ });
+
+ await t.test('the free text is group level, and carries no centre',()=>{
+  const c=survey.comments(round.id);
+  assert.ok(c.length>=6);
+  for(const row of c){
+   assert.deepEqual(Object.keys(row).sort(),['other','reason','score','submitted_on']);
+   assert.ok(!('owna_id' in row) && !('centre_label' in row),'a comment must not arrive with its centre');
+  }
+ });
+
+ // ===== Who may see what =====
+ await t.test('a centre-scoped user sees only their own centre\'s result',async()=>{
+  const centreCookie=await login('centre'); // scoped to 'a' = Alpha
+  const html=await freeze(FROZEN,()=>page('/pc?metric=enps',centreCookie));
+  assert.match(html,/eNPS survey/);
+  assert.match(html,/Alpha/);
+  assert.doesNotMatch(html,/Beta/,'a centre user must not see another centre on the page');
+  assert.doesNotMatch(html,/>Small</,'nor a third centre');
+  // Free text is admin/ops only, and this user is neither.
+  assert.doesNotMatch(html,/What people wrote/);
+  // The service enforces it too, not just the view.
+  const scoped=survey.results(round.id,{scoped:'a',today:TODAY});
+  assert.equal(scoped.centres.length,1);
+  assert.equal(scoped.centres[0].label,'Alpha');
+ });
+
+ await t.test('exec sees every centre; admin and ops also see the free text',async()=>{
+  const execCookie=await login('exec');
+  const execHtml=await freeze(FROZEN,()=>page('/pc?metric=enps',execCookie));
+  assert.match(execHtml,/Alpha/); assert.match(execHtml,/Beta/);
+  assert.doesNotMatch(execHtml,/What people wrote/,'free text is admin and ops only');
+  for(const role of ['admin','ops_manager']){
+   const cookie=await login(role);
+   const html=await freeze(FROZEN,()=>page('/pc?metric=enps',cookie));
+   assert.match(html,/What people wrote/,role+' should see the comments');
+   assert.match(html,/small centre 0/,'the comment text itself');
+  }
+ });
+
+ await t.test('the round management page is admin/ops only and offers the export',async()=>{
+  const adminCookie=await login('admin');
+  const html=await freeze(FROZEN,()=>page('/admin/survey',adminCookie));
+  assert.match(html,/eNPS trial — September 2026/);
+  assert.match(html,/Download the mail-merge file/);
+  // The Graph sender is offered as unavailable, with the reason, rather than hidden.
+  assert.match(html,/Microsoft Graph is not configured/);
+  assert.match(html,/GRAPH_TENANT_ID/);
+  // The invitation draft is on the page.
+  assert.match(html,/completely anonymous/);
+  const viewerCookie=await login('viewer');
+  const r=await freeze(FROZEN,()=>fetch(base+'/admin/survey',{headers:{cookie:viewerCookie},redirect:'manual'}));
+  assert.equal(r.status,403,'a viewer must not manage rounds'); await r.text();
+ });
+
+ await t.test('the export downloads as a CSV and the addresses are only in the response',async()=>{
+  const adminCookie=await login('admin');
+  const r=await freeze(FROZEN,()=>fetch(base+'/admin/survey/'+round.id+'/export.csv',{headers:{cookie:adminCookie},redirect:'manual'}));
+  assert.equal(r.status,200);
+  assert.match(r.headers.get('content-type')||'',/text\/csv/);
+  assert.match(r.headers.get('content-disposition')||'',/attachment; filename=/);
+  const body=await r.text();
+  const lines=body.trim().split('\r\n');
+  assert.equal(lines[0],'email,centre,link');
+  assert.equal(lines.length,ACTIVE_WITH_EMAIL+1,'one row per active staff member, plus the header');
+  assert.match(body,/staff11@personal\.example/);
+  assert.match(body,/https?:\/\/[^/]+\/s\/[A-Za-z0-9_-]{20,}/);
+ });
+
+ await t.test('the CSV neutralises anything Excel would run as a formula',()=>{
+  const out=survey.csv([{email:'=cmd|calc!A1',centre:'Alpha',link:'https://x/s/t'},{email:'a"b@x.test',centre:'Be,ta',link:'https://x/s/u'}]);
+  assert.match(out,/"'=cmd\|calc!A1"/,'a leading = must not survive as a formula');
+  assert.match(out,/"a""b@x\.test"/,'a quote is doubled');
+  assert.match(out,/"Be,ta"/,'a comma is quoted, not a new column');
+ });
+
+ // ===== Sending =====
+ await t.test('with no Graph credentials the export is offered and the reason is said out loud',()=>{
+  const a=surveyMail.graphAvailability({});
+  assert.equal(a.available,false);
+  assert.match(a.reason,/GRAPH_TENANT_ID/);
+  assert.match(a.reason,/Mail\.Send/);
+  assert.match(a.reason,/admin consent|admin's consent/);
+  const s=surveyMail.senders({});
+  assert.equal(s.find((x)=>x.key==='export').available,true,'the export must work with nothing configured');
+  assert.equal(s.find((x)=>x.key==='graph').available,false);
+  // All four present: available, and it says which mailbox it will send from.
+  const ok=surveyMail.graphAvailability({GRAPH_TENANT_ID:'t',GRAPH_CLIENT_ID:'c',GRAPH_CLIENT_SECRET:'s',SURVEY_FROM_MAILBOX:'people@futuro.test'});
+  assert.equal(ok.available,true);
+  assert.match(ok.reason,/people@futuro\.test/);
+  // One missing is still unavailable, and names the one that is missing.
+  const partial=surveyMail.graphAvailability({GRAPH_TENANT_ID:'t',GRAPH_CLIENT_ID:'c',GRAPH_CLIENT_SECRET:'s'});
+  assert.equal(partial.available,false);
+  assert.match(partial.reason,/SURVEY_FROM_MAILBOX/);
+  assert.doesNotMatch(partial.reason,/GRAPH_TENANT_ID/);
+ });
+
+ await t.test('the Graph message is shaped the way Graph expects, and keeps no copy',()=>{
+  const b=surveyMail.sendMailBody({to:'a@b.test',subject:'S',body:'B'});
+  assert.equal(b.message.toRecipients[0].emailAddress.address,'a@b.test');
+  assert.equal(b.message.body.contentType,'Text');
+  assert.equal(b.saveToSentItems,false,'221 copies carrying the recipient list is the one thing not to keep');
+  assert.throws(()=>surveyMail.sendMailBody({to:'not-an-address',subject:'S',body:'B'}));
+  assert.throws(()=>surveyMail.sendMailBody({to:'a@b.test',subject:'',body:'B'}));
+ });
+
+ await t.test('the invitation email says who it is from, that it is anonymous, how long, and when it closes',()=>{
+  const m=survey.invitationEmail({centre:'Austral',link:'https://pulse.example/s/tok',closesOn:'2026-09-30',contact:'the Privacy Officer'});
+  assert.match(m.subject,/Futuro Austral/);
+  assert.match(m.subject,/anonymous/i);
+  assert.match(m.body,/Futuro Austral/);
+  assert.match(m.body,/https:\/\/pulse\.example\/s\/tok/);
+  assert.match(m.body,/two minutes/i);
+  assert.match(m.body,/30 September 2026/,'the closing date, written out');
+  assert.match(m.body,/anonymous/i);
+  assert.match(m.body,/don't name colleagues|don’t name colleagues/i);
+  assert.match(m.body,/Futuro Early Learning/,'it has to say who it is from — most of these land in personal inboxes');
+  assert.match(m.body,/the Privacy Officer/);
+  // 217 of 221 addresses are personal, so it must not assume a Futuro sign-in or an intranet.
+  assert.doesNotMatch(m.body,/sign in|log in to the|intranet/i);
+ });
+
+ await t.test('the magic link is public and survives the holding page, and Graph is documented',()=>{
+  const server=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+  // The survey router must be mounted BEFORE requireLogin, or a respondent would be asked to sign in.
+  const mount=server.indexOf('require("./routes/survey")'), guard=server.indexOf('app.use(requireLogin)');
+  assert.ok(mount>0&&guard>0&&mount<guard,'routes/survey.js must be mounted before requireLogin');
+  // And it must be let through MAINTENANCE: the invitation has already gone to personal inboxes with a
+  // closing date on it, so the link cannot start showing an under-construction page.
+  assert.match(server,/req\.path\.startsWith\("\/s\/"\)\s*\)\s*return next\(\);/);
+  // The Graph variables have to be in render.yaml or nobody can switch the second sender on.
+  const render=fs.readFileSync(path.join(__dirname,'..','render.yaml'),'utf8');
+  for(const k of ['GRAPH_TENANT_ID','GRAPH_CLIENT_ID','GRAPH_CLIENT_SECRET','SURVEY_FROM_MAILBOX'])
+   assert.match(render,new RegExp('key: '+k+'[^\\n]*\\n\\s+sync: false'),k+' must be documented as a secret in render.yaml');
+  assert.match(render,/Mail\.Send/,'render.yaml must say which Graph permission to grant');
+ });
+
+ } finally {
+  const { store }=require('../middleware/session');
+  if(store&&store.stopPruning) store.stopPruning();
+  await new Promise((r)=>server.close(r));
+  db.close();
+ }
+});

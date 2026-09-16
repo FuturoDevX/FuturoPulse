@@ -1,0 +1,34 @@
+<%- include('partials/survey-head', { title: title }) %>
+<%# The heading names the survey; question 1 is the first label below. Saying it twice just pushes the
+    scale off the first screen. %>
+<h1>Your say at Futuro <%= label %></h1>
+<p class="muted">Three questions, about two minutes, completely anonymous. Only the first one is required.</p>
+<% if (locals.err) { %><div class="err"><%= err %></div><% } %>
+
+<form method="POST" action="/s/<%= token %>">
+  <label class="q" for="score"><%= questions[0].text %> <span class="req">· required</span></label>
+  <div class="scale">
+    <% for (var i = 0; i <= 10; i++) { %>
+      <label><input type="radio" name="score" value="<%= i %>" <%= i===0 ? 'id="score"' : '' %> required /><span><%= i %></span></label>
+    <% } %>
+  </div>
+  <div class="ends"><span>0 — not at all likely</span><span>10 — extremely likely</span></div>
+
+  <label class="q" for="reason"><%= questions[1].text %></label>
+  <textarea id="reason" name="reason" maxlength="2000" placeholder="Optional"><%= (locals.answers && answers.reason) || '' %></textarea>
+
+  <label class="q" for="other"><%= questions[2].text %></label>
+  <textarea id="other" name="other" maxlength="2000" placeholder="Optional"><%= (locals.answers && answers.other) || '' %></textarea>
+
+  <p class="muted" style="margin-top:16px;">Please don’t name colleagues in your answers, so the comments stay safe for everyone to read.</p>
+
+  <button type="submit">Send my answers</button>
+</form>
+
+<div class="note">
+  <p><strong>This is anonymous.</strong> Your link doesn’t carry your name, your email address or your employee number. Your answers are stored separately from the list of links, with nothing joining the two — so Futuro can see how many people answered at each centre, and cannot see who said what.</p>
+  <p>A centre’s score is only ever reported once at least five people there have answered; below that it isn’t shown at all.</p>
+  <% if (locals.closesLabel) { %><p>The survey closes on <%= closesLabel %>. Your link works once.</p><% } %>
+  <% if (locals.privacyContact) { %><p>Any privacy question: <%= privacyContact %>.</p><% } %>
+</div>
+<%- include('partials/survey-foot') %>

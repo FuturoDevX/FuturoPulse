@@ -1,0 +1,12 @@
+<%- include('partials/survey-head', { title: title }) %>
+<%# Deliberately ONE page for three different situations — a link that was never valid, a link that has
+    already been used, and a round that has closed. Saying which would let anyone with the URL find out
+    whether a token exists, or whether a particular person has already answered. %>
+<h1>This survey link isn’t open</h1>
+<p>Thanks for clicking through. This link either has already been used, or the survey it belongs to has closed.</p>
+<p>If you think that’s wrong — or you never got to answer and would still like to — please let your centre director or People &amp; Culture know, and we’ll send you a fresh link.</p>
+<div class="note">
+  <p>Nothing has been recorded against your name either way: the staff survey is anonymous, and Futuro can’t see who has and hasn’t answered.</p>
+  <% if (locals.privacyContact) { %><p>Any privacy question: <%= privacyContact %>.</p><% } %>
+</div>
+<%- include('partials/survey-foot') %>

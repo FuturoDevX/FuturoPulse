@@ -1,44 +1,77 @@
 <%- include('partials/header', { title: 'P&C Data' }) %>
 <div class="page-head"><div>
   <p class="crumb"><a href="/pc">← People &amp; Culture</a></p>
-  <h1>P&amp;C Data</h1><p class="sub">People &amp; Culture metrics come from the HR spreadsheets on SharePoint — upload them here. No manual per-centre entry.</p>
+  <h1>P&amp;C Data</h1><p class="sub">eNPS comes from the HR spreadsheet on SharePoint. Turnover is entered here, per centre, per month.</p>
 </div></div>
 <% if (msg) { %><div class="flash"><%= msg %></div><% } %>
 <% if (err) { %><div class="flash bad"><%= err %></div><% } %>
 <div class="card">
   <h2 style="margin-top:0;">Import from SharePoint spreadsheets</h2>
-  <p class="sub" style="margin-top:2px;">Upload the HR workbooks straight from SharePoint — a sheet per centre. This fills <strong>eNPS</strong> (from “eNPS Data.xlsx”) and <strong>turnover, headcount &amp; leavers</strong> (from “Turnover Analysis Working Document.xlsx”) across every month/quarter in the file. Upload each workbook once; re-uploading refreshes the figures.</p>
+  <p class="sub" style="margin-top:2px;">Upload the HR workbooks straight from SharePoint — a sheet per centre. This fills <strong>eNPS</strong> (from “eNPS Data.xlsx”) across every quarter in the file. Upload each workbook once; re-uploading refreshes the figures.</p>
   <form method="POST" action="/admin/pc/import" enctype="multipart/form-data" class="user-form">
     <div><label>Workbook (.xlsx)</label><input type="file" name="workbook" accept=".xlsx" required></div>
     <div style="align-self:end;"><button type="submit">Upload &amp; import</button></div>
   </form>
-  <p class="footnote" style="margin-top:10px;">Turnover stores the <strong>rolling 12-month (YoY)</strong> figure as the headline; the month-on-month rate, headcount and leavers are kept alongside it. Values load per the periods in the file (eNPS quarterly, turnover monthly).</p>
+  <p class="footnote" style="margin-top:10px;">Turnover is no longer read from a workbook — it is entered below. A Turnover Analysis workbook still loads without error; its figures are kept but shown nowhere.</p>
 </div>
 
-<% const ts = locals.turnoverSources; %>
-<% if (ts && (ts.hr || ts.payroll)) { %>
-<div class="card">
-  <h2 style="margin-top:0;">Turnover: this spreadsheet vs payroll</h2>
-  <p class="sub" style="margin:0 0 10px;">People &amp; Culture reports the payroll figure, because it is derived from termination records rather than typed in, and it is the one the owner's rules apply to — casuals excluded, and anyone recorded as leaving on or before their start date excluded. The spreadsheet figure is kept and compared here.</p>
-  <div style="overflow-x:auto;"><table>
-    <thead><tr><th>Source</th><th class="num">Turnover</th><th>Basis</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Payroll</strong> <span class="muted">· reported on People &amp; Culture</span></td>
-          <td class="num"><%= ts.payroll && ts.payroll.value != null ? ts.payroll.value + '%' : '—' %></td>
-          <td class="small"><%= ts.payroll ? ts.payroll.source : '—' %></td></tr>
-      <tr><td>This spreadsheet</td>
-          <td class="num"><%= ts.hr && ts.hr.value != null ? ts.hr.value + '%' : '—' %></td>
-          <td class="small"><%= ts.hr ? ts.hr.source : '—' %></td></tr>
-    </tbody>
-  </table></div>
-  <p class="footnote" style="margin-bottom:0;">
-    <% if (ts.hr && ts.payroll && ts.hr.value != null && ts.payroll.value != null) { var gap = Math.round((ts.payroll.value - ts.hr.value) * 10) / 10; %>
-      <% if (gap === 0) { %>The two agree at the moment. They still count different populations, so expect them to move apart.
-      <% } else { %>Payroll is <strong><%= gap > 0 ? '+' + gap : gap %></strong> percentage points against the spreadsheet. Neither is corrected to match the other — they count different people.<% } %>
-    <% } else { %>Only one source has a figure at the moment.<% } %>
-  </p>
+<%
+  // ===== Turnover the OWNER enters — his decision of 16 September 2026 =====
+  // Payroll records that someone left; it cannot know whether the business counts it as turnover. So
+  // the three numbers are typed here, per centre, per month. Blank is NOT zero: a blank month is left
+  // out of the rolling average entirely.
+  const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const mLbl = (mm) => { if(!mm) return ''; const p=mm.split('-'); return new Date(p[0],p[1]-1,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); };
+  // 24 months back from the CURRENT month (the app's Sydney clock, handed in by the route — never the
+  // browser's or the process's), plus any month already entered, newest first.
+  const anchor = (locals.thisMonth && locals.thisMonth > month) ? locals.thisMonth : month;
+  const [ay, am] = anchor.split('-').map(Number);
+  const pick = [];
+  for (let i = 0; i < 24; i++) { const t = ay * 12 + (am - 1) - i; pick.push(String(Math.floor(t/12)).padStart(4,'0') + '-' + String(((t%12)+12)%12 + 1).padStart(2,'0')); }
+  (locals.turnoverMonths || []).forEach(function(mm){ if (pick.indexOf(mm) < 0) pick.push(mm); });
+  if (pick.indexOf(month) < 0) pick.push(month);
+  pick.sort().reverse();
+  const tv = (v) => v == null ? '' : v;
+%>
+<div class="card" id="turnover">
+  <h2 style="margin-top:0;">Turnover — enter the numbers</h2>
+  <p class="sub" style="margin-top:2px;">Resignations, terminations and headcount per centre for one month. <strong>Blank is not zero</strong> — a month left blank is left out of the rolling figure.</p>
+  <form method="GET" action="/admin/pc" style="margin-bottom:14px;">
+    <label style="font-size:13px;">Month
+      <select name="month" onchange="this.form.submit()" style="margin-left:8px;">
+        <% pick.forEach(function(mm){ %><option value="<%= mm %>" <%= mm===month?'selected':'' %>><%= mLbl(mm) %></option><% }); %>
+      </select>
+    </label>
+    <noscript><button type="submit">Go</button></noscript>
+  </form>
+  <form method="POST" action="/admin/pc/turnover">
+    <input type="hidden" name="month" value="<%= month %>">
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th>Centre</th><th class="num">Resignations</th><th class="num">Terminations</th><th class="num">Headcount</th></tr></thead>
+      <tbody>
+        <% (locals.turnoverRows || []).forEach(function(c){ %>
+        <tr>
+          <td><%= shortName(c.name) %></td>
+          <td class="num"><input type="text" inputmode="numeric" name="res_<%= c.owna_id %>" value="<%= tv(c.resignations) %>" style="width:90px;text-align:right;" placeholder="—"></td>
+          <td class="num"><input type="text" inputmode="numeric" name="term_<%= c.owna_id %>" value="<%= tv(c.terminations) %>" style="width:90px;text-align:right;" placeholder="—"></td>
+          <td class="num"><input type="text" inputmode="numeric" name="head_<%= c.owna_id %>" value="<%= tv(c.headcount) %>" style="width:90px;text-align:right;" placeholder="—"></td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <button type="submit" style="margin-top:16px;">Save <%= mLbl(month) %></button>
+  </form>
+  <% const tr = locals.turnover; %>
+  <% if (tr && tr.rates.combined != null) { %>
+  <p class="footnote" style="margin-bottom:0;">Group, rolling 12 months to <%= mLbl(tr.window.to) %>:
+    <strong><%= tr.rates.combined %>%</strong> combined ·
+    <%= tr.rates.resignations == null ? '—' : tr.rates.resignations + '%' %> resignations ·
+    <%= tr.rates.terminations == null ? '—' : tr.rates.terminations + '%' %> terminations —
+    based on <strong><%= tr.window.entered %></strong> of 12 months entered. Shown on <a class="row-link" href="/pc?metric=turnover">People &amp; Culture</a>.</p>
+  <% } else { %>
+  <p class="footnote" style="margin-bottom:0;">Nothing entered yet for the twelve months to <%= mLbl(month) %>, so People &amp; Culture has no turnover figure to show.</p>
+  <% } %>
 </div>
-<% } %>
 
 <form method="POST" action="/admin/pc">
   <div class="card">

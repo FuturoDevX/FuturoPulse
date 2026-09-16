@@ -1,0 +1,102 @@
+<%- include('partials/header', { title: 'Staff survey' }) %>
+<%
+  const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : null);
+  const used = (counts && counts.used) || 0, invited = (counts && counts.invited) || 0;
+  const STATE_LABEL = { upcoming: 'Opens later', open: 'Open now', closed: 'Closed' };
+%>
+<div class="page-head">
+  <div>
+    <h1>Staff survey (eNPS)</h1>
+    <p class="sub">Rounds, invitations and sending · results are on <a href="/pc?metric=enps">People &amp; Culture</a></p>
+  </div>
+</div>
+
+<% if (locals.err) { %><div class="flash bad"><%= err %></div><% } %>
+<% if (locals.msg) { %><div class="flash"><%= msg %></div><% } %>
+
+<% if (selected) { %>
+<div class="card">
+  <h2 style="margin-top:0;"><%= selected.name %> <span class="badge"><%= STATE_LABEL[state] %></span></h2>
+  <div class="stat-row" style="display:flex;gap:26px;flex-wrap:wrap;margin:14px 0 4px;">
+    <div><div class="card-sub" style="margin:0;">Invitations</div><div style="font-size:26px;font-weight:700;"><%= invited %></div></div>
+    <div><div class="card-sub" style="margin:0;">Answered</div><div style="font-size:26px;font-weight:700;"><%= used %></div></div>
+    <div><div class="card-sub" style="margin:0;">Response rate</div><div style="font-size:26px;font-weight:700;"><%= pct(used, invited) == null ? '—' : pct(used, invited) + '%' %></div></div>
+    <div><div class="card-sub" style="margin:0;">Open</div><div style="font-size:16px;font-weight:600;padding-top:8px;"><%= selected.opens_on %> → <%= selected.closes_on %></div></div>
+  </div>
+  <p class="footnote" style="margin-top:12px;">Answered counts spent links. Nothing records whose they were. Per-centre rates are on People &amp; Culture.</p>
+  <form method="POST" action="/admin/survey/<%= selected.id %>/closes" style="margin-top:14px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <div><label style="display:block;font-size:13px;color:var(--muted);">Closing date</label>
+    <input type="date" name="closes_on" value="<%= selected.closes_on %>" required /></div>
+    <button type="submit" class="secondary">Update</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Send the invitations</h2>
+  <% senders.forEach(function(s){ %>
+    <div style="padding:12px 0;border-bottom:1px solid var(--border);">
+      <div style="font-weight:600;"><%= s.label %> <% if (!s.available) { %><span class="badge">not available</span><% } %></div>
+      <div class="muted" style="font-size:13.5px;margin-top:4px;"><%= s.reason %></div>
+      <% if (s.key === 'export') { %>
+        <% if (payrollReady) { %>
+          <a class="secondary-btn" style="display:inline-block;margin-top:10px;text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/survey/<%= selected.id %>/export.csv">Download the mail-merge file</a>
+        <% } else { %>
+          <div class="muted" style="font-size:13.5px;margin-top:8px;">Employment Hero credentials are not configured, so the staff list cannot be read.</div>
+        <% } %>
+      <% } else if (s.available) { %>
+        <form method="POST" action="/admin/survey/<%= selected.id %>/send" style="margin-top:10px;">
+          <button type="submit" class="secondary" <%= sending ? 'disabled' : '' %>><%= sending ? 'Sending…' : 'Send now' %></button>
+        </form>
+      <% } %>
+    </div>
+  <% }); %>
+  <% if (lastSend && lastSend.roundId === selected.id) { %>
+    <p class="footnote" style="margin-top:12px;"><% if (lastSend.error) { %>Last send failed: <%= lastSend.error %><% } else { %>Last send: <%= lastSend.sent %> delivered, <%= lastSend.failed %> failed.<% } %></p>
+  <% } %>
+  <p class="footnote" style="margin-top:12px;">
+    <strong>Keep the file.</strong> Send the reminder by merging the same file again — everyone gets the reminder, because nothing here records who has answered. Generating it a second time gives the same person the same link only while the staff list is unchanged, so a file saved on the day you first sent is the reliable one.
+    Email addresses are read from payroll to write the file and are not stored anywhere in this dashboard.
+  </p>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">The invitation email</h2>
+  <p class="muted" style="font-size:13.5px;">Most staff addresses are personal ones, so this has to say who it is from and why. Copy it into the mail merge; replace the centre name and link with your merge fields.</p>
+  <p style="font-weight:600;margin-top:14px;">Subject</p>
+  <pre style="font-size:13.5px;background:var(--rule-soft,#eef1f6);padding:10px 12px;border-radius:6px;white-space:pre-wrap;margin:4px 0 0;"><%= draft.subject %></pre>
+  <p style="font-weight:600;margin-top:16px;">Body</p>
+  <pre style="font-size:13.5px;background:var(--rule-soft,#eef1f6);padding:12px;border-radius:6px;white-space:pre-wrap;margin:4px 0 0;"><%= draft.body %></pre>
+</div>
+<% } %>
+
+<div class="card">
+  <h2 style="margin-top:0;">New round</h2>
+  <form method="POST" action="/admin/survey" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+    <div style="flex:1 1 240px;"><label style="display:block;font-size:13px;color:var(--muted);">Name</label>
+      <input type="text" name="name" style="width:100%;" placeholder="eNPS trial — September 2026" required /></div>
+    <div><label style="display:block;font-size:13px;color:var(--muted);">Opens</label>
+      <input type="date" name="opens_on" value="<%= today %>" required /></div>
+    <div><label style="display:block;font-size:13px;color:var(--muted);">Closes</label>
+      <input type="date" name="closes_on" required /></div>
+    <button type="submit">Create</button>
+  </form>
+  <p class="footnote" style="margin-top:12px;">After the closing date a link says the survey has closed. A centre is not reported until at least <%= minResponses %> people there have answered; those answers still count in the group figure.</p>
+</div>
+
+<% if (rounds.length > 1) { %>
+<div class="card">
+  <h2 style="margin-top:0;">All rounds</h2>
+  <table class="data">
+    <thead><tr><th>Round</th><th>Open</th><th>Closes</th><th></th></tr></thead>
+    <tbody>
+      <% rounds.forEach(function(r){ %>
+        <tr<%= selected && r.id===selected.id ? ' class="is-selected"' : '' %>>
+          <td><%= r.name %></td><td><%= r.opens_on %></td><td><%= r.closes_on %></td>
+          <td><a class="row-link" href="/admin/survey?round=<%= r.id %>">Manage</a></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+</div>
+<% } %>
+<%- include('partials/footer') %>

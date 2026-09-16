@@ -1,0 +1,9 @@
+<%- include('partials/survey-head', { title: title }) %>
+<h1>Thank you</h1>
+<p>Your answers have been recorded, anonymously. You can close this page — the link won’t work again.</p>
+<div class="note">
+  <p>Your score and comments are stored with your centre and nothing else. There is no name, no email address and no employee number attached to them, and nothing joining them to the link you were sent.</p>
+  <p>Results go to People &amp; Culture. A centre’s score is only reported once at least five people there have answered.</p>
+  <% if (locals.privacyContact) { %><p>Any privacy question: <%= privacyContact %>.</p><% } %>
+</div>
+<%- include('partials/survey-foot') %>

@@ -6,7 +6,7 @@
   const METRICS = [
     { key:'enps',         name:'eNPS',                 cadence:'quarterly',     suf:'',  target: targets.enps,         better:'high', scale:[-100,100] },
     { key:'family_nps',   name:'Family NPS',           cadence:'every 6 months',suf:'',  target: targets.family_nps,   better:'high', scale:[-100,100] },
-    { key:'turnover',     name:'Turnover',             cadence:'monthly',       suf:'%', target: targets.turnover,     better:'low' },
+    { key:'turnover',     name:'Turnover',             cadence:'rolling 12 months · entered', suf:'%', target: targets.turnover,     better:'low' },
     { key:'checkin_pct',  name:'Career check-ins',     cadence:'monthly',       suf:'%', target: targets.checkin_pct,  better:'high' },
     { key:'psych_safety', name:'Psychological safety', cadence:'quarterly',     suf:'',  target: targets.psych_safety, better:'high' },
   ];
@@ -41,7 +41,7 @@
     <% } %>
     <% var _q = owna ? ('&owna='+owna) : ''; %>
     <a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/pc?full=<%= full?'0':'1' %><%= _q %>"><%= full ? 'Show recent only' : 'Explore full history' %></a>
-    <% if (user.role === 'admin') { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/pc">Enter data</a><% } %>
+    <% if (['admin','ops_manager'].includes(user.role)) { %><a class="secondary-btn" style="text-decoration:none;padding:7px 12px;border-radius:6px;" href="/admin/pc">Enter data</a><% } %>
   </div>
 </div>
 
@@ -83,9 +83,162 @@
 </div>
 
 <p class="footnote">
-  Each chart is bucketed by that metric’s own cadence — <strong>eNPS</strong> &amp; <strong>psych safety</strong> by quarter (Q1 25…), <strong>Family NPS</strong> by half-year (H1 25…), <strong>turnover</strong> &amp; <strong>career check-ins</strong> by month. It shows the most recent periods by default; use <strong>Explore full history</strong> (or a card’s “explore all”) to see the whole lifetime. The amber dashed line is the target. Switch between the group average and a single centre with the selector. eNPS &amp; turnover come from the SharePoint upload; the rest are entered in <strong>Admin → P&amp;C Data</strong>. eNPS/Family NPS run −100…100.
+  Each chart is bucketed by that metric’s own cadence — <strong>eNPS</strong> &amp; <strong>psych safety</strong> by quarter (Q1 25…), <strong>Family NPS</strong> by half-year (H1 25…), <strong>turnover</strong> &amp; <strong>career check-ins</strong> by month. It shows the most recent periods by default; use <strong>Explore full history</strong> (or a card’s “explore all”) to see the whole lifetime. The amber dashed line is the target. Switch between the group average and a single centre with the selector. eNPS comes from the SharePoint upload; <strong>turnover</strong> and the rest are entered in <strong>Admin → P&amp;C Data</strong>. eNPS/Family NPS run −100…100.
 </p>
 
+
+<%
+  // ===== Turnover, as the owner enters it (his decision of 16 September 2026) =====
+  // The turnover figure on this page. Payroll can say someone left; it cannot say whether the business
+  // counts it, so the numbers are typed in on /admin/pc and these are three ways of dividing them.
+  const to = locals.turnover;
+  const toPct = function(v){ return v == null ? '—' : v + '%'; };
+  const toRows = to ? (locals.scopedOwnaId ? to.centres.filter(function(c){ return c.owna_id === locals.scopedOwnaId; }) : to.centres).filter(function(c){ return c.window.entered > 0; }) : [];
+%>
+
+<h2 class="section-label" id="turnover">Turnover</h2>
+
+<% if (!to || to.window.entered === 0) { %>
+<div class="card">
+  <p class="muted" style="margin:0;">No turnover has been entered yet<% if (['admin','ops_manager'].includes(user.role)) { %> — <a href="/admin/pc#turnover">enter it</a><% } %>.</p>
+</div>
+<% } else { %>
+<div class="grid kpis">
+  <div class="card stat"><div class="n <%= flag(to.rates.combined, targets.turnover, 'low') %>"><%= toPct(to.rates.combined) %></div><div class="l">Combined<span class="cap">resignations + terminations</span></div></div>
+  <div class="card stat"><div class="n"><%= toPct(to.rates.resignations) %></div><div class="l">Resignations only<span class="cap"><%= to.resignations == null ? 'none entered' : to.resignations + ' over the window' %></span></div></div>
+  <div class="card stat"><div class="n"><%= toPct(to.rates.terminations) %></div><div class="l">Terminations only<span class="cap"><%= to.terminations == null ? 'none entered' : to.terminations + ' over the window' %></span></div></div>
+</div>
+<p class="footnote" style="margin-top:2px;">
+  <% if (to.window.complete) { %>
+    <strong>Rolling 12 months</strong> to <%= mLbl(to.window.to) %> — leavers over the twelve months ÷ average headcount (<%= to.avg_headcount == null ? '—' : to.avg_headcount %>).
+  <% } else { %>
+    <strong>Rolling <%= to.window.entered %> month<%= to.window.entered === 1 ? '' : 's' %></strong>, not a full year — only <%= to.window.entered %> of the twelve months to <%= mLbl(to.window.to) %> ha<%= to.window.entered === 1 ? 's' : 've' %> been entered. Leavers over those months ÷ average headcount (<%= to.avg_headcount == null ? '—' : to.avg_headcount %>).
+  <% } %>
+  <% if (to.month.rates.combined != null) { %> <%= mLbl(to.month.month) %> alone, <strong>monthly</strong> rather than rolling: <%= toPct(to.month.rates.combined) %> combined, <%= toPct(to.month.rates.resignations) %> resignations, <%= toPct(to.month.rates.terminations) %> terminations.<% } %>
+</p>
+
+<% if (!owna && toRows.length) { %>
+<div class="card">
+  <h2 style="margin-top:0;">By centre — rolling to <%= mLbl(to.window.to) %></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Centre</th>
+      <th style="text-align:right;">Combined</th>
+      <th style="text-align:right;">Resignations</th>
+      <th style="text-align:right;">Terminations</th>
+      <th style="text-align:right;">Avg headcount</th>
+      <th style="text-align:right;">Months</th>
+    </tr></thead>
+    <tbody>
+      <% toRows.forEach(function(c){ %>
+      <tr>
+        <td><strong><%= shortName(c.name) %></strong></td>
+        <td style="text-align:right;font-weight:700;"><%= toPct(c.rates.combined) %></td>
+        <td style="text-align:right;"><%= toPct(c.rates.resignations) %></td>
+        <td style="text-align:right;"><%= toPct(c.rates.terminations) %></td>
+        <td style="text-align:right;"><%= c.avg_headcount == null ? '—' : c.avg_headcount %></td>
+        <td style="text-align:right;"><%= c.window.entered %> of 12</td>
+      </tr>
+      <% }); %>
+      <tr style="font-weight:700;border-top:2px solid var(--border);">
+        <td>Group</td>
+        <td style="text-align:right;"><%= toPct(to.rates.combined) %></td>
+        <td style="text-align:right;"><%= toPct(to.rates.resignations) %></td>
+        <td style="text-align:right;"><%= toPct(to.rates.terminations) %></td>
+        <td style="text-align:right;"><%= to.avg_headcount == null ? '—' : to.avg_headcount %></td>
+        <td style="text-align:right;"><%= to.window.entered %> of 12</td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p class="footnote">A blank month is not a zero: it is left out of the average headcount and adds no leavers, which is why a centre can show fewer months than another.</p>
+</div>
+<% } %>
+
+<details class="card working">
+  <summary><strong>The months this is based on</strong> — <%= to.window.entered %> of the twelve to <%= mLbl(to.window.to) %></summary>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>Month</th><th style="text-align:right;">Resignations</th><th style="text-align:right;">Terminations</th><th style="text-align:right;">Headcount</th></tr></thead>
+    <tbody>
+      <% to.months.forEach(function(x){ var blank = x.resignations == null && x.terminations == null && x.headcount == null; %>
+      <tr<%= blank ? ' class="muted"' : '' %>>
+        <td><%= mLbl(x.month) %></td>
+        <td style="text-align:right;"><%= x.resignations == null ? 'not entered' : x.resignations %></td>
+        <td style="text-align:right;"><%= x.terminations == null ? 'not entered' : x.terminations %></td>
+        <td style="text-align:right;"><%= x.headcount == null ? 'not entered' : x.headcount %></td>
+      </tr>
+      <% }); %>
+      <tr style="font-weight:700;border-top:2px solid var(--border);">
+        <td>Rolling total</td>
+        <td style="text-align:right;"><%= to.resignations == null ? '—' : to.resignations %></td>
+        <td style="text-align:right;"><%= to.terminations == null ? '—' : to.terminations %></td>
+        <td style="text-align:right;">avg <%= to.avg_headcount == null ? '—' : to.avg_headcount %></td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p class="footnote" style="margin-bottom:0;">Entered on <a href="/admin/pc#turnover">P&amp;C Data</a>. A month with a headcount of zero, or none entered, produces no rate rather than a division.</p>
+</details>
+<% } %>
+
+
+<% if (locals.survey) { %>
+<%
+  // ===== The eNPS survey trial =====
+  // Anonymous responses collected through a magic link (services/survey.js). Which centre may be shown
+  // at all is decided there, not here: a row arrives with enps === null when too few people answered.
+  const sv = survey, svState = { upcoming: 'opens later', open: 'open now', closed: 'closed' }[sv.state];
+  const svRounds = locals.surveyRounds || [];
+%>
+<h2 class="section-label" id="enps-survey">eNPS survey — <%= sv.round.name %> (<%= svState %>)</h2>
+<div class="card">
+  <div class="grid kpis">
+    <div class="card stat"><div class="n"><%= sv.group.enps == null ? '—' : sv.group.enps %></div><div class="l">eNPS<span class="cap">all centres · promoters (9–10) − detractors (0–6)</span></div></div>
+    <div class="card stat"><div class="n"><%= sv.group.n %></div><div class="l">Responses<span class="cap">of <%= sv.group.invited %> invited</span></div></div>
+    <div class="card stat"><div class="n"><%= sv.group.response_rate == null ? '—' : sv.group.response_rate + '%' %></div><div class="l">Response rate<span class="cap">closes <%= sv.round.closes_on %></span></div></div>
+    <div class="card stat"><div class="n"><%= sv.group.promoters %> / <%= sv.group.passives %> / <%= sv.group.detractors %></div><div class="l">Promoters / passives / detractors<span class="cap">passives count in the denominator only</span></div></div>
+  </div>
+
+  <% if (sv.centres.length) { %>
+  <table style="margin-top:16px;">
+    <thead><tr><th style="text-align:left;">Centre</th><th>eNPS</th><th>Responses</th><th>Invited</th><th>Response rate</th></tr></thead>
+    <tbody>
+      <% sv.centres.forEach(function(c){ %>
+      <tr>
+        <td><%= c.label %></td>
+        <td style="text-align:center;font-weight:600;"><%= c.reportable ? c.enps : '—' %></td>
+        <td style="text-align:center;"><%= c.reportable ? c.responses : '<' + sv.min_responses %></td>
+        <td style="text-align:center;"><%= c.invited %></td>
+        <td style="text-align:center;"><%= c.response_rate == null ? '—' : c.response_rate + '%' %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  <% } %>
+
+  <p class="footnote">
+    A centre is reported only once at least <%= sv.min_responses %> people there have answered<% if (sv.withheld) { %> — <%= sv.withheld %> <%= sv.withheld === 1 ? 'centre is' : 'centres are' %> below that and <%= sv.withheld === 1 ? 'shows' : 'show' %> too few responses to report<% } %>. Those answers are still in the group figure above. Response rates are counts and are shown either way.
+    Responses carry a centre, a score and the free text, and nothing that identifies who sent them — not even which invitation they came from.
+  </p>
+  <% if (svRounds.length > 1) { %>
+  <p class="footnote">Round: <% svRounds.forEach(function(r, i){ %><% if(i) { %> · <% } %><a href="/pc?metric=enps&round=<%= r.id %><%= _q %>"<%= r.id===sv.round.id ? ' style="font-weight:700;"' : '' %>><%= r.name %></a><% }); %></p>
+  <% } %>
+</div>
+
+<% if (locals.surveyComments && surveyComments.length) { %>
+<%# Group level only, and admin/ops only. A comment read beside the centre it came from is a far smaller
+    haystack than one read beside the whole group, so the centre is deliberately not shown with it. %>
+<details class="card working">
+  <summary style="cursor:pointer;font-weight:600;">What people wrote (<%= surveyComments.length %>) — all centres together</summary>
+  <p class="footnote" style="margin-top:10px;">Not attributed to a centre. The survey asks people not to name colleagues.</p>
+  <% surveyComments.forEach(function(c){ %>
+    <div style="border-top:1px solid var(--border);padding:12px 0;">
+      <div class="muted" style="font-size:12px;">Scored <%= c.score %></div>
+      <% if (c.reason) { %><p style="margin:6px 0 0;"><%= c.reason %></p><% } %>
+      <% if (c.other) { %><p style="margin:6px 0 0;" class="muted"><%= c.other %></p><% } %>
+    </div>
+  <% }); %>
+</details>
+<% } %>
+<% } %>
 
 <%
   // ===== Talent pipeline (Employment Hero payroll, counts only) =====
@@ -97,7 +250,6 @@
   const tHead = talent ? (tScoped ? (tMine ? tMine.headcount : 0) : talent.group.headcount) : 0;
   const tLeavers = talent ? (tScoped ? (tMine ? tMine.leavers12 : 0) : talent.group.leavers12) : 0;
   const tStarters = talent ? (tScoped ? (tMine ? tMine.starters12 : 0) : talent.group.starters12) : 0;
-  const tTurn = talent ? (tScoped ? (tMine ? tMine.turnover12 : null) : talent.group.turnover12) : null;
   const tNever = talent ? (tScoped ? (tMine ? tMine.never_started12 : 0) : talent.recon.window.never_started) : 0;
   const tVolPct = (talent && talent.totals.last12) ? Math.round(talent.totals.voluntary_last12 / talent.totals.last12 * 1000) / 10 : null;
   const tMonthLbl = talent ? mLbl(talent.month) : '';
@@ -119,7 +271,6 @@
   <% } %>
   <div class="card stat"><div class="n"><%= tStarters %></div><div class="l">Starters<span class="cap">last 12 months</span></div></div>
   <div class="card stat"><div class="n"><%= tLeavers %></div><div class="l">Leavers<span class="cap">last 12 months, turnover basis</span></div></div>
-  <div class="card stat"><div class="n"><%= tTurn == null ? '—' : tTurn + '%' %></div><div class="l">Turnover<span class="cap">rolling 12 months · leavers ÷ average headcount</span></div></div>
   <% if (!tScoped && tVolPct != null) { %>
   <div class="card stat"><div class="n"><%= tVolPct %>%</div><div class="l">Voluntary<span class="cap">share of the last 12 months' leavers</span></div></div>
   <% } %>
@@ -146,7 +297,7 @@
   <p class="footnote" style="margin-top:12px;">
     <strong>There is no separate “resignation” code in payroll — a resignation is recorded as <em>Voluntary cessation</em></strong>, so the absence of a “Resignation” row below is not missing data.
     The exclusions are a test of the dates, not of tenure: someone who worked a fortnight and left is turnover.
-    Turnover % is leavers over the rolling twelve months divided by the average month-end permanent headcount across them.
+    The turnover PERCENTAGE on this page is the owner's, entered per centre per month; these counts are payroll's, and answer a different question — why people left.
   </p>
 </details>
 
@@ -163,7 +314,6 @@
       <% if (showMix) { talent.classLabels.forEach(function(r){ %><th style="text-align:right;"><%= r.label %></th><% }); } %>
       <th style="text-align:right;">Starters 12m</th>
       <th style="text-align:right;">Leavers 12m</th>
-      <th style="text-align:right;">Turnover</th>
     </tr></thead>
     <tbody>
       <% talent.centres.forEach(function(c){ %>
@@ -173,7 +323,6 @@
         <% if (showMix) { c.classes.forEach(function(r){ %><td style="text-align:right;<%= r.key === 'unclassified' && r.n ? 'font-weight:700;' : '' %>"><%= r.n %></td><% }); } %>
         <td style="text-align:right;"><%= c.starters12 %></td>
         <td style="text-align:right;"><%= c.leavers12 %></td>
-        <td style="text-align:right;"><%= c.turnover12 == null ? '—' : c.turnover12 + '%' %><% if (c.partial_window) { %> <span class="tag-fut" title="This centre was not open for the whole 12 months, so the average headcount it is divided by is small">part year</span><% } %></td>
       </tr>
       <% }); %>
       <% if (!tScoped) { %>
@@ -183,7 +332,6 @@
         <% if (showMix) { talent.group.classes.forEach(function(r){ %><td style="text-align:right;"><%= r.n %></td><% }); } %>
         <td style="text-align:right;"><%= talent.group.starters12 %></td>
         <td style="text-align:right;"><%= talent.group.leavers12 %></td>
-        <td style="text-align:right;"><%= talent.group.turnover12 == null ? '—' : talent.group.turnover12 + '%' %></td>
       </tr>
       <% } %>
     </tbody>
@@ -268,13 +416,10 @@
   <p class="footnote">Monthly counts on the turnover basis: casuals and never-started people are not in any of these three lines. Voluntary is the subset of leavers recorded as <em>Voluntary cessation</em>.</p>
 </div>
 
-<% if (turnoverSources && (turnoverSources.hr || turnoverSources.payroll)) { %>
-<%# Removed 15 Sept 2026: a card headed "Turnover has two sources", whose only job was to explain
-    that the payroll figure and the HR spreadsheet figure disagree. Payroll is now the number of
-    record on this page — it is derived from termination records rather than typed in, and it is the
-    one the owner's rules (casuals out, never-started out) actually apply to. The spreadsheet figure
-    still loads and is compared on the P&C Data admin page, where the person who maintains it works. %>
-<% } %>
+<%# Removed 16 September 2026, with the owner's decision to enter turnover himself: the payroll-derived
+    turnover percentage, and the card comparing it with the HR spreadsheet. There is one turnover figure
+    now — his, above — so there was nothing left to compare. Payroll's leaver COUNTS and the breakdown by
+    cessation code stay: they answer why people left, which no entered number does. %>
 
 <% if (locals.talentSync) { %>
 <p class="footnote">

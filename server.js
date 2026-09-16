@@ -51,6 +51,10 @@ app.use((req, res, next) => {
   // Let people sign in (and out), and let static assets through, or an admin cannot reach the login
   // form or the page cannot style itself.
   if (req.path === "/login" || req.path === "/logout" || req.path === "/healthz") return next();
+  // A staff survey link is not part of the dashboard and must keep working while the dashboard is
+  // behind the holding page: the invitation has already gone to 221 personal inboxes with a closing
+  // date on it, and an educator who clicks it must get the survey, not an under-construction notice.
+  if (req.path.startsWith("/s/")) return next();
   const user = req.session && req.session.user;
   if (user && MAINTENANCE_ROLES.includes(user.role)) return next();
   res.status(503);
@@ -61,6 +65,10 @@ app.use((req, res, next) => {
 
 // Public
 app.use("/", require("./routes/auth"));
+// Also public, and deliberately so: the eNPS survey magic link (/s/:token). A respondent is an educator
+// on their own phone, not a dashboard user — requiring a login would both defeat the point and destroy
+// the anonymity, because the app would then know who was answering. It is rate-limited in the router.
+app.use("/", require("./routes/survey"));
 
 // Everything below requires a login
 app.use(requireLogin);
