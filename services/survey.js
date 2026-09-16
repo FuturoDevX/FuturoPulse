@@ -29,7 +29,9 @@
 // The round and the centre ARE carried on both sides, because per-centre reporting is the point. They
 // are group attributes, not a joining value: the smallest centre has four staff, which is exactly why
 // MIN_RESPONSES below exists and why no centre is reported until at least that many answers stand
-// behind it.
+// behind it. A centre with fewer than MIN_RESPONSES people invited can never reach that threshold, so
+// its answers are not carried under it at all — see reportingBucket() — and a withheld centre publishes
+// no invited count and no response rate, because the two together give the withheld count back exactly.
 // ================================================================================
 const crypto = require("crypto");
 const db = require("../db/db");
@@ -165,6 +167,19 @@ const cleanText = (v) => {
   return s || null;
 };
 
+// Which centre an answer may be FILED under, which is not always the centre the invitation was issued
+// for. A centre with fewer than MIN_RESPONSES people invited can never reach the reporting threshold, so
+// a per-centre figure for it will never be published — while the stored row would still read "one of
+// these four named people wrote this" to anyone holding the file or writing the next query against it.
+// Carrying the centre there buys no report and costs the guarantee, so the answer is filed under the
+// group bucket instead, where it counts in the group figure exactly as before.
+function reportingBucket(inv) {
+  const n = db.prepare("SELECT COUNT(*) n FROM survey_invitations WHERE round_id = ? AND owna_id IS ?").get(inv.round_id, inv.owna_id).n;
+  return n >= MIN_RESPONSES
+    ? { owna_id: inv.owna_id, centre_label: inv.centre_label }
+    : { owna_id: null, centre_label: NO_CENTRE_LABEL };
+}
+
 // Record an answer. Returns { ok: true } or { ok: false, reason: 'closed' | 'score' }.
 //
 // >>> THE SEVERING HAPPENS HERE. <<<
@@ -187,8 +202,9 @@ function submit(token, answers, today = cal.today()) {
     // both write an answer.
     const spent = db.prepare("UPDATE survey_invitations SET used = 1 WHERE token = ? AND used = 0").run(token).changes;
     if (!spent) return false;
+    const bucket = reportingBucket(inv);
     db.prepare(`INSERT INTO survey_responses (round_id, owna_id, centre_label, score, reason, other, submitted_on)
-      VALUES (?,?,?,?,?,?,?)`).run(inv.round_id, inv.owna_id, inv.centre_label, score, reason, other, today);
+      VALUES (?,?,?,?,?,?,?)`).run(inv.round_id, bucket.owna_id, bucket.centre_label, score, reason, other, today);
     return true;
   })();
   return done ? { ok: true } : { ok: false, reason: "closed" };
@@ -219,7 +235,8 @@ function enps(scores) {
 // owna_id: they get their own centre's row and nothing else.
 //
 // A centre with fewer than MIN_RESPONSES answers is shown as "too few responses to report" — its
-// answers still count in the group total, they are simply not reported as that centre's figure.
+// answers still count in the group total, they are simply not reported as that centre's figure. That
+// covers the invited count and the response rate as well as the score: see the comment below.
 function results(roundId, { scoped = null, today = cal.today() } = {}) {
   const r = round(roundId);
   if (!r) return null;
@@ -242,10 +259,14 @@ function results(roundId, { scoped = null, today = cal.today() } = {}) {
     const e = enps(c.scores);
     const reportable = e.n >= MIN_RESPONSES;
     return {
-      owna_id: c.owna_id, label: c.label, invited: c.invited, responses: e.n,
-      // The response rate is a count over a count and identifies nobody, so it is shown even for a
-      // centre whose score is withheld — otherwise the chase-up has no number to work from.
-      response_rate: c.invited ? Math.round((e.n / c.invited) * 1000) / 10 : null,
+      owna_id: c.owna_id, label: c.label, responses: e.n,
+      // The invited count and the response rate go too. Neither identifies anybody alone, but the rate
+      // is rounded to 0.1% — a bijection onto the response count at any headcount Futuro has — so the
+      // pair hands back the exact number the threshold just withheld: four invited at 25% is "one of
+      // these four named people answered". The chase-up numbers live on /admin/survey instead, which is
+      // admin/ops only and is where chasing happens.
+      invited: reportable ? c.invited : null,
+      response_rate: reportable && c.invited ? Math.round((e.n / c.invited) * 1000) / 10 : null,
       reportable,
       enps: reportable ? e.enps : null,
       promoters: reportable ? e.promoters : null,

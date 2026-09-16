@@ -255,6 +255,13 @@ function surveyPageModel(req) {
       closesOn: selected ? selected.closes_on : "",
       contact: req.app.locals.privacyContact,
     }),
+    // Per-centre chase-up numbers. They live here, behind requireAdminOrOps, and not on People &
+    // Culture: a small centre's exact count shown to every logged-in user is close to naming the people
+    // in it. Counted off the invitation table alone — spent links, never answers — so nothing here
+    // touches what anybody said.
+    centreCounts: selected ? db.prepare(`SELECT centre_label, COUNT(*) invited, SUM(used) answered
+                                         FROM survey_invitations WHERE round_id = ?
+                                         GROUP BY owna_id, centre_label ORDER BY centre_label`).all(selected.id) : [],
     base, today: cal.today(), sending, lastSend,
     minResponses: survey.MIN_RESPONSES,
     payrollReady: require("../services/eh").eh.hasCreds(),

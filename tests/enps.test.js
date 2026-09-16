@@ -410,14 +410,11 @@ test('eNPS survey trial',async(t)=>{
   assert.equal(row('Small').enps,null);
   assert.equal(row('Small').promoters,null);
   assert.equal(row('Small').detractors,null);
-  // The response RATE is still shown: it is a count over a count and identifies nobody, and without it
-  // there is nothing to chase a quiet centre with.
-  assert.equal(row('Small').invited,4);
-  assert.equal(row('Small').response_rate,50);
-  // Beta (1 answer), Small (2) and the head-office group (0) are all below it.
+  // Beta (1 answer), Small and the group bucket are all below it. Small's two answers are filed under
+  // the group bucket, because a four-person centre can never be reported — see the test after next.
   assert.equal(res.withheld,3);
   assert.equal(row('Early Learning').reportable,false);
-  assert.equal(row('Early Learning').responses,0);
+  assert.equal(row('Early Learning').responses,2);
 
   // ...and those two answers are still in the group figure. Group is 5 Alpha + 1 Beta (a 9) + 2 Small
   // zeros = 8 answers: promoters 10,9,9 = 3, detractors 0,0,0 = 3, passives 8,7 = 2 -> 37.5-37.5 = 0.
@@ -431,6 +428,69 @@ test('eNPS survey trial',async(t)=>{
   assert.notEqual(res.group.enps,33);
   assert.equal(res.group.invited,ACTIVE_WITH_EMAIL);
   assert.equal(res.group.response_rate,Math.round(8/ACTIVE_WITH_EMAIL*1000)/10);
+ });
+
+ await t.test('a withheld centre publishes nothing that gives its response count back',async()=>{
+  // The threshold was cosmetic: the page printed "<5" beside the invited count and the response rate,
+  // and invited x rate is the count exactly — four invited at 50% reads "two of these four named
+  // people answered". The rate is rounded to 0.1%, which is a bijection onto the count at every
+  // headcount Futuro has, so it is not a near miss. Both halves of the pair have to go.
+  const res=survey.results(round.id,{today:TODAY});
+  for(const c of res.centres.filter((x)=>!x.reportable)){
+   assert.equal(c.invited,null,c.label+': an invited count beside a rate rebuilds the withheld count');
+   assert.equal(c.response_rate,null,c.label+': a rate beside an invited count rebuilds the withheld count');
+  }
+  // A reportable centre still carries both — the fix must withhold, not blank the page.
+  const alpha=res.centres.find((c)=>c.label==='Alpha');
+  assert.equal(alpha.invited,6);
+  assert.equal(alpha.response_rate,83.3);
+
+  // And on the page itself. /pc has no role gate beyond requireLogin, so a plain viewer renders this.
+  const viewerCookie=await login('viewer');
+  const html=await freeze(FROZEN,()=>page('/pc?metric=enps',viewerCookie));
+  const rowOf=(label)=>{const m=html.match(new RegExp('<tr>\\s*<td>'+label+'</td>[\\s\\S]*?</tr>'));assert.ok(m,'no row for '+label);return m[0];};
+  const small=rowOf('Small');
+  assert.match(small,/&lt;5/,'the row must still say too few responses to report');
+  assert.doesNotMatch(small,/>\s*4\s*</,'the invited count is printed for a withheld centre');
+  assert.doesNotMatch(small,/%/,'a response rate is printed for a withheld centre');
+  assert.match(rowOf('Alpha'),/83\.3%/,'a reportable centre still shows its rate');
+ });
+
+ await t.test('a centre too small to ever be reported is not written onto the answer',()=>{
+  // Small has four staff, like Oran Park: it can never reach a five-response threshold, so no
+  // per-centre figure will ever be published for it. Tagging its answers with it therefore buys
+  // nothing, and costs the guarantee — the stored row would read "one of these four named people
+  // wrote this" to anyone holding the file. The answer goes to the group bucket, where it still counts.
+  const rows=db.prepare("SELECT owna_id, centre_label FROM survey_responses WHERE reason LIKE 'small centre%'").all();
+  assert.equal(rows.length,2);
+  for(const r of rows){
+   assert.equal(r.owna_id,null,'a four-person centre must not be written onto an answer');
+   assert.equal(r.centre_label,survey.NO_CENTRE_LABEL);
+  }
+  // Stated as the rule rather than the fixture: no centre invited fewer than MIN_RESPONSES people
+  // appears on a stored response anywhere in the file.
+  const tooSmall=db.prepare('SELECT round_id, owna_id FROM survey_invitations GROUP BY round_id, owna_id HAVING COUNT(*) < ?')
+    .all(survey.MIN_RESPONSES).filter((r)=>r.owna_id!=null);
+  assert.ok(tooSmall.length,'the fixture must contain a centre below the threshold, or this proves nothing');
+  for(const r of tooSmall)
+   assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_responses WHERE round_id = ? AND owna_id = ?').get(r.round_id,r.owna_id).n,0,
+     'centre '+r.owna_id+' has too few people to report and is on a stored answer');
+  // A centre big enough to report keeps its centre, or per-centre reporting would not work at all.
+  assert.ok(db.prepare("SELECT COUNT(*) n FROM survey_responses WHERE owna_id='a'").get().n>=5);
+ });
+
+ await t.test('the exact per-centre numbers are on the admin page, which is admin/ops only',async()=>{
+  const adminCookie=await login('admin');
+  const html=await freeze(FROZEN,()=>page('/admin/survey?round='+round.id,adminCookie));
+  const m=html.match(/<tr>\s*<td>Small<\/td>[\s\S]*?<\/tr>/);
+  assert.ok(m,'the chase-up table must name every centre, including the small ones');
+  assert.match(m[0],/>4</,'invited');
+  assert.match(m[0],/>2</,'answered');
+  assert.match(m[0],/50%/,'response rate');
+  // And it is not reachable without the role: the route is requireAdminOrOps.
+  const viewerCookie=await login('viewer');
+  const r=await freeze(FROZEN,()=>fetch(base+'/admin/survey?round='+round.id,{headers:{cookie:viewerCookie},redirect:'manual'}));
+  assert.equal(r.status,403); await r.text();
  });
 
  await t.test('the free text is group level, and carries no centre',()=>{

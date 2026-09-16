@@ -209,7 +209,7 @@
         <td><%= c.label %></td>
         <td style="text-align:center;font-weight:600;"><%= c.reportable ? c.enps : '—' %></td>
         <td style="text-align:center;"><%= c.reportable ? c.responses : '<' + sv.min_responses %></td>
-        <td style="text-align:center;"><%= c.invited %></td>
+        <td style="text-align:center;"><%= c.invited == null ? '—' : c.invited %></td>
         <td style="text-align:center;"><%= c.response_rate == null ? '—' : c.response_rate + '%' %></td>
       </tr>
       <% }); %>
@@ -218,8 +218,8 @@
   <% } %>
 
   <p class="footnote">
-    A centre is reported only once at least <%= sv.min_responses %> people there have answered<% if (sv.withheld) { %> — <%= sv.withheld %> <%= sv.withheld === 1 ? 'centre is' : 'centres are' %> below that and <%= sv.withheld === 1 ? 'shows' : 'show' %> too few responses to report<% } %>. Those answers are still in the group figure above. Response rates are counts and are shown either way.
-    Responses carry a centre, a score and the free text, and nothing that identifies who sent them — not even which invitation they came from.
+    A centre is reported only once at least <%= sv.min_responses %> people there have answered<% if (sv.withheld) { %> — <%= sv.withheld %> <%= sv.withheld === 1 ? 'centre is' : 'centres are' %> below that and <%= sv.withheld === 1 ? 'shows' : 'show' %> too few responses to report<% } %>. Those answers are still in the group figure above. A withheld centre shows no invited count or rate either — the two together give the exact number back. Chase-up numbers are on the staff survey admin page.
+    Responses carry a score and the free text and nothing that identifies who sent them — not even which invitation they came from. A centre too small to ever be reported is not stored on the answer at all.
   </p>
   <% if (svRounds.length > 1) { %>
   <p class="footnote">Round: <% svRounds.forEach(function(r, i){ %><% if(i) { %> · <% } %><a href="/pc?metric=enps&round=<%= r.id %><%= _q %>"<%= r.id===sv.round.id ? ' style="font-weight:700;"' : '' %>><%= r.name %></a><% }); %></p>

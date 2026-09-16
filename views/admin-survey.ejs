@@ -23,7 +23,22 @@
     <div><div class="card-sub" style="margin:0;">Response rate</div><div style="font-size:26px;font-weight:700;"><%= pct(used, invited) == null ? '—' : pct(used, invited) + '%' %></div></div>
     <div><div class="card-sub" style="margin:0;">Open</div><div style="font-size:16px;font-weight:600;padding-top:8px;"><%= selected.opens_on %> → <%= selected.closes_on %></div></div>
   </div>
-  <p class="footnote" style="margin-top:12px;">Answered counts spent links. Nothing records whose they were. Per-centre rates are on People &amp; Culture.</p>
+  <% if (centreCounts.length) { %>
+  <table class="data" style="margin-top:16px;">
+    <thead><tr><th style="text-align:left;">Centre</th><th>Invitations</th><th>Answered</th><th>Response rate</th></tr></thead>
+    <tbody>
+      <% centreCounts.forEach(function(c){ %>
+      <tr>
+        <td><%= c.centre_label %></td>
+        <td style="text-align:center;"><%= c.invited %></td>
+        <td style="text-align:center;"><%= c.answered || 0 %></td>
+        <td style="text-align:center;"><%= pct(c.answered || 0, c.invited) == null ? '—' : pct(c.answered || 0, c.invited) + '%' %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  <% } %>
+  <p class="footnote" style="margin-top:12px;">Answered counts spent links. Nothing records whose they were. These per-centre counts are here and not on <a href="/pc?metric=enps">People &amp; Culture</a>, which every logged-in user can open: at a four-person centre an exact count is close to naming people. The score for a centre appears there once at least <%= minResponses %> people have answered.</p>
   <form method="POST" action="/admin/survey/<%= selected.id %>/closes" style="margin-top:14px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
     <div><label style="display:block;font-size:13px;color:var(--muted);">Closing date</label>
     <input type="date" name="closes_on" value="<%= selected.closes_on %>" required /></div>
