@@ -653,6 +653,14 @@ CREATE INDEX IF NOT EXISTS idx_survey_resp_round ON survey_responses(round_id, o
 -- token was spent — survey_invitations.sent_on already records exactly that event at exactly that
 -- granularity, so this adds no new kind of fact. The day a token is USED is still recorded nowhere:
 -- that is the value that would join these rows to survey_responses, and it does not exist.
+--
+-- AND NO ORDER EITHER — the same rule as survey_invitations above, which this table has one more way to
+-- break. A row is written as its message is sent, so ROW ORDER IS SEND ORDER: send in payroll order and
+-- `ORDER BY rowid` hands back the round in payroll order, which pairs every token to a name from this
+-- file plus a payroll call, with no key and nothing kept. So the sender sorts its queue by token
+-- (graphSendRound), and WITHOUT ROWID makes the file itself agree: rows are stored physically in the
+-- token's B-tree order, so the bytes on the page carry no arrival order to read even if a future caller
+-- hands them over in some other one. There is no rowid here to order by, by construction.
 CREATE TABLE IF NOT EXISTS survey_deliveries (
   token      TEXT PRIMARY KEY,          -- the invitation's token; the only identifier in this table
   round_id   INTEGER NOT NULL,
@@ -661,5 +669,5 @@ CREATE TABLE IF NOT EXISTS survey_deliveries (
   last_error TEXT,                      -- an error CLASS ('throttled', 'forbidden', …) — never a
                                         -- message, a body or an address
   updated_on TEXT                       -- YYYY-MM-DD. NEVER a time of day — see above
-);
+) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_survey_deliveries_round ON survey_deliveries(round_id, status);

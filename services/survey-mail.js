@@ -264,6 +264,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms || 0)));
 //
 // `sleep` and `now` are injectable so the pacing and the Retry-After behaviour can be tested without
 // spending eight minutes of wall clock in the test runner.
+//
+// THE QUEUE IS SORTED BY TOKEN, and that is a privacy control rather than a tidiness one. `rows` arrives
+// in PAYROLL-ID ORDER (exportRows -> activeStaff sorts by employee id), a delivery is written per row as
+// it is sent, and insertion order is an order this table cannot help recording. Send in payroll order and
+// the log's row order IS the payroll list: pair the two off and every token has a name on it, recovered
+// from a copy of the database plus the same eh.allEmployees() call the export makes — WITHOUT the assign
+// key, which is the one thing the schema says must not be kept with the backups. That is precisely the
+// identifier the keyed shuffle in exportRows was built to destroy, put back by the back door. A token is
+// 32 random bytes, so sorting on it is an order that says nothing about who, and nothing in this run
+// depends on the order anyway: the pacing, the retries and the progress counts are all per row.
 async function graphSendRound(rows, {
   roundId = null, closesOn = "", contact = "",
   intervalMs = SEND_INTERVAL_MS, onProgress = null, sleep = wait, log = console.log,
@@ -272,7 +282,8 @@ async function graphSendRound(rows, {
   const avail = graphAvailability(env);
   if (!avail.available) throw new Error(avail.reason);
   const already = deliveredTokens(roundId);
-  const queue = (rows || []).filter((r) => r && !already.has(r.token));
+  const queue = (rows || []).filter((r) => r && !already.has(r.token))
+    .sort((a, b) => (a.token < b.token ? -1 : a.token > b.token ? 1 : 0)); // see above: never the order they arrived in
   const state = {
     total: (rows || []).length, queued: queue.length, skipped: (rows || []).length - queue.length,
     done: 0, sent: 0, failed: 0, stopped: null,

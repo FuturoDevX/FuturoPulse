@@ -87,6 +87,24 @@ function initSchema(db) {
     db.exec("ALTER TABLE survey_invitations DROP COLUMN used_on");
   }
 
+  // survey_deliveries is now WITHOUT ROWID, so that the order rows were written in — which is the order
+  // the round was sent in — is not stored (see db/schema.sql). CREATE TABLE IF NOT EXISTS will not change
+  // a table that already exists, and this one already exists with a rowid on every database created since
+  // the sender was added, so rebuild it. ONLY WHILE IT IS EMPTY: these rows are what stop a retry sending
+  // a second link to someone who already has one, and no round has been sent yet anywhere. If one ever
+  // has been, the log stays exactly as it is and the sender's token-ordered queue carries the property
+  // for every row written from here on.
+  const deliveries = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'survey_deliveries'").get();
+  if (deliveries && !/WITHOUT\s+ROWID/i.test(deliveries.sql)) {
+    if (db.prepare("SELECT COUNT(*) n FROM survey_deliveries").get().n === 0) {
+      db.exec("DROP TABLE survey_deliveries");
+      db.exec(schema); // all CREATE ... IF NOT EXISTS — recreates it, and its index, in the new shape
+      console.log("[init] rebuilt the empty eNPS delivery log WITHOUT ROWID, so it cannot record the order a round was sent in");
+    } else {
+      console.log("[init] the eNPS delivery log already holds deliveries, so it is left alone and keeps its rowid — the rows written before this release still carry the order they were sent in");
+    }
+  }
+
   // ---- Approved places: the licensed count on each service approval (ACECQA National Register) ----
   // centres.capacity is the SUM OF OWNA ROOM CAPACITIES and the nightly snapshot rewrites it every night,
   // so it can never hold the licensed figure — Austral runs 124 approved places against a 122 room sum.

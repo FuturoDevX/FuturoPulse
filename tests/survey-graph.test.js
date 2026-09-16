@@ -295,6 +295,59 @@ test('Microsoft Graph sender for the eNPS invitations', async (t) => {
     assert.equal(sends().length, 0, 'nothing at all leaves when everyone already has their link');
   });
 
+  // ===== The order the log is written in, which is a column nobody declared =====
+  await t.test('the delivery log records nothing about the order the round was sent in', async () => {
+    reset();
+    // The export hands the sender its rows in PAYROLL-ID order — that is the premise the attack needs,
+    // and it is what makes the send order worth hiding.
+    const payrollOrder = EMPLOYEES.map((e) => e.emailAddress);
+    // Tokens are random, so pick a round where token order and payroll order genuinely differ; otherwise
+    // "not payroll order" would be asserting nothing. In practice this is the first round every time.
+    let round = null, rows = null;
+    for (let i = 0; i < 8 && !round; i++) {
+      const r = newRound('order-' + i), got = await rowsFor(r);
+      const sent = got.map((x) => x.token);
+      if (JSON.stringify(sent) !== JSON.stringify([...sent].sort())) { round = r; rows = got; }
+    }
+    assert.ok(round, 'could not build a fixture whose token order differs from its payroll order');
+    assert.deepEqual(rows.map((r) => r.email), payrollOrder, 'the export is in payroll order');
+
+    await surveyMail.graphSendRound(rows, { roundId: round.id, closesOn: CLOSES, sleep: quiet, log: quiet });
+
+    // What a copy of the database gives up. No ORDER BY: rows come back in the order the FILE holds them,
+    // which is the order anyone reading a backup, a disk snapshot or scripts/restore-db.js gets.
+    const payrollTokens = rows.map((r) => r.token);
+    const stored = db.prepare('SELECT token FROM survey_deliveries WHERE round_id = ?').all(round.id).map((r) => r.token);
+    assert.equal(stored.length, STAFF);
+    assert.notDeepEqual(stored, payrollTokens,
+      'the delivery log is stored in payroll order: pair it against eh.allEmployees() and every token has a name on it, with no key and nothing kept');
+    assert.deepEqual(stored, [...payrollTokens].sort(), 'it is in token order, which is 32 random bytes and says nothing about who');
+
+    // The attack in full, exactly as someone holding the file and the payroll list would run it, without
+    // SURVEY_ASSIGN_KEY: pair position for position. It must not hand back the map the keyed shuffle in
+    // exportRows exists to destroy.
+    const recovered = stored.filter((token, i) => token === payrollTokens[i]).length;
+    assert.ok(recovered < STAFF, `row order re-identified ${recovered} of ${STAFF} tokens`);
+
+    // The send itself is in that same order — this is where the ordering is actually decided.
+    const tokenOf = new Map(rows.map((r) => [r.email, r.token]));
+    assert.deepEqual(sends().map((c) => tokenOf.get(recipient(c))), [...payrollTokens].sort(), 'the round goes out in token order');
+
+    // And the same tokens handed over in a DIFFERENT order leave the same file behind: the order a caller
+    // supplies leaves no trace at all. This is the assertion that fails the moment the sort goes missing.
+    const round2 = newRound('order-reversed');
+    const rows2 = [...(await rowsFor(round2))].reverse();
+    reset();
+    await surveyMail.graphSendRound(rows2, { roundId: round2.id, closesOn: CLOSES, sleep: quiet, log: quiet });
+    const stored2 = db.prepare('SELECT token FROM survey_deliveries WHERE round_id = ?').all(round2.id).map((r) => r.token);
+    assert.deepEqual(stored2, [...rows2.map((r) => r.token)].sort(), 'the order the rows arrived in must leave no trace');
+
+    // Belt and braces, in the schema: there is no rowid here to order by in the first place.
+    assert.match(db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'survey_deliveries'").get().sql,
+      /WITHOUT\s+ROWID/i, 'the delivery log must not keep an insertion counter');
+    assert.throws(() => db.prepare('SELECT rowid FROM survey_deliveries').all(), /no such column/i);
+  });
+
   // ===== Dry run =====
   await t.test('the dry run reports what would go where and sends nothing at all', async () => {
     reset();
