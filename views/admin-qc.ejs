@@ -27,12 +27,12 @@
 <div class="card">
   <h2 style="margin-top:0;">Latest audit per centre</h2>
   <% if (!summary.length) { %><p class="muted">None yet.</p><% } else { %>
-    <table><thead><tr><th>Centre</th><th>Period</th><th class="num">Overall</th><th>Audit date</th><th class="num">Open actions</th><th>Uploaded</th></tr></thead>
+    <div class="table-scroll"><table><thead><tr><th>Centre</th><th>Period</th><th class="num">Overall</th><th>Audit date</th><th class="num">Open actions</th><th>Uploaded</th></tr></thead>
     <tbody>
       <% summary.forEach(function(c){ %>
         <tr><td><%= shortName(c.centre_name) %></td><td><%= c.term %></td><td class="num"><%= c.overall_pct %>%</td><td><%= c.audit_date || '—' %></td><td class="num"><%= c.open_actions %></td><td class="muted"><%= (c.uploaded_at||'').slice(0,16) %></td></tr>
       <% }); %>
-    </tbody></table>
+    </tbody></table></div>
   <% } %>
 </div>
 <%- include('partials/footer') %>
