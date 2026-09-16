@@ -141,6 +141,10 @@
 * { box-sizing: border-box; }
 body { margin: 0; font-family: var(--font-sans); background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 :focus-visible { outline: 2px solid var(--brand-ink); outline-offset: 2px; border-radius: 3px; }
+/* --brand-ink is the brand green read on a light ground, so the ring above is for the cream body.
+   Inside the rail the ground IS that green (1.0-1.5:1, invisible), and the rail is where the long
+   tab sequence lives — so the ring turns white there. Applies to the phone strip too, same wrapper. */
+.sidebar :focus-visible { outline-color: var(--on-brand-strong); }
 
 /* ===== Shell ============================================================ */
 .app-shell { display: flex; min-height: 100vh; }
