@@ -86,7 +86,7 @@
 
   <div class="card">
     <h2 style="margin-top:0;">Daily detail <span class="muted" style="font-weight:400;font-size:13px;">· <%= from %> → <%= to %></span></h2>
-    <table>
+    <div class="table-scroll"><table>
       <thead>
         <tr><th>Date</th><th class="num">Booked</th><th style="width:150px;">Occupancy</th><th class="num">Attended</th><th class="num">Absent</th><th class="num">Attend.%</th><th class="num">Casual</th><th class="num">Fees</th></tr>
       </thead>
@@ -116,7 +116,7 @@
           <td class="num"><%= money(summary.fee_total) %></td>
         </tr>
       </tfoot>
-    </table>
+    </table></div>
     <p class="footnote">Fees billed = gross session fees before CCS. CCS paid = subsidy payments clearing in the range (posted weekly).</p>
   </div>
 </section>
