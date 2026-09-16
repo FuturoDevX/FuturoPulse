@@ -207,6 +207,15 @@ test('Turnover the owner enters — by centre, by month', async (t) => {
       assert.equal(zero.avg_headcount, 5, 'a zero IS in the average');
       assert.equal(zero.rates.combined, 60);
 
+      // Excel renders a number-formatted count as "30.0", so that is what gets pasted in. Keeping the
+      // digits but dropping the point would store 300 and make every rate on the page a tenth of the truth.
+      const dec = freeze(FROZEN, () => m.savePcTurnoverEntry('e', '2026-07', { resignations: '1.0', terminations: '0', headcount: '30.0' }));
+      assert.equal(dec.headcount, 30, '"30.0" is thirty, not three hundred');
+      assert.equal(dec.resignations, 1, '"1.0" is one, not ten');
+      assert.equal(freeze(FROZEN, () => m.pcTurnoverEntries('2026-07')).find((x) => x.owna_id === 'e').headcount, 30);
+      assert.equal(freeze(FROZEN, () => m.savePcTurnoverEntry('e', '2026-07', { headcount: '28.5' })).headcount, 29, 'a fraction rounds, it does not become 285');
+      assert.equal(freeze(FROZEN, () => m.savePcTurnoverEntry('e', '2026-07', { headcount: 'abc' })).deleted, true, 'garbage is still nothing entered');
+
       // All three cleared removes the row entirely, so "not entered" cannot be mistaken for a month of zeros.
       freeze(FROZEN, () => m.savePcTurnoverEntry('e', '2026-09', { resignations: '', terminations: '', headcount: '' }));
       assert.equal(db.prepare("SELECT COUNT(*) n FROM pc_turnover_entry WHERE owna_id='e' AND month='2026-09'").get().n, 0);

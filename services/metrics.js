@@ -1624,7 +1624,7 @@ const PC_TURNOVER_WINDOW = 12;
 const pcTurnoverInt = (v) => {
   const s = String(v == null ? "" : v).trim();
   if (!s) return null;                                     // blank = not entered
-  const n = parseInt(s.replace(/[^0-9-]/g, ""), 10);
+  const n = Math.round(parseFloat(s.replace(/[^0-9.-]/g, "")));  // keep the '.', round — "30.0" is 30, not 300
   return isNaN(n) || n < 0 ? null : n;
 };
 // n months ending at `last` (YYYY-MM), oldest first.
