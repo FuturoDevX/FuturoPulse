@@ -48,30 +48,34 @@
   </div>
 </div>
 
-<div class="card" style="border-left:3px solid var(--warn);">
-  <h2 style="margin-top:0;">Read these three limits before you read the numbers</h2>
-  <ol class="coe-limits">
-    <% if (mm) { %>
-    <li><strong>The run rate assumes every family without a finish date continues, so it is a ceiling — the measured count beside it does not.</strong> Nobody has told us they are staying, so the run rate only counts who has not told us they are leaving. As at <%= dLong(ms.snapshot_date) %><%= msPartial ? ' (' + msCover + ')' : '' %>, of the <%= fmt(mm.enrolled) %> children enrolled today<%= msPartial ? ' at the measured centres' : '' %>, <strong><%= fmt(mm.continuing) %> hold bookings that reach <%= mLong(am.month) %></strong>, <%= fmt(mm.not_confirmed) %> have none that far out yet and <%= fmt(mm.leaving) %> have a finish date before it. Read the percentages in this section as the best case and the measured count below as what is actually booked.<% if (msPartial) { %> <strong>Those counts cover <%= msCover %>, not the whole group — <%= msMissing %>.</strong> No night has yet reached every centre, and the run rate above still covers all of them, so the two halves of this page do not add up to the same group of children.<% } %></li>
-    <% } else { %>
-    <li><strong>The run rate assumes every family without a finish date continues, so it is a ceiling.</strong> Nobody has told us they are staying — we have only counted who has not told us they are leaving. The measured per-child continuing count starts accumulating from the first nightly run (2:15am Sydney, or on demand with <code>npm run coe-snapshot</code>) and appears on this page from then on; until then treat every percentage as the best case.</li>
-    <% } %>
-    <li><strong>January reads high because leavers are still present until late January while starters are added from their start dates.</strong> The two groups overlap inside the month, so <%= mLong('2027-01') %> is the crossover, not a genuine peak. February is the first clean month.</li>
-    <li><strong>Leaver days are estimated from each centre's average booking pattern, not each leaver's own days.</strong> The count of leavers is exact — it comes from finish dates set in OWNA — but the child-days they remove use the centre average (<%= coe.centres.map((c) => shortName(c.name) + ' ' + c.avg_days_per_child.toFixed(1)).join(', ') %> days per child per week). A centre losing mostly five-day families will lose more than shown; mostly two-day families, less.</li>
-  </ol>
-  <p class="footnote" style="margin-bottom:0;">Built from the snapshot as at <%= dLong(coe.as_at) %>. Run-rate week <%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %> (the last complete Mon–Fri week, the same week for every centre). Pipeline starts counted from <%= dLong(coe.pipeline_from) %>. Operating days exclude weekends and NSW public holidays<%= coe.unknown_holiday_years.length ? ' (no gazetted list yet for ' + coe.unknown_holiday_years.join(', ') + ' — weekdays only)' : '' %>.</p>
-</div>
+<%# The three-limits card was a full-width warning read once and skipped thereafter. The January
+    crossover is now a note on the January column, and the leaver-days caveat sits beside the leaver
+    column where the number it qualifies actually appears. The rest is on /coe/method. %>
+<p class="sub" style="margin:-6px 0 18px;max-width:78ch;">
+  <% if (mm) { %>
+    Of the <strong><%= fmt(mm.enrolled) %></strong> children enrolled today<%= msPartial ? ' at the ' + msCover : '' %>,
+    <strong><%= fmt(mm.continuing) %></strong> hold bookings that reach <%= mLong(am.month) %>,
+    <strong><%= fmt(mm.not_confirmed) %></strong> have none that far out yet and
+    <strong><%= fmt(mm.leaving) %></strong> have a finish date before it.
+    The projection further down is a ceiling: it assumes everyone without a finish date stays.
+    <% if (msPartial) { %><br><strong class="bad-text">These counts cover <%= msCover %> — <%= msMissing %> — while the projection covers every centre, so the two halves of this page are not the same group of children.</strong><% } %>
+  <% } else { %>
+    Every percentage here is a ceiling: it assumes every family without a finish date stays. The measured
+    count of children who actually hold bookings starts from the first nightly run.
+  <% } %>
+  <a class="row-link" href="/coe/method">How these are calculated &rarr;</a>
+</p>
 
 <div class="card" id="targets">
   <h2 style="margin-top:0;">What each centre is measured against
     <span class="muted" style="font-weight:400;font-size:13px;">· <%= mixedTargets ? 'the targets are not the same number, so neither are the colours' : 'every centre is on the same target' %></span>
   </h2>
   <p class="sub" style="margin-bottom:14px;">
-    Every percentage and every colour below is judged against <strong>that centre's own occupancy target</strong>, not one
-    number for the group. The targets are the ones already stored against each centre for wage budgeting
-    (<code>labour_budget.budget_occ</code>) — one stored value, read by this page and by the wage page, so changing it
-    in either place moves both. A centre with none stored falls back to the <%= pctStr(coe.target_default_pct) %> group
-    default and is labelled “group default” in the table.
+    <%# Was five lines explaining that the target is per centre, which the table then shows. The one
+        thing a reader cannot see from the table is that this is the SAME stored value the wage page
+        uses, so editing it in either place moves both. That is what is left. %>
+    Each centre is judged against its own target. These are the same stored values the
+    <a href="/wages">wage budgets</a> use, so changing one moves both.
   </p>
   <div style="overflow-x:auto;"><table>
     <thead>
@@ -260,7 +264,7 @@
 <div class="grid kpis">
   <div class="card stat"><div class="n"><%= fmt(ga.available_days) %></div><div class="l">Child-days available in <%= mLong(am.month) %><span class="cap"><%= coe.group.places %> approved places × <%= am.operating_days %> operating days</span></div></div>
   <div class="card stat"><div class="n <%= tone(ga.pct, GTGT) + '-text' %>"><%= ga.pct %>%</div><div class="l">Projected filled · <%= fmt(ga.projected_days) %> days<span class="cap">run rate − leaver days + firm backfill · against the group target of <%= pctStr(GTGT) %>, the centre targets weighted by approved places</span></div></div>
-  <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>, at each centre's average booking pattern</span></div></div>
+  <div class="card stat"><div class="n bad-text"><%= sgn(ga.leaver_days) %></div><div class="l">Child-days falling away<span class="cap"><%= ga.leavers_to_date %> children with a finish date set by <%= mLong(am.month) %>. The count is exact; the days are estimated at each centre's average booking pattern, so a centre losing five-day families loses more than shown</span></div></div>
   <div class="card stat"><div class="n good-text">+<%= fmt(ga.firm_days) %></div><div class="l">Child-days of firm backfill<span class="cap"><%= ga.firm_children %> children at Offer Accepted or Pre-Offered, from their expected start date<%= ga.days_unknown ? ' · ' + ga.days_unknown + ' of them with no requested days recorded, valued at their centre average' : '' %></span></div></div>
   <div class="card stat"><div class="n"><%= ga.gap_days > 0 ? fmt(ga.gap_days) : '—' %></div><div class="l">Gap to target<span class="cap">child-days in <%= mLong(am.month) %> against <%= fmt(ga.target_days) %> targeted (<%= pctStr(GTGT) %> of available)<%= ga.gap_days > 0 && am.operating_days ? ' · about ' + Math.round(ga.gap_days / (am.operating_days / 5) / 3) + ' children at 3 days a week' : ' · the projection is at or above target' %><%= ga.shortfall_days > 0 ? ' · ' + fmt(ga.shortfall_days) + ' counted centre by centre, since a centre over its target cannot fill a seat at one under it' : '' %></span></div></div>
 </div>
@@ -321,7 +325,7 @@
       </tr>
     </tfoot>
   </table></div>
-  <p class="footnote" style="margin-bottom:0;">Green is at or above <strong>that centre's own target</strong> — <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %> — amber within ten points of it, red below; the group row is measured against <%= pctStr(GTGT) %>, those targets weighted by approved places. Two centres on the same percentage can therefore be different colours, and that is the point of the column. <strong>Leaving by <%= mShort(coe.window.last) %></strong> counts every child whose finish date falls between <%= dLong(coe.as_at) %> and <%= mLong(coe.window.last) %> — the same children are deducted from every later month. The pre-opening centres are not in this table or in the group row: they have no run rate and no licensed places recorded.</p>
+  <p class="footnote" style="margin-bottom:0;">Each centre is coloured against <strong>its own target</strong> (listed above): green at or above it, amber within ten points, red below. Two centres on the same percentage can be different colours, which is the point. Pre-opening centres are not in this table — no run rate, no licensed places yet.</p>
 </div>
 
 
@@ -338,7 +342,7 @@
     <tbody>
       <% coe.group.months.forEach(function(x){ %>
         <tr class="<%= x.month === am.month ? 'coe-anchor' : '' %>">
-          <td><%= mLong(x.month) %><%= x.month === am.month ? ' — anchor' : (x.month === '2027-01' ? ' — crossover' : '') %></td>
+          <td><%= mLong(x.month) %><% if (x.month === am.month) { %> — anchor<% } else if (x.month === '2027-01') { %> <span title="Leavers are still present until late January while starters are added from their start dates, so the two groups overlap inside the month. February is the first clean month.">— crossover, reads high</span><% } %></td>
           <td class="num"><%= x.operating_days %></td>
           <td class="num"><%= fmt(x.available_days) %></td>
           <td class="num"><%= fmt(x.run_rate_days) %></td>
@@ -449,34 +453,12 @@
 </div>
 <% } %>
 
-<div class="card">
-  <h2 style="margin-top:0;">How every number on this page is calculated</h2>
-  <div class="coe-method">
-    <p><strong>Child-days available</strong> = licensed places × operating days in the month. <strong>Licensed places</strong> is the <em>approved places</em> on each service approval — the count published on the ACECQA National Register, kept up to date on the Approved places admin page. It is not the sum of the centre’s OWNA room capacities, which is a different number and is what this page used to divide by. Operating days come from the NSW calendar (weekdays, less gazetted public holidays): <%= coe.months.map(function(x){ return mShort(x.month) + ' ' + x.operating_days; }).join(' · ') %>.</p>
-    <p><strong>Run rate</strong> = child-days booked in the last complete Mon–Fri week (<%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %>), scaled by operating days ÷ 5. It counts every family who has not set a finish date, which is why it is a ceiling.</p>
-    <p><strong>Leavers</strong> = children in OWNA with <em>upcoming</em> finish dates on or after <%= dLong(coe.as_at) %>. The headcount is exact. A child counted in one month stays counted in every later month.</p>
-    <p><strong>Leaver child-days</strong> = the centre's average booked days per child per week (last complete week ÷ children enrolled) × operating days ÷ 5, prorated by the share of the month falling after the finish date.</p>
-    <p><strong>Firm backfill</strong> = LineLeader expected starts at <strong>Offer Accepted</strong> or <strong>Pre-Offered</strong> with a start date on or before the month, valued at the weekdays that family asked for, prorated from the start date. Soft interest is excluded on purpose. Where LineLeader carries no requested days on the enrolment the child is still counted as committed and valued at that centre's mean requested days per week. Starters valued that way are marked <strong>(<%= ga.days_unknown %> est.)</strong> in the tables above — <%= ga.days_unknown %> of the <%= ga.firm_children %> firm starters counted in <%= mLong(am.month) %>. A committed starter is never dropped from the count or from the projection because its days are missing.</p>
-    <p><strong>All-pipeline backfill</strong> = the same calculation across every status, including waitlist and tours. It is the secondary figure and never feeds the projection.</p>
-    <p><strong>Projected filled</strong> = run rate − leaver child-days + firm backfill, shown as child-days and as a share of available child-days.</p>
-    <p><strong>Target</strong> is per centre, not one number for the group: <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct) + (c.target_source === 'centre' ? '' : ' (group default)'); }).join(', ') %>. It is read from the occupancy target already stored against each centre for wage budgeting (<code>labour_budget.budget_occ</code> at the standing 'default' week, keyed by the Employment Hero centre name and resolved to the OWNA centre by the payroll import's own mapping), so this page and the wage page judge a centre against the same stored number and there is no second copy to drift. A centre with nothing stored falls back to <%= pctStr(coe.target_default_pct) %> and every figure derived from it says “group default”. The group's own target, <%= pctStr(GTGT) %>, is those centre targets weighted by approved places — not their average, which would give a large licence the same say as a small one.</p>
-    <p><strong>Why a target above 100% of approved places is legitimate, and what it is a target for.</strong> The measure is <em>booked</em> child-days ÷ (approved places × operating days) — the same construction as the occupancy figure this target has always been compared against on the wage page. A booking counts whether or not the child turns up, and a child who is absent still holds the place, so booked child-days sit above the children actually in the building — a centre is over its licence only if more children <em>attend</em> on the same day than it is licensed for: in the run-rate week the group booked <%= coe.group.run_week_pct %>% of its place-days and attended <%= coe.group.run_week_attended_pct %>%<%= overTarget.length ? ', and ' + overTarget.map(function(c){ return shortName(c.name) + ' booked ' + c.run_week_pct + '% against ' + c.run_week_attended_pct + '% attended'; }).join(', ') : '' %>. That is the whole of the headroom above 100%. It is <strong>not</strong> part-time families sharing a place across the week: sharing is why <em>children per place</em> is about <%= ms ? (ms.group.places_filled_pct / 100).toFixed(2) : '1.5' %>, and it cannot lift days filled or % filled, because a part-time child contributes fewer child-days to the numerator, not more.</p>
-    <p><strong>Why the projection above does not simply add up OWNA's forward bookings:</strong> recurring bookings are rolled forward different distances for each family, so a raw forward month reads as demand when it is really an artefact of how far ahead the roll has run. The run-rate model avoids that. The measured count below it reports the same bookings honestly instead: it says how many children are booked into a month and how many are not yet confirmed, rather than treating the gap as demand that has gone.</p>
-    <% if (ms) { %>
-    <p><strong>Measured continuing count</strong> = of the children enrolled today at a centre, how many hold at least one booked operating day in the month. <strong>Enrolled today</strong> is the children with a booking in the reference week (the Mon–Fri week with the most children booked in the forward pull, so a holiday week cannot read as a collapse). <strong>Not yet confirmed</strong> holds no booking in that month and has no finish date; <strong>leaving</strong> has a finish date before the month starts. The child-days for those two groups are each child's own days per week scaled to the month's operating days — not the centre average the run-rate model uses.</p>
-    <p><strong>Booking mix</strong> = how many children are booked 1, 2, 3, 4 or 5 days a week in that same reference week, and the child-days a week each band represents. It is what separates <em>children per place</em> (children on the roll ÷ licensed places, normally above 1 because part-time families share a place) from <em>days filled</em> (child-days a week ÷ places × 5).</p>
-    <p><strong>A centre whose forward bookings stop dead on one date</strong> has not lost its families: OWNA rolls recurring bookings indefinitely for most centres, and a centre that ends them on a fixed date (31 December, say) simply has nothing to count past it. Months after that date are shown as “—”, excluded from the group row, and left to the run-rate projection. Outstanding item 7 asks the centre directors which way each centre sets them.</p>
-    <p><strong>Stored as counts only.</strong> The nightly snapshot writes numbers — children per month, children per band, child-days — and no name, date of birth or child id, not even a hashed one. OWNA stays the record of who the children are.</p>
-    <% } else { %>
-    <p><strong>The measured continuing count is pending.</strong> Once the nightly snapshot has run once (2:15am Sydney, or <code>npm run coe-snapshot</code> on demand), this page adds the count of children whose bookings reach each campaign month, the not-yet-confirmed working list, and the booking mix — all counts, no names.</p>
-    <% } %>
-  </div>
-</div>
-
+<%# The thirteen-paragraph "How every number on this page is calculated" card moved to /coe/method
+    on 16 Sept 2026. It is worth writing down once; it was not worth a screen of everyone's
+    attention on every visit. %>
 <p class="footnote">
-  <% if (ms) { %>The run-rate projection above is still a ceiling; the measured continuing count from <%= dLong(ms.snapshot_date) %> is what is actually booked. Each centre is judged against its own stored target (<%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct); }).join(', ') %>), the group against <%= pctStr(GTGT) %>.
-  <% } else { %>First release: the projection is a ceiling built from the current run rate, not a count of families who have confirmed they are staying. The measured continuing count and booking mix start accumulating from the first nightly run.<% } %>
-  <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= sydneyStamp(lastRun.finished_at) %>.<% } %>
+  <a class="row-link" href="/coe/method">How these numbers are calculated &rarr;</a>
+  <% if (locals.lastRun && lastRun.finished_at) { %> · Data as at last sync <%= sydneyStamp(lastRun.finished_at) %>.<% } %>
 </p>
 
 <%- include('partials/footer') %>

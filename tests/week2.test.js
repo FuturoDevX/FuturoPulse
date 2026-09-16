@@ -231,9 +231,9 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   const html=await freeze(FROZEN,()=>page('/coe',cookie));
   assert.match(html,/no snapshot of forward bookings has been taken/i);
   assert.match(html,/npm run coe-snapshot/);
-  assert.match(html,/measured per-child continuing count starts accumulating/i);
+  assert.match(html,/measured\s+count of children who actually hold bookings starts from the first nightly run/i);
   assert.doesNotMatch(html,/Measured continuing count as at/);   // the badge only appears once it exists
-  assert.match(html,/run rate assumes every family without a finish date continues/); // limit 1 still stands
+  assert.match(html,/assumes every family without a finish date stays/); // limit 1 still stands
   assert.match(html,/Month by month/);                           // and the run-rate projection is untouched
  });
 
@@ -346,7 +346,8 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
   assert.doesNotMatch(html,/places (are )?filled|Places filled|of the [\d,]+ licensed places are held/i);
   assert.doesNotMatch(html,/no snapshot of forward bookings has been taken/i);
   // Limit 1 now carries the measured figures instead of promising them.
-  assert.match(html,/the measured count beside it does not/);
+  assert.match(html,/hold bookings that reach/,'the measured count leads the page');
+  assert.match(html,/projection further down is a ceiling/,'and the projection is named as the ceiling');
   assert.doesNotMatch(html,/continuing count arrives in the next build/);
   // Beta's cliff is named on the page, with the date, instead of reading as three families leaving.
   assert.match(html,/forward bookings stop on 31 Dec 2026/);
@@ -680,7 +681,8 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
 
   html=await freeze(FROZEN,()=>page('/coe',cookie));
   assert.match(html,/Measured continuing count as at 13 Sept? 2026 · 1 of 4 centres measured/);
-  assert.match(html,/Those counts cover 1 of 4 centres measured, not the whole group/,'limit 1 must not state a quarter of the group as fact');
+  assert.match(html,/These counts cover 1 of 4 centres measured/,'a partial night must not state a quarter of the group as fact');
+  assert.match(html,/not the same group of children/,'and must say the two halves of the page disagree');
   assert.doesNotMatch(html,/All measured centres/,'the group row must name its coverage instead');
   assert.match(html,/did not reach every centre/);
   assert.match(html,/Beta last measured 12 Sept? 2026/);
@@ -787,7 +789,7 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
    const cell=html.split('href="/centre/nl?')[1].slice(0,300); // the table row, not the sidebar link
    assert.match(cell,/<td>—<\/td>/,'the Places column must be an em dash');
    assert.doesNotMatch(cell,/\d+%/,'no percentage may be printed against an unlicensed centre');
-   assert.match(html,/approved places on the service approvals/);
+   assert.match(html,/approved places/i,'the page still says what "places" means');
   } finally {db.prepare("DELETE FROM centres WHERE owna_id='nl'").run();}
  });
 

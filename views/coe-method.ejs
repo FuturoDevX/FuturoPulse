@@ -1,0 +1,60 @@
+<%- include('partials/header', { title: 'How the enrolment numbers are calculated' }) %>
+<%
+  // The method behind /coe, on its own page. It used to sit at the bottom of the dashboard page as a
+  // thirteen-paragraph card that everyone scrolled past every time. It is worth writing down once —
+  // somebody does need to check the arithmetic — but not worth a screen of everyone's attention.
+  const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
+  const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mLong  = (mo) => MN[Number(mo.slice(5,7))-1] + ' ' + mo.slice(0,4);
+  const dLong  = (d) => d ? new Date(d+'T00:00:00Z').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : '';
+  const fmt  = (n) => Math.round(Number(n)||0).toLocaleString('en-AU');
+  const pctStr = (n) => (Number(n) % 1 === 0 ? String(Number(n)) : Number(n).toFixed(1)) + '%';
+  const TGT  = coe.target_pct;
+  const GTGT = coe.group.target_pct;
+  const ms = coe.measured;
+  let ai = coe.months.findIndex((x) => x.month === '2027-02');
+  if (ai < 0) ai = Math.min(3, coe.months.length - 1);
+  const am = coe.months[ai];
+  const mi = ms ? ms.months.findIndex((x) => x.month === am.month) : -1;
+  const mm = mi >= 0 ? ms.months[mi] : null;
+  const msPartial = !!(ms && ms.partial);
+  const msCover = ms ? ms.centres.length + ' of ' + ms.centres_expected + ' centres measured' : '';
+%>
+
+<div class="page-head"><div>
+  <p class="crumb"><a href="/coe">&larr; Continuation of Enrolment</a></p>
+  <h1>How the enrolment numbers are calculated</h1>
+  <p class="sub">Every figure on the Continuation of Enrolment page, and where it comes from.</p>
+</div></div>
+
+<div class="card">
+  <div class="coe-method">
+  <div class="coe-method">
+    <p><strong>Child-days available</strong> = licensed places × operating days in the month. <strong>Licensed places</strong> is the <em>approved places</em> on each service approval — the count published on the ACECQA National Register, kept up to date on the Approved places admin page. It is not the sum of the centre’s OWNA room capacities, which is a different number and is what this page used to divide by. Operating days come from the NSW calendar (weekdays, less gazetted public holidays): <%= coe.months.map(function(x){ return mShort(x.month) + ' ' + x.operating_days; }).join(' · ') %>.</p>
+    <p><strong>Run rate</strong> = child-days booked in the last complete Mon–Fri week (<%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %>), scaled by operating days ÷ 5. It counts every family who has not set a finish date, which is why it is a ceiling.</p>
+    <p><strong>Leavers</strong> = children in OWNA with <em>upcoming</em> finish dates on or after <%= dLong(coe.as_at) %>. The headcount is exact. A child counted in one month stays counted in every later month.</p>
+    <p><strong>Leaver child-days</strong> = the centre's average booked days per child per week (last complete week ÷ children enrolled) × operating days ÷ 5, prorated by the share of the month falling after the finish date.</p>
+    <p><strong>Firm backfill</strong> = LineLeader expected starts at <strong>Offer Accepted</strong> or <strong>Pre-Offered</strong> with a start date on or before the month, valued at the weekdays that family asked for, prorated from the start date. Soft interest is excluded on purpose. Where LineLeader carries no requested days on the enrolment the child is still counted as committed and valued at that centre's mean requested days per week. Starters valued that way are marked <strong>(<%= ga.days_unknown %> est.)</strong> in the tables above — <%= ga.days_unknown %> of the <%= ga.firm_children %> firm starters counted in <%= mLong(am.month) %>. A committed starter is never dropped from the count or from the projection because its days are missing.</p>
+    <p><strong>All-pipeline backfill</strong> = the same calculation across every status, including waitlist and tours. It is the secondary figure and never feeds the projection.</p>
+    <p><strong>Projected filled</strong> = run rate − leaver child-days + firm backfill, shown as child-days and as a share of available child-days.</p>
+    <p><strong>Target</strong> is per centre, not one number for the group: <%= coe.centres.map(function(c){ return shortName(c.name) + ' ' + pctStr(c.target_pct) + (c.target_source === 'centre' ? '' : ' (group default)'); }).join(', ') %>. It is read from the occupancy target already stored against each centre for wage budgeting (<code>labour_budget.budget_occ</code> at the standing 'default' week, keyed by the Employment Hero centre name and resolved to the OWNA centre by the payroll import's own mapping), so this page and the wage page judge a centre against the same stored number and there is no second copy to drift. A centre with nothing stored falls back to <%= pctStr(coe.target_default_pct) %> and every figure derived from it says “group default”. The group's own target, <%= pctStr(GTGT) %>, is those centre targets weighted by approved places — not their average, which would give a large licence the same say as a small one.</p>
+    <p><strong>Why a target above 100% of approved places is legitimate, and what it is a target for.</strong> The measure is <em>booked</em> child-days ÷ (approved places × operating days) — the same construction as the occupancy figure this target has always been compared against on the wage page. A booking counts whether or not the child turns up, and a child who is absent still holds the place, so booked child-days sit above the children actually in the building — a centre is over its licence only if more children <em>attend</em> on the same day than it is licensed for: in the run-rate week the group booked <%= coe.group.run_week_pct %>% of its place-days and attended <%= coe.group.run_week_attended_pct %>%<%= overTarget.length ? ', and ' + overTarget.map(function(c){ return shortName(c.name) + ' booked ' + c.run_week_pct + '% against ' + c.run_week_attended_pct + '% attended'; }).join(', ') : '' %>. That is the whole of the headroom above 100%. It is <strong>not</strong> part-time families sharing a place across the week: sharing is why <em>children per place</em> is about <%= ms ? (ms.group.places_filled_pct / 100).toFixed(2) : '1.5' %>, and it cannot lift days filled or % filled, because a part-time child contributes fewer child-days to the numerator, not more.</p>
+    <p><strong>Why the projection above does not simply add up OWNA's forward bookings:</strong> recurring bookings are rolled forward different distances for each family, so a raw forward month reads as demand when it is really an artefact of how far ahead the roll has run. The run-rate model avoids that. The measured count below it reports the same bookings honestly instead: it says how many children are booked into a month and how many are not yet confirmed, rather than treating the gap as demand that has gone.</p>
+    <% if (ms) { %>
+    <p><strong>Measured continuing count</strong> = of the children enrolled today at a centre, how many hold at least one booked operating day in the month. <strong>Enrolled today</strong> is the children with a booking in the reference week (the Mon–Fri week with the most children booked in the forward pull, so a holiday week cannot read as a collapse). <strong>Not yet confirmed</strong> holds no booking in that month and has no finish date; <strong>leaving</strong> has a finish date before the month starts. The child-days for those two groups are each child's own days per week scaled to the month's operating days — not the centre average the run-rate model uses.</p>
+    <p><strong>Booking mix</strong> = how many children are booked 1, 2, 3, 4 or 5 days a week in that same reference week, and the child-days a week each band represents. It is what separates <em>children per place</em> (children on the roll ÷ licensed places, normally above 1 because part-time families share a place) from <em>days filled</em> (child-days a week ÷ places × 5).</p>
+    <p><strong>A centre whose forward bookings stop dead on one date</strong> has not lost its families: OWNA rolls recurring bookings indefinitely for most centres, and a centre that ends them on a fixed date (31 December, say) simply has nothing to count past it. Months after that date are shown as “—”, excluded from the group row, and left to the run-rate projection. Outstanding item 7 asks the centre directors which way each centre sets them.</p>
+    <p><strong>Stored as counts only.</strong> The nightly snapshot writes numbers — children per month, children per band, child-days — and no name, date of birth or child id, not even a hashed one. OWNA stays the record of who the children are.</p>
+    <% } else { %>
+    <p><strong>The measured continuing count is pending.</strong> Once the nightly snapshot has run once (2:15am Sydney, or <code>npm run coe-snapshot</code> on demand), this page adds the count of children whose bookings reach each campaign month, the not-yet-confirmed working list, and the booking mix — all counts, no names.</p>
+    <% } %>
+  </div>
+  </div>
+</div>
+
+<p class="footnote">
+  Built from the snapshot as at <%= dLong(coe.as_at) %>.
+  <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= sydneyStamp(lastRun.finished_at) %>.<% } %>
+</p>
+
+<%- include('partials/footer') %>

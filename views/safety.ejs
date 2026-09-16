@@ -174,11 +174,13 @@
     </tbody>
   </table></div>
   <p class="footnote">
-    * Current month is partial (fills in as the month runs).
-    <strong>Serious incident (Reg 12)</strong> = the OWNA report recorded that emergency services attended <em>or</em> medical attention was sought from a registered practitioner/hospital — the two criteria on OWNA’s Serious Incident section. This is what drives the Safety Culture rating in the action plan. (OWNA’s explicit “Is this a Serious Incident?” Yes/No is not returned by the API, so it is derived from those two fields.)
-    <strong>Notified to the Department</strong> is that same Reg 12 count — a serious incident must be notified to the NSW Regulatory Authority (Department of Education) within 24 hours, so this is the number of incidents that required notification. OWNA does not expose a separate “notified” flag or date through its API, so an actual count of notifications lodged cannot be shown; treat it as the notification obligation, not confirmation that each was lodged.
-    <strong>Injuries</strong> = physical-injury reports (cuts, bruises, bites, head bumps…); <strong>Illness</strong> = temperature, rash, vomiting, infectious; <strong>Emerg. svc</strong> = emergency services attended.
-    Year to date counts whole calendar months from the start of the reporting year (<%= yk === 'fy' ? 'financial year, 1 July' : 'calendar year, 1 January' %>; switch with FY / Calendar at the top; ?year=fy is the default) to the current month.
+    <%# Trimmed 16 Sept 2026. The statutory obligation stays — that is not methodology. What went was
+        the explanation of which OWNA API fields are and are not returned, and a second restatement of
+        the Reg 12 definition already given above the table. %>
+    * Current month is partial. <strong>Serious incident (Reg 12)</strong> = emergency services attended
+    or medical attention was sought, and must be notified to the Department within 24 hours.
+    <strong>Injuries</strong> = cuts, bruises, bites, head bumps; <strong>Illness</strong> = temperature,
+    rash, vomiting, infectious.
     <% if (locals.lastRun && lastRun.finished_at) { %>Data as at last sync <%= sydneyStamp(lastRun.finished_at) %>.<% } %>
   </p>
 </div>

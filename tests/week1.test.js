@@ -140,7 +140,8 @@ test('Week 1 batch 1',async(t)=>{
   const c=await login('admin');
   const kb=await page('/?from=2026-06-08&to=2026-06-12',c);
   assert.match(kb,/Occupancy = booked child-days ÷ \(places × operating days\)/);
-  assert.match(kb,/are ignored by occupancy, seats and utilisation alike/);
+  // The footnote no longer restates the holiday rule. The rule itself is asserted directly above —
+  // a holiday-only range gives 0 operating days and 0% occupancy — which is the thing that matters.
   assert.match(kb,/Avg occupancy<span class="cap">2 operating days<\/span>/);
   assert.match(kb,/120 booked child-days over 2 operating days/);
   assert.match(kb,/bar-val">60%/);assert.doesNotMatch(kb,/bar-val">50%/);
@@ -163,36 +164,42 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(ahead,/Fees: billed to date \+ booked ahead/);
   assert.match(ahead,/\$1,000 billed to date · \$1,200 booked ahead/);
   assert.match(ahead,/Fees billed to date \+ booked ahead/); // table header
-  assert.match(ahead,/Seats filled, avg per day/);
+  assert.match(ahead,/>Seats</);
   assert.match(ahead,/Utilisation FYTD · FY/);
-  assert.match(ahead,/Annual denominator FY\d{4}-\d{2} = \d+ operating days/);
+  // The annual denominator is the CEO's own question ("251 days × 499 places"), so it stays — but on
+  // the tile it explains rather than in a 264-word footnote.
+  assert.match(ahead,/of [\d,]+ child-days a year/);
   const past=await page(`/?from=${addDays(today,-6)}&to=${today}`,c);
   assert.doesNotMatch(past,/booked ahead/);
   assert.doesNotMatch(past,/past days only/);
   assert.match(past,/Fees billed/);
-  assert.match(past,/Seats filled, avg per day/);
+  assert.match(past,/>Seats</);
   const cy=await page(`/?from=${addDays(today,-6)}&to=${today}&year=cy`,c);
   assert.match(cy,/Utilisation CYTD · CY\d{4}/);
-  assert.match(cy,/Showing calendar year/);
+  assert.match(cy,/Utilisation CYTD · CY\d{4}/,'the tile names the year it is showing');
   // Seats over King's Birthday week: Alpha 60, Beta 40, group 80 (holiday booking row ignored).
   const kb=await page('/?from=2026-06-08&to=2026-06-12',c);
-  assert.match(kb,/2 operating days with bookings/);
+  // The seats caption moved into the column header's tooltip when the tile went. The number is what
+  // this test is really about, and it is asserted on the next line.
   assert.match(kb,/<td class="num">60<\/td>/);assert.match(kb,/<td class="num">40<\/td>/);assert.match(kb,/<td class="num">80<\/td>/);
   // Viewer (aggregates only) and centre-scoped logins render the same tiles for their scope.
-  assert.match(await page('/',await login('viewer')),/Seats filled, avg per day/);
+  assert.match(await page('/',await login('viewer')),/>Seats</);
   const scoped=await page(`/?from=${today}&to=${addDays(today,7)}`,await login('centre'));
   assert.match(scoped,/booked ahead — departures not yet deducted/);assert.doesNotMatch(scoped,/Centre Beta/);
-  // The utilisation footnote is per centre: a scoped login sees its own 100 places, never the 200-place group denominator.
-  const gu=m.utilisationYtd('fy',today);
-  assert.match(scoped,/÷ \(100 places ×/);assert.doesNotMatch(scoped,new RegExp('\\('+gu.places+' places ×'));
+  // Per centre, not the group: a scoped login must never be shown the group's denominator. The
+  // formula moved off the page with the footnote, but the annual child-days figure on the utilisation
+  // tile is the same disclosure, so the guard follows it there.
+  const gu=m.utilisationYtd('fy',today), mine=m.utilisationYtd('fy',today).byOwna['a'];
+  assert.match(scoped,new RegExp('of '+mine.annual_child_days.toLocaleString('en-AU')+' child-days a year'),'own annual denominator');
+  assert.doesNotMatch(scoped,new RegExp('of '+gu.group.annual_child_days.toLocaleString('en-AU')+' child-days a year'),'never the group\'s');
   // A scoped login on a centre with no utilisation row (pre-opening, 0 licensed places) must get no figures at all, not the group's.
   const noCap=await page('/',await login('centre-open'));
-  assert.match(noCap,/No licensed places recorded for your centre yet, so utilisation cannot be calculated\./);
+  assert.match(noCap,/no licensed places recorded for this centre yet/);
   assert.doesNotMatch(noCap,/Utilisation FYTD \(FY/);assert.doesNotMatch(noCap,/Annual denominator/);
   assert.doesNotMatch(noCap,new RegExp(gu.places+' places'));
   assert.doesNotMatch(noCap,new RegExp(gu.group.cap_days.toLocaleString('en-AU')+' child-days'));
   assert.doesNotMatch(noCap,new RegExp(gu.annual_child_days.toLocaleString('en-AU')+' child-days'));
-  assert.match(await page('/?year=cy',await login('centre-open')),/Showing calendar year/); // the year toggle hint survives the suppression
+  assert.match(await page('/?year=cy',await login('centre-open')),/Utilisation CYTD/); // the year toggle survives the suppression
  });
  await t.test('projection is renamed, sits after the pipeline in the nav and carries the 90-day trust note',async()=>{
   const c=await login('exec');
@@ -200,12 +207,17 @@ test('Week 1 batch 1',async(t)=>{
   const iPipe=html.indexOf('>Enrolment Pipeline<'), iProj=html.indexOf('>Enrolment Projection<'), iExit=html.indexOf('>Exit Report<');
   assert.ok(iPipe>0&&iProj>iPipe&&iExit>iProj,'nav order pipeline → projection → exits');
   assert.doesNotMatch(html,/>Projection</);
-  assert.match(html,/Trust the first 90 days\.<\/strong> Beyond that the line adds pipeline starts but never deducts departures, so it is a ceiling, not a forecast\./);
+  // The warning used to be printed six times on this page. It is now printed once, and only when it
+  // applies — at the default 90 days there is nothing to warn about, so saying so is noise.
+  assert.doesNotMatch(html,/ceiling/i,'at 90 days there is no ceiling to warn about');
   assert.match(html,/next 90 days/);
-  assert.match(html,/6 mo · ceiling/);
-  assert.doesNotMatch(html,/Projected with pipeline \(ceiling\)/);
+  const wide=await page('/projection?days=180',c);
+  assert.match(wide,/Beyond 90 days this is a ceiling, not a forecast/);
+  assert.equal((wide.match(/ceiling/gi)||[]).length,1,'said once, not six times');
   const long=await page('/projection?days=180',c);
-  assert.match(long,/next 180 days/);assert.match(long,/Projected with pipeline \(ceiling\)/);assert.match(long,/badge warn">ceiling/);
+  assert.match(long,/next 180 days/);assert.match(long,/Projected with pipeline/);
+  assert.match(long,/Beyond 90 days this is a ceiling/);
+  assert.equal((long.match(/ceiling/gi)||[]).length,1,'warned once, not in the tile and the badge as well');
   assert.match(await page('/projection?days=999',c),/next 90 days/); // default stays 90
  });
  await t.test('Q&C shows the Reg 12 tile for the selected centre and links to Safety',async()=>{
@@ -270,7 +282,7 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(html,/Notified to the Department · FY \d{4}-\d{2} to date/);
   assert.match(html,new RegExp('<div class="n">4</div><div class="l">Notified to the Department · last 12 months'));
   assert.match(html,/emergency services attended or medical attention sought, from OWNA incident reports/);
-  assert.match(html,/OWNA does not expose a separate “notified” flag/);
+  assert.match(html,/must be notified to the Department within 24 hours/,'the statutory obligation stays');
   assert.match(html,/href="\/safety\?year=fy" class="on"/);assert.match(html,/href="\/safety\?year=cy" class=""/);
   assert.match(html,/>FY<\/a> \| <a href="\/safety\?year=cy"[^>]*>Calendar<\/a>/);
   assert.match(html,/<input type="hidden" name="year" value="fy">/);
@@ -644,25 +656,32 @@ test('Week 1 batch 1',async(t)=>{
   const admin=await login('admin');
   const html=await page('/coe',admin);
   assert.match(html,/First release — continuing count and booking mix follow/);
-  assert.match(html,/The run rate assumes every family without a finish date continues, so it is a ceiling\.<\/strong>/);
-  assert.match(html,/January reads high because leavers are still present until late January while starters are added from their start dates\.<\/strong>/);
-  assert.match(html,/Leaver days are estimated from each centre's average booking pattern, not each leaver's own days\.<\/strong>/);
+  assert.match(html,/assumes everyone without a finish date stays|assumes every family without a finish date stays/,'the ceiling is still stated');
+  assert.match(html,/estimated at each centre's average booking pattern/,'and the leaver-days caveat moved to the tile it qualifies');
+  // The January crossover note moved onto the January row itself, where the number it explains is.
+  assert.match(html,/crossover, reads high/);
+  assert.match(html,/The count is exact; the days are estimated at each centre's average booking pattern/,
+    'the caveat that changes how a director reads their own number moved to the tile, it did not go');
   assert.match(html,/Nov 2026 – Apr 2027/);
   assert.match(html,/Feb 2027, the anchor month/);
   // The anchor row carries its highlight as a class, not an escaped inline style attribute.
   assert.match(html,/<tr class="coe-anchor">\s*<td>Feb 2027 — anchor<\/td>/);
   assert.doesNotMatch(html,/style=&#34;/);
   assert.match(html,/against the group target of 95%/);                        // no stored target here → the fallback, named as such
-  assert.match(html,/<strong>Target<\/strong> is per centre, not one number for the group/);
-  assert.match(html,/Centre Alpha 95% \(group default\)/);
+  assert.match(html,/coloured against <strong>its own target<\/strong>/,'the per-centre rule is still stated once');
+  assert.match(html,/group default/,'a centre with no stored target is still marked as on the default');
   assert.doesNotMatch(html,/placeholder/i,'the placeholder wording is gone: the target is a real stored value now');
   assert.match(html,/% once licensed places are confirmed/);                    // opening centres get no percentage
   assert.match(html,/title="429 of 2,100 days · Centre Alpha is measured against 95%">20\.4%<\/td>/); // Alpha, November: 429 of 2,100 available child-days, judged against its own target
   // The starter with no requested days recorded is in the count, and the page says so beside the number.
   assert.match(html,/<td class="num">3<span class="muted"> \(1 est\.\)<\/span><\/td>/);
   assert.match(html,/1 of them with no requested days recorded, valued at their centre average/);
-  assert.match(html,/marked <strong>\(1 est\.\)<\/strong> in the tables above — 1 of the 4 firm starters counted in Feb 2027\./);
-  assert.match(html,/A committed starter is never dropped from the count or from the projection because its days are missing\./);
+  // The dynamic restatement went; the static definition of "(n est.)" stays in the table footnote,
+  // next to the column that uses the marker.
+  assert.match(html,/<strong>\(n est\.\)<\/strong> beside a starter count/);
+  // Same guarantee, stated once in the table footnote rather than twice on the page: a starter with no
+  // requested days is still counted and still valued, at the centre mean.
+  assert.match(html,/they are still counted as committed, and their child-days use their centre's mean requested days per week/);
   assert.match(html,/<td class="num">5,880<\/td>/);                             // group available child-days in November (280 places × 21 days)
   assert.match(html,/Centre Far/);                                              // only in the sidebar's "Opening soon" list
   assert.doesNotMatch(html.split('<main>')[1],/Centre Far/);                     // not in the outlook itself

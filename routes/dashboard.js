@@ -319,6 +319,11 @@ router.get("/projection", blockScoped, (req, res) => {
 
 // Continuation of Enrolment: the 2027 campaign outlook, Nov 2026 – Apr 2027 (counts only, no names —
 // a viewer may open it, so it is deliberately NOT behind requireIdentified).
+// The method behind /coe, on its own page rather than as a card everybody scrolls past.
+router.get("/coe/method", blockScoped, (req, res) => {
+  res.render("coe-method", { title: "How the enrolment numbers are calculated", coe: m.coeOutlook(), lastRun: lastRun() });
+});
+
 router.get("/coe", blockScoped, (req, res) => {
   res.render("coe", { title: "Continuation of Enrolment", coe: m.coeOutlook(), lastRun: lastRun() });
 });
