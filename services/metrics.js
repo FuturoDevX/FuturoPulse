@@ -2334,7 +2334,14 @@ function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
 //   * Someone whose end date is on or before their start date never worked a day and is not a leaver.
 //   * Turnover % is rolling twelve months: leavers over that window ÷ the average month-end permanent
 //     headcount across it. The same formula per centre and for the group, so they can be read together.
+//   * A person's ROLE is their PAY CLASSIFICATION, not their job title (the owner's rule of 16
+//     September 2026). services/classification.js holds the mapping; the categories below — ECT, Dip,
+//     Cert 3, Trainee, Management, Support, Unclassified — are what every page shows, they sum to the
+//     headcount, and a scale no rule matches is counted as Unclassified and listed on /admin/pay-scales
+//     rather than hidden. Casuals are NOT in the per-centre mix, for the reason above; their mix is one
+//     group figure.
 const { ROLES: TALENT_ROLES, CESSATION_REASONS, NO_CENTRE } = require("./eh-talent");
+const { CATEGORIES: PAY_CATEGORIES, classify: classifyScale, NO_SCALE_LABEL } = require("./classification");
 const TALENT_WINDOW = 12; // months in the rolling turnover window
 const VOLUNTARY_KEYS = new Set(CESSATION_REASONS.filter((r) => r.voluntary).map((r) => r.key));
 
@@ -2385,13 +2392,23 @@ function talentReport(ownaId = null, months = 24) {
       COALESCE(SUM(never_started),0) never_started FROM talent_monthly WHERE owna_id=? AND month BETWEEN ? AND ?`);
   const heads = db.prepare("SELECT month, headcount FROM talent_monthly WHERE owna_id=? AND month BETWEEN ? AND ?");
 
+  // A talent row's owna_id is a centre id for every real centre and '(support office)' for the payroll
+  // locations that are not one. Only the former has a centre page to link the row to.
+  const centrePages = new Set(db.prepare("SELECT owna_id FROM centres").all().map((r) => r.owna_id));
+
   const centres = centreIds.map((id) => {
     const now = monthRow.get(id, latest) || {};
     const w = windowRow.get(id, winFrom, latest) || {};
     const hs = heads.all(id, winFrom, latest).map((r) => r.headcount);
     return {
       owna_id: id, name: talentCentreName(id), is_group_bucket: id === NO_CENTRE,
+      linkable: centrePages.has(id),
       headcount: now.headcount || 0,
+      // The reported role mix: pay classification, permanent staff only. Sums to headcount.
+      classes: PAY_CATEGORIES.map((c) => ({ key: c.key, label: c.label, n: now["cls_" + c.key] || 0 })),
+      // A row written before the pay classification existed has a headcount and an empty mix. Say so;
+      // seven zeros that do not add up to the headcount beside them would read as a finding.
+      mix_pending: (now.headcount || 0) > 0 && !PAY_CATEGORIES.some((c) => now["cls_" + c.key]),
       roles: TALENT_ROLES.map((r) => ({ key: r.key, label: r.label, n: now[r.key] || 0 }))
         .concat([{ key: "other", label: "Other / unclassified", n: now.other || 0 }]),
       ect: now.ect || 0, edu_leader: now.edu_leader || 0, room_leader: now.room_leader || 0,
@@ -2414,12 +2431,19 @@ function talentReport(ownaId = null, months = 24) {
   const allTime = db.prepare(`SELECT MIN(month) first, COALESCE(SUM(raw_terminations),0) raw, COALESCE(SUM(casual_leavers),0) casual,
       COALESCE(SUM(never_started),0) never, COALESCE(SUM(leavers),0) leavers FROM talent_group_monthly`).get();
 
+  // The group role mix is the sum of every centre's, taken from the table rather than from the `centres`
+  // array above, which a scoped report has already narrowed to one centre.
+  const gcSql = PAY_CATEGORIES.map((c) => `COALESCE(SUM(cls_${c.key}),0) ${c.key}`).join(",");
+  const gc = db.prepare(`SELECT ${gcSql} FROM talent_monthly WHERE month = ?`).get(latest) || {};
   const group = {
     month: latest,
     headcount: g.headcount || 0,
     casual_headcount: g.casual_headcount || 0,   // group only — rule 3
     starters12: g12.starters, leavers12: g12.leavers,
     turnover12: talentTurnoverPct(g12.leavers, gHeads),
+    classes: PAY_CATEGORIES.map((c) => ({ key: c.key, label: c.label, n: gc[c.key] || 0 })),
+    // The one casual figure there is, broken down by the same categories. Never per centre.
+    casual_classes: PAY_CATEGORIES.map((c) => ({ key: c.key, label: c.label, n: g["cas_" + c.key] || 0 })),
   };
   // The reconciliation the owner asked to be printed, so the 115 can be traced rather than doubted.
   const recon = {
@@ -2473,8 +2497,50 @@ function talentReport(ownaId = null, months = 24) {
     month: latest, scoped: scoped ? ownaId : null, window: { from: winFrom, to: latest, months: TALENT_WINDOW },
     centres, group, recon, reasons, monthly,
     totals: { last12: totalLast12, voluntary_last12: voluntaryLast12, all: totalAll, voluntary_all: voluntaryAll },
+    // classLabels is the reported mix (pay classification). roleLabels is the superseded job-title one,
+    // still returned for anything that asks but shown on no page.
+    classLabels: PAY_CATEGORIES.map((c) => ({ key: c.key, label: c.label })),
+    // True only while every counted month predates the pay classification — i.e. between deploying it
+    // and the first talent snapshot that fills it in.
+    mix_pending: (group.headcount > 0 && !group.classes.some((c) => c.n)) || centres.some((c) => c.mix_pending),
     roleLabels: TALENT_ROLES.map((r) => ({ key: r.key, label: r.label })).concat([{ key: "other", label: "Other / unclassified" }]),
     noCentreKey: NO_CENTRE,
+  };
+}
+
+// The mapping itself, for /admin/pay-scales: every distinct pay scale payroll carries, how many people
+// are on it, and the category it maps to. The category is re-derived from services/classification.js on
+// every read rather than trusted from the stored column, so a correction to the rule shows immediately
+// instead of waiting for the next nightly run — and a stored row that disagrees is flagged, not hidden.
+function talentPayScales() {
+  let stored = [];
+  try { stored = db.prepare("SELECT * FROM talent_pay_scales").all(); } catch { stored = []; }
+  const rows = stored.map((r) => {
+    const c = classifyScale(r.scale);
+    return {
+      scale: r.scale || "",
+      label: r.scale || NO_SCALE_LABEL,
+      recorded: !!r.scale,
+      category: c.key, category_label: c.label, matched: c.matched, why: c.why,
+      people: r.people || 0, permanent: r.permanent || 0, casual: r.casual || 0,
+      stale: r.category !== c.key,   // the rule has changed since the last snapshot wrote this row
+    };
+  }).sort((a, b) => (a.matched - b.matched) || (b.people - a.people) || a.label.localeCompare(b.label));
+  const sum = (f) => rows.reduce((a, r) => a + f(r), 0);
+  return {
+    rows,
+    byCategory: PAY_CATEGORIES.map((c) => ({
+      key: c.key, label: c.label,
+      people: rows.filter((r) => r.category === c.key).reduce((a, r) => a + r.people, 0),
+      scales: rows.filter((r) => r.category === c.key).length,
+    })),
+    totals: {
+      scales: rows.length, people: sum((r) => r.people), permanent: sum((r) => r.permanent), casual: sum((r) => r.casual),
+      unmapped_scales: rows.filter((r) => !r.matched).length,
+      unmapped_people: rows.filter((r) => !r.matched).reduce((a, r) => a + r.people, 0),
+      no_scale_people: rows.filter((r) => !r.recorded).reduce((a, r) => a + r.people, 0),
+      stale: rows.filter((r) => r.stale).length,
+    },
   };
 }
 
@@ -2538,5 +2604,6 @@ module.exports = {
   yearStart, yearRange, seatsFilled, utilisationYtd, reg12Last12Months, wagesPerChildDay, ownaWeek,
   funnelByCentre, funnelMonths, CONVERSION_STAGES, pipelineTargets, savePipelineTarget, deletePipelineTarget, pipelineTargetProgress, targetRag, placesByMonth,
   coeOutlook, coeMeasured, coeRunWeek, coeMonthKeys, COE_TARGET_PCT, COE_FIRM_STATUSES,
-  talentReport, talentTurnoverSources, talentLatestMonth, talentTurnoverPct, TALENT_WINDOW,
+  talentReport, talentTurnoverSources, talentLatestMonth, talentTurnoverPct, talentPayScales,
+  TALENT_WINDOW, PAY_CATEGORIES,
 };

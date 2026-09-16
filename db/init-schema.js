@@ -60,6 +60,13 @@ function initSchema(db) {
   addColumnIfMissing("pc_metrics", "turnover_mom", "REAL");
   addColumnIfMissing("pc_metrics", "headcount", "INTEGER");
   addColumnIfMissing("pc_metrics", "leavers", "INTEGER");
+  // Role mix by PAY CLASSIFICATION (the owner's rule of 16 September 2026, services/classification.js).
+  // Added beside the older job-title columns rather than over them: a live database already holds months
+  // of the old counts, and a rebuild fills these in on the next talent snapshot.
+  for (const k of ["ect", "dip", "cert3", "trainee", "management", "support", "unclassified"]) {
+    addColumnIfMissing("talent_monthly", "cls_" + k, "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing("talent_group_monthly", "cas_" + k, "INTEGER NOT NULL DEFAULT 0");
+  }
   addColumnIfMissing("qc_actions", "term", "TEXT");
   addColumnIfMissing("incidents_monthly", "illness", "INTEGER DEFAULT 0");
   addColumnIfMissing("incidents_monthly", "serious", "INTEGER DEFAULT 0");

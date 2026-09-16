@@ -381,6 +381,10 @@ router.get("/centre/:id", (req, res) => {
   const actionPlan = canSeeIdentified(req) ? m.actionPlanGet(c.owna_id, apMonth) : null;
   const pcMonth = m.pcMonths(1)[0];
   const pcRow = pcMonth ? m.pcForMonth(pcMonth, c.owna_id)[0] : null;
+  // The centre's own role mix, on the same basis as People & Culture: pay classification, permanent
+  // staff only (a casual is a group figure, never a centre's). Counts only — no name, no employee id.
+  const tRep = m.talentReport(c.owna_id, 1);
+  const talentMix = tRep ? tRep.centres.find((x) => x.owna_id === c.owna_id) || null : null;
 
   res.render("centre", {
     title: c.name,
@@ -410,6 +414,7 @@ router.get("/centre/:id", (req, res) => {
     insights: m.centreInsights(c.owna_id, places, capacityDays == null ? null : m.pct(agg.booked, capacityDays), pipeline, labour),
     actionPlan, apMonth,
     pcRow, pcMonth, pcTargets: m.pcTargets(),
+    talentMix, talentMonth: tRep ? tRep.month : null,
     qc: canSeeIdentified(req) ? m.qcCentre(c.owna_id) : null,
     roster: m.rosterCentre(c.owna_id, 12),
     lastRun: lastRun(),

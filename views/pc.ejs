@@ -152,11 +152,15 @@
 
 <div class="card">
   <h2 style="margin-top:0;">Headcount &amp; role mix<% if (!tScoped) { %> by centre<% } %> — <%= tMonthLbl %></h2>
+  <%# Between deploying the pay classification and the first payroll sync that fills it in, every mix is
+      empty. Say that in a line rather than print seven zeros that do not add up to the headcount. %>
+  <% var showMix = !talent.mix_pending; %>
+  <% if (!showMix) { %><p class="muted" style="margin:-6px 0 12px;font-size:13px;">Role mix arrives with the next payroll sync.</p><% } %>
   <div style="overflow-x:auto;"><table>
     <thead><tr>
       <th>Centre</th>
       <th style="text-align:right;">Permanent</th>
-      <% talent.roleLabels.forEach(function(r){ %><th style="text-align:right;"><%= r.label %></th><% }); %>
+      <% if (showMix) { talent.classLabels.forEach(function(r){ %><th style="text-align:right;"><%= r.label %></th><% }); } %>
       <th style="text-align:right;">Starters 12m</th>
       <th style="text-align:right;">Leavers 12m</th>
       <th style="text-align:right;">Turnover</th>
@@ -164,9 +168,9 @@
     <tbody>
       <% talent.centres.forEach(function(c){ %>
       <tr>
-        <td><strong><%= shortName(c.name) %></strong><% if (c.is_group_bucket) { %> <span class="muted" style="font-size:11px;">not a centre</span><% } %></td>
+        <td><% if (c.linkable) { %><a href="/centre/<%= c.owna_id %>"><strong><%= shortName(c.name) %></strong></a><% } else { %><strong><%= shortName(c.name) %></strong><% } %><% if (c.is_group_bucket) { %> <span class="muted" style="font-size:11px;">not a centre</span><% } %></td>
         <td style="text-align:right;font-weight:700;"><%= c.headcount %></td>
-        <% talent.roleLabels.forEach(function(r){ %><td style="text-align:right;"><%= c[r.key] || 0 %></td><% }); %>
+        <% if (showMix) { c.classes.forEach(function(r){ %><td style="text-align:right;<%= r.key === 'unclassified' && r.n ? 'font-weight:700;' : '' %>"><%= r.n %></td><% }); } %>
         <td style="text-align:right;"><%= c.starters12 %></td>
         <td style="text-align:right;"><%= c.leavers12 %></td>
         <td style="text-align:right;"><%= c.turnover12 == null ? '—' : c.turnover12 + '%' %><% if (c.partial_window) { %> <span class="tag-fut" title="This centre was not open for the whole 12 months, so the average headcount it is divided by is small">part year</span><% } %></td>
@@ -176,7 +180,7 @@
       <tr style="font-weight:700;border-top:2px solid var(--border);">
         <td>Group</td>
         <td style="text-align:right;"><%= talent.group.headcount %></td>
-        <% talent.roleLabels.forEach(function(r){ %><td style="text-align:right;"><%= talent.centres.reduce(function(a,c){ return a + (c[r.key] || 0); }, 0) %></td><% }); %>
+        <% if (showMix) { talent.group.classes.forEach(function(r){ %><td style="text-align:right;"><%= r.n %></td><% }); } %>
         <td style="text-align:right;"><%= talent.group.starters12 %></td>
         <td style="text-align:right;"><%= talent.group.leavers12 %></td>
         <td style="text-align:right;"><%= talent.group.turnover12 == null ? '—' : talent.group.turnover12 + '%' %></td>
@@ -185,10 +189,29 @@
     </tbody>
   </table></div>
   <p class="footnote">
-    Permanent staff only — <strong>no casual appears in this table</strong>.<% if (!tScoped) { %> The <%= talent.group.casual_headcount %> casuals are shown once, group-wide, in the tile above: a casual works across every centre, so the centre recorded against them in payroll is an administrative home rather than where the hours were worked. (Casual <em>hours</em> per centre on <a href="/wages">Wages &amp; Margin</a> are a different measurement — those are real hours paid against that location, and they stand.)<% } else { %> Casuals are counted once group-wide rather than against any centre, for the same reason: a casual works across all of them. Casual <em>hours</em> paid against a centre are a different measurement and are unaffected.<% } %>
-    Each person is counted once, under one primary role: educational leader, then teacher, then management, then room leader, then kitchen/cleaning/maintenance, then educator — so the role columns add up to the headcount instead of counting a teaching educational leader twice.
+    Role is the person's <strong>pay classification</strong>, not their job title<% if (user.role === 'admin' || user.role === 'ops_manager') { %> — every scale and the category it maps to is listed under <a href="/admin/pay-scales">Pay classification</a><% } %>. <strong>Unclassified</strong> is a scale no rule maps yet, or none recorded: counted here, never hidden.
+    Permanent staff only — <strong>no casual appears in this table</strong>.<% if (!tScoped) { %> The <%= talent.group.casual_headcount %> casuals are one group figure, below. (Casual <em>hours</em> per centre on <a href="/wages">Wages &amp; Margin</a> are a different measurement — those are real hours paid against that location, and they stand.)<% } else { %> Casuals are counted once group-wide rather than against any centre: a casual works across all of them. Casual <em>hours</em> paid against a centre are a different measurement and are unaffected.<% } %>
   </p>
 </div>
+
+<% if (!tScoped) { %>
+<div class="card">
+  <h2 style="margin-top:0;">Casuals — group-wide, <%= tMonthLbl %></h2>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Casual staff</th>
+      <% talent.classLabels.forEach(function(r){ %><th style="text-align:right;"><%= r.label %></th><% }); %>
+    </tr></thead>
+    <tbody>
+      <tr>
+        <td style="font-weight:700;"><%= talent.group.casual_headcount %> in total</td>
+        <% talent.group.casual_classes.forEach(function(r){ %><td style="text-align:right;"><%= r.n %></td><% }); %>
+      </tr>
+    </tbody>
+  </table></div>
+  <p class="footnote">A casual works across every centre, so the centre payroll files them under is an administrative home rather than where the hours were worked — they are counted once here and against no centre.</p>
+</div>
+<% } %>
 
 <div class="card">
   <h2 style="margin-top:0;">Why people left</h2>

@@ -329,6 +329,28 @@
     <p class="muted" style="margin:8px 0 0;">No People &amp; Culture data entered for this centre yet<% if(pcMonth){ %> (latest month: <%= mLabel(pcMonth) %>)<% } %>. <% if (user.role==='admin'){ %>Add it in <a href="/admin/pc">P&amp;C Data</a>.<% } %></p>
     <% } %>
   </div>
+
+  <%# Headcount and role mix from payroll, on the same basis as People & Culture: role is the person's
+      PAY CLASSIFICATION, and casuals are a group figure rather than this centre's. Counts only. %>
+  <% if (locals.talentMix && !talentMix.mix_pending) { %>
+  <div class="card">
+    <div class="pc-head">
+      <h2 style="margin:0;">Role mix <span class="muted" style="font-weight:400;font-size:13px;">· <%= mLabel(talentMonth) %></span></h2>
+      <a class="row-link" href="/pc#talent">Talent detail →</a>
+    </div>
+    <div style="overflow-x:auto;margin-top:12px;"><table>
+      <thead><tr>
+        <th>Permanent</th>
+        <% talentMix.classes.forEach(function(r){ %><th style="text-align:right;"><%= r.label %></th><% }); %>
+      </tr></thead>
+      <tbody><tr>
+        <td style="font-weight:700;"><%= talentMix.headcount %></td>
+        <% talentMix.classes.forEach(function(r){ %><td style="text-align:right;"><%= r.n %></td><% }); %>
+      </tr></tbody>
+    </table></div>
+    <p class="footnote">Role is the pay classification, not the job title. Permanent staff only — a casual works across every centre and is counted once group-wide.</p>
+  </div>
+  <% } %>
 </section>
 
 <!-- ===================== Q&C ===================== -->

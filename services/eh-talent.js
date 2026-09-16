@@ -21,6 +21,9 @@ const { eh } = require("./eh");
 // One classifier, not two: the centre a payroll location belongs to and the OWNA centre it maps to are
 // already solved in services/eh-labour.js for wages, and are reused here rather than copied.
 const { ownaIdFor, centreLocation } = require("./eh-labour");
+// And one classifier for the role, in its own file so the owner can read the rule and /admin/pay-scales
+// can show it: a person's role is their PAY CLASSIFICATION (payRateTemplate), not their job title.
+const cls = require("./classification");
 
 // Payroll locations that are not a centre (Futuro HQ, the food project) still employ real people, and
 // dropping them would make the group headcount smaller than the sum of its parts. They get their own
@@ -59,6 +62,10 @@ function reasonOf(raw) {
 }
 
 // ---- Roles ---------------------------------------------------------------------------------------
+// SUPERSEDED 16 September 2026 for role classification: the owner's rule is that a person's role is
+// their pay classification, which services/classification.js maps and which is what every page now
+// shows. This job-title guess is still computed — it is one pass over records already in hand — and is
+// still the only other signal about someone whose pay scale is missing, but no page reads it.
 // Same shape as the job-title tests in services/eh-labour.js: match the title, most specific first.
 // Each person gets ONE primary role, so the mix adds up to the headcount rather than double-counting
 // the educational leader who is also a teacher. Order is the precedence, and it is stated on the page.
@@ -154,7 +161,8 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
   // empty pay-run response the same way, for the same reason.)
   if (!employees.length) return { ok: true, employees: 0, rows: 0, months: 0, from: null, to: null,
     headcount: 0, casual_headcount: 0, terminations: 0, casual_leavers: 0, never_started: 0,
-    turnover_leavers: 0, undated_terminations: 0, centres: 0 };
+    turnover_leavers: 0, undated_terminations: 0, centres: 0,
+    scales: 0, on_scales: 0, unmapped_scales: 0, unclassified_people: 0 };
   const locations = await eh.locations();
   if (!Array.isArray(locations)) throw new Error("Employment Hero returned an invalid location list.");
   const index = buildLocationIndex(locations);
@@ -177,6 +185,10 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
       // them in the headcount would keep them employed for ever, so they are in NO month's counts and
       // the number of them is reported instead of being quietly absorbed.
       undated: terminated && !end,
+      // The reported role: the pay scale, mapped. The scale string itself is kept only so the mapping
+      // can be listed on /admin/pay-scales — it names a rate, not a person.
+      scale: cls.normalise(e && e.payRateTemplate),
+      cls: cls.categoryOf(e && e.payRateTemplate),
       role: roleOf(e && e.jobTitle),
       start, end,
       reason: reasonOf(e && e.terminationReason),
@@ -195,13 +207,16 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
   const centreRows = new Map();   // `${owna_id}|${month}` -> row
   const groupRows = new Map();    // month -> row
   const reasonRows = new Map();   // `${owna_id}|${month}|${key}` -> row
+  const zeros = (prefix) => Object.fromEntries(cls.CATEGORY_KEYS.map((k) => [prefix + k, 0]));
   const blankCentre = (owna_id, month) => ({
     owna_id, month, headcount: 0, starters: 0, leavers: 0, never_started: 0,
+    ...zeros("cls_"),   // the reported mix: pay classification, permanent staff only
     ect: 0, edu_leader: 0, room_leader: 0, educator: 0, management: 0, support: 0, other: 0,
   });
   const blankGroup = (month) => ({
     month, headcount: 0, casual_headcount: 0, starters: 0, casual_starters: 0,
     raw_terminations: 0, casual_leavers: 0, never_started: 0, leavers: 0,
+    ...zeros("cas_"),   // the casual headcount by category — group level, never per centre
   });
   const centreRow = (owna_id, month) => {
     const k = owna_id + "|" + month;
@@ -223,7 +238,10 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
 
       // --- casuals: group only, and never turnover (rules 2 and 3) ---
       if (p.casual) {
-        if (!p.undated && p.start && p.start <= end && (!p.end || p.end >= end)) g.casual_headcount += 1;
+        if (!p.undated && p.start && p.start <= end && (!p.end || p.end >= end)) {
+          g.casual_headcount += 1;
+          g["cas_" + p.cls] += 1;   // broken down by category, still one group figure
+        }
         if (startedInMonth) g.casual_starters += 1;
         if (endedInMonth) { g.raw_terminations += 1; g.casual_leavers += 1; }
         continue;
@@ -242,6 +260,7 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
       const row = centreRow(p.centre, month);
       if (!p.undated && p.start && p.start <= end && (!p.end || p.end >= end)) {
         row.headcount += 1;
+        row["cls_" + p.cls] += 1;
         row[ROLE_KEYS.includes(p.role) ? p.role : "other"] += 1;
         g.headcount += 1;
       }
@@ -262,6 +281,27 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
     }
   }
 
+  // ---- The mapping itself, so it can be reviewed rather than taken on trust ----------------------
+  // Every distinct pay scale carried by someone employed TODAY, how many people are on it, and which
+  // category the rule puts it in. This is what /admin/pay-scales lists, and it is the whole reason the
+  // scale string is kept: a scale no rule matches appears there under its own name with its headcount,
+  // instead of disappearing into "Unclassified" with nothing to look up.
+  const employedNow = (p) => !p.undated && !!p.start && p.start <= today && (!p.end || p.end >= today);
+  const scaleRows = new Map();
+  for (const p of people) {
+    if (!employedNow(p)) continue;
+    let r = scaleRows.get(p.scale);
+    if (!r) {
+      r = { scale: p.scale, category: p.cls, people: 0, permanent: 0, casual: 0, matched: cls.classify(p.scale).matched ? 1 : 0 };
+      scaleRows.set(p.scale, r);
+    }
+    r.people += 1;
+    if (p.casual) r.casual += 1; else r.permanent += 1;
+  }
+  const scaleList = [...scaleRows.values()];
+  const onScales = scaleList.reduce((a, r) => a + r.people, 0);
+  const unclassifiedPeople = scaleList.filter((r) => r.category === "unclassified").reduce((a, r) => a + r.people, 0);
+
   const totals = [...groupRows.values()].reduce((a, g) => ({
     raw: a.raw + g.raw_terminations, casual: a.casual + g.casual_leavers,
     never: a.never + g.never_started, leavers: a.leavers + g.leavers,
@@ -269,8 +309,12 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
   const latest = groupRows.get(months[months.length - 1]) || blankGroup(thisMonth);
   const summary = {
     ok: true, employees: people.length, months: months.length,
-    rows: centreRows.size + groupRows.size + reasonRows.size,
+    rows: centreRows.size + groupRows.size + reasonRows.size + scaleRows.size,
     centre_rows: centreRows.size, group_rows: groupRows.size, reason_rows: reasonRows.size,
+    // The classification picture, so a run says how much of payroll the mapping actually covers.
+    scales: scaleRows.size, on_scales: onScales,
+    unmapped_scales: scaleList.filter((r) => !r.matched).length,
+    unclassified_people: unclassifiedPeople,
     from: months[0], to: months[months.length - 1],
     headcount: latest.headcount, casual_headcount: latest.casual_headcount,
     terminations: totals.raw, casual_leavers: totals.casual, never_started: totals.never, turnover_leavers: totals.leavers,
@@ -279,38 +323,51 @@ async function runTalentSnapshot({ log = console.log, dryRun = false, today = ca
   };
   if (dryRun) return summary;
 
+  const CLS_COLS = cls.CATEGORY_KEYS.map((k) => "cls_" + k).join(",");
+  const CLS_VALS = cls.CATEGORY_KEYS.map((k) => "@cls_" + k).join(",");
+  const CAS_COLS = cls.CATEGORY_KEYS.map((k) => "cas_" + k).join(",");
+  const CAS_VALS = cls.CATEGORY_KEYS.map((k) => "@cas_" + k).join(",");
   const delCentre = db.prepare(`DELETE FROM talent_monthly`);
   const delGroup = db.prepare(`DELETE FROM talent_group_monthly`);
   const delReason = db.prepare(`DELETE FROM talent_reasons_monthly`);
+  const delScales = db.prepare(`DELETE FROM talent_pay_scales`);
   const insCentre = db.prepare(`
     INSERT INTO talent_monthly (owna_id, month, headcount, starters, leavers, never_started,
-      ect, edu_leader, room_leader, educator, management, support, other, updated_at)
+      ${CLS_COLS}, ect, edu_leader, room_leader, educator, management, support, other, updated_at)
     VALUES (@owna_id,@month,@headcount,@starters,@leavers,@never_started,
-      @ect,@edu_leader,@room_leader,@educator,@management,@support,@other,datetime('now'))`);
+      ${CLS_VALS},@ect,@edu_leader,@room_leader,@educator,@management,@support,@other,datetime('now'))`);
   const insGroup = db.prepare(`
     INSERT INTO talent_group_monthly (month, headcount, casual_headcount, starters, casual_starters,
-      raw_terminations, casual_leavers, never_started, leavers, updated_at)
+      raw_terminations, casual_leavers, never_started, leavers, ${CAS_COLS}, updated_at)
     VALUES (@month,@headcount,@casual_headcount,@starters,@casual_starters,
-      @raw_terminations,@casual_leavers,@never_started,@leavers,datetime('now'))`);
+      @raw_terminations,@casual_leavers,@never_started,@leavers,${CAS_VALS},datetime('now'))`);
+  const insScale = db.prepare(`
+    INSERT INTO talent_pay_scales (scale, category, people, permanent, casual, matched, updated_at)
+    VALUES (@scale,@category,@people,@permanent,@casual,@matched,datetime('now'))`);
   const insReason = db.prepare(`
     INSERT INTO talent_reasons_monthly (owna_id, month, reason_key, reason_label, leavers, updated_at)
     VALUES (@owna_id,@month,@reason_key,@reason_label,@leavers,datetime('now'))`);
   db.transaction(() => {
     // Rebuild the window rather than merge into it: a correction in payroll (a start date fixed, a
     // termination reversed) has to be able to take a count back down, which an upsert alone cannot do.
-    delCentre.run(); delGroup.run(); delReason.run();
+    delCentre.run(); delGroup.run(); delReason.run(); delScales.run();
     for (const r of centreRows.values()) insCentre.run(r);
     for (const r of groupRows.values()) insGroup.run(r);
     for (const r of reasonRows.values()) insReason.run(r);
+    for (const r of scaleList) insScale.run(r);
   })();
 
   log(`[talent] ${summary.months} months to ${summary.to}: ${summary.headcount} permanent, ${summary.casual_headcount} casual (group), `
     + `${totals.raw} terminations − ${totals.casual} casual − ${totals.never} never started = ${totals.leavers} turnover events`);
   if (noEndDate) log(`[talent] ${noEndDate} terminated record(s) carry no end date and are in no month's counts`);
+  log(`[talent] role from pay classification: ${summary.scales} distinct pay scale(s) across ${summary.on_scales} people`
+    + (summary.unmapped_scales ? `, ${summary.unmapped_scales} unmapped covering ${summary.unclassified_people} people — see /admin/pay-scales` : ", all mapped"));
   return summary;
 }
 
 module.exports = {
   runTalentSnapshot, roleOf, reasonOf, isCasual, neverStarted, centreOf, buildLocationIndex,
   CESSATION_REASONS, ROLES, ROLE_KEYS, NO_CENTRE, monthEnd, addMonths, monthsBetween,
+  // The reported role classification, re-exported so a caller needs one require, not two.
+  classify: cls.classify, categoryOf: cls.categoryOf, CATEGORIES: cls.CATEGORIES, CATEGORY_KEYS: cls.CATEGORY_KEYS,
 };

@@ -178,6 +178,16 @@ router.post("/pc", requireAdmin, (req, res) => {
 });
 
 
+// ===== Pay classification map (read-only) =====
+// The owner's rule of 16 September is that a person's role is their PAY CLASSIFICATION. This page shows
+// the mapping being applied — every distinct scale payroll carries, the people on it, and the category
+// it lands in — so an unmapped or wrongly-mapped scale is visible instead of quietly folded into
+// "Unclassified". Read-only for now: the mapping lives in services/classification.js.
+router.get("/pay-scales", requireAdminOrOps, (req, res) => {
+  res.render("admin-pay-scales", { title: "Pay classification", scales: m.talentPayScales(), talentSync: sourceSyncFor("talent") });
+});
+
+
 // ===== Quality & Compliance upload (admin) =====
 router.get("/qc", requireAdmin, (req, res) => {
   const centres = db.prepare("SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name").all();

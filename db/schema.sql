@@ -445,7 +445,21 @@ CREATE TABLE IF NOT EXISTS talent_monthly (
   starters      INTEGER NOT NULL DEFAULT 0,  -- permanent starts dated in the month (never-started excluded)
   leavers       INTEGER NOT NULL DEFAULT 0,  -- turnover leavers: permanent, and they actually started
   never_started INTEGER NOT NULL DEFAULT 0,  -- endDate <= startDate: excluded from leavers, shown separately
-  ect           INTEGER NOT NULL DEFAULT 0,  -- the role mix below sums to headcount: one primary role each
+  -- The REPORTED role mix: the owner's rule of 16 September 2026 is that a person's role is their PAY
+  -- CLASSIFICATION (payRateTemplate), not their job title. services/classification.js holds the mapping
+  -- and /admin/pay-scales shows it. These seven sum to headcount — one category each — and they are
+  -- what People & Culture and the centre pages show.
+  cls_ect          INTEGER NOT NULL DEFAULT 0,
+  cls_dip          INTEGER NOT NULL DEFAULT 0,
+  cls_cert3        INTEGER NOT NULL DEFAULT 0,
+  cls_trainee      INTEGER NOT NULL DEFAULT 0,
+  cls_management   INTEGER NOT NULL DEFAULT 0,  -- CSE Level 7 (Assistant Director) and 8 (Director)
+  cls_support      INTEGER NOT NULL DEFAULT 0,  -- Support Worker scales: kitchen and cleaning
+  cls_unclassified INTEGER NOT NULL DEFAULT 0,  -- no pay scale, or one no rule maps — counted, never hidden
+  -- The older JOB-TITLE mix, superseded on 16 September and no longer shown on any page. Still written,
+  -- because it costs one pass over the same records and is the only other signal about someone whose
+  -- pay scale is missing; talentReport() still returns it for anything that asks.
+  ect           INTEGER NOT NULL DEFAULT 0,
   edu_leader    INTEGER NOT NULL DEFAULT 0,
   room_leader   INTEGER NOT NULL DEFAULT 0,
   educator      INTEGER NOT NULL DEFAULT 0,
@@ -470,6 +484,17 @@ CREATE TABLE IF NOT EXISTS talent_group_monthly (
   casual_leavers   INTEGER NOT NULL DEFAULT 0,  -- of those, the casuals (not turnover)
   never_started    INTEGER NOT NULL DEFAULT 0,  -- of the rest, those who never worked a day (not turnover)
   leavers          INTEGER NOT NULL DEFAULT 0,  -- = raw_terminations - casual_leavers - never_started
+  -- The casual headcount broken down by pay classification. Group level, like every other casual figure
+  -- here, and for the same reason: a casual works across every centre, so the centre payroll files them
+  -- under is an administrative home rather than where the hours were worked. These sum to
+  -- casual_headcount, and there is deliberately no per-centre equivalent in talent_monthly.
+  cas_ect          INTEGER NOT NULL DEFAULT 0,
+  cas_dip          INTEGER NOT NULL DEFAULT 0,
+  cas_cert3        INTEGER NOT NULL DEFAULT 0,
+  cas_trainee      INTEGER NOT NULL DEFAULT 0,
+  cas_management   INTEGER NOT NULL DEFAULT 0,
+  cas_support      INTEGER NOT NULL DEFAULT 0,
+  cas_unclassified INTEGER NOT NULL DEFAULT 0,
   updated_at       TEXT
 );
 
@@ -489,6 +514,23 @@ CREATE TABLE IF NOT EXISTS talent_reasons_monthly (
   PRIMARY KEY (owna_id, month, reason_key)
 );
 CREATE INDEX IF NOT EXISTS idx_talentreason_month ON talent_reasons_monthly(month);
+
+-- Every distinct pay classification seen in payroll, with how many people are on it. This exists so the
+-- MAPPING is auditable: /admin/pay-scales lists each scale beside the category services/classification.js
+-- puts it in, and a scale no rule matches is on that page under its own name with its headcount, instead
+-- of disappearing into "Unclassified" with no way to find out what it was.
+-- PRIVACY: a payRateTemplate is a PAY SCALE, not personal data — it names a rate, not a person, and it is
+-- stored only because the mapping cannot be reviewed without it. Everything else here is a count. No name,
+-- no employee id, no date of birth, exactly as the three tables above.
+CREATE TABLE IF NOT EXISTS talent_pay_scales (
+  scale      TEXT PRIMARY KEY,           -- payRateTemplate as payroll words it; '' = none recorded
+  category   TEXT NOT NULL,              -- ect | dip | cert3 | trainee | management | support | unclassified
+  people     INTEGER NOT NULL DEFAULT 0, -- people on it and employed as at the snapshot date
+  permanent  INTEGER NOT NULL DEFAULT 0, -- of those, the ones who are not employmentType 'Casual'
+  casual     INTEGER NOT NULL DEFAULT 0,
+  matched    INTEGER NOT NULL DEFAULT 0, -- 1 when a rule matched it, 0 when nothing did
+  updated_at TEXT
+);
 
 -- ===== Per-source sync health: what the nightly snapshot last did for each upstream =====
 CREATE TABLE IF NOT EXISTS source_sync (

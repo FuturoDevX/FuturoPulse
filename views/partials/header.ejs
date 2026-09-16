@@ -55,6 +55,7 @@
         <%# /admin/places is requireAdminOrOps, so an ops manager gets the link too — otherwise the only
             page they can maintain would be unreachable from the nav. %>
         <a href="/admin/places" class="<%= currentPath === '/admin/places' ? 'active' : '' %>">Approved places</a>
+        <a href="/admin/pay-scales" class="<%= currentPath === '/admin/pay-scales' ? 'active' : '' %>">Pay classification</a>
         <% if (user.role === 'admin') { %>
           <a href="/admin/feedback" class="<%= currentPath === '/admin/feedback' ? 'active' : '' %>">Feedback<% if (locals.fbNewCount) { %> <span class="nav-count"><%= fbNewCount %></span><% } %></a>
         <% } %>

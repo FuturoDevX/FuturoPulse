@@ -1,0 +1,70 @@
+<%- include('partials/header', { title: 'Pay classification' }) %>
+<div class="page-head"><div>
+  <p class="crumb"><a href="/pc#talent">← People &amp; Culture</a></p>
+  <h1>Pay classification</h1>
+  <p class="sub">A person's role is their pay classification, not their job title. This is every scale payroll carries and the category it maps to.</p>
+</div></div>
+
+<% const t = scales.totals; %>
+<div class="grid kpis">
+  <div class="card stat"><div class="n"><%= t.scales %></div><div class="l">Pay scales in payroll</div></div>
+  <div class="card stat"><div class="n"><%= t.people %></div><div class="l">People on them<span class="cap"><%= t.permanent %> permanent · <%= t.casual %> casual</span></div></div>
+  <div class="card stat"><div class="n <%= t.unmapped_scales ? 'bad-text' : '' %>"><%= t.unmapped_scales %></div><div class="l">Scales no rule maps<span class="cap"><%= t.unmapped_people %> <%= t.unmapped_people === 1 ? 'person' : 'people' %>, counted as Unclassified</span></div></div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Every scale, and where it lands</h2>
+  <% if (!scales.rows.length) { %>
+  <p class="muted" style="margin:0;">No pay classifications have been read from payroll yet. They arrive with the nightly talent sync, or on demand with <code>npm run talent-snapshot</code>.</p>
+  <% } else { %>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr>
+      <th>Pay classification (payRateTemplate)</th>
+      <th class="num">People</th>
+      <th class="num">Permanent</th>
+      <th class="num">Casual</th>
+      <th>Category</th>
+      <th>Matched on</th>
+    </tr></thead>
+    <tbody>
+      <% scales.rows.forEach(function(r){ %>
+      <tr>
+        <td<%= r.recorded ? '' : ' class="muted"' %>><%= r.label %></td>
+        <td class="num" style="font-weight:700;"><%= r.people %></td>
+        <td class="num"><%= r.permanent %></td>
+        <td class="num"><%= r.casual %></td>
+        <td><strong><%= r.category_label %></strong><% if (!r.matched) { %> <span class="tag-fut" title="No rule in services/classification.js matches this scale">unmapped</span><% } %></td>
+        <td class="small muted"><%= r.why %><% if (r.stale) { %> · <span class="tag-fut" title="The rule has changed since the last payroll sync; this page shows the current rule">rule changed since the last sync</span><% } %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="footnote">
+    Counts are the people employed as at the last payroll sync<% if (locals.talentSync && talentSync.last_attempt) { %> (<%= talentSync.last_attempt %>)<% } %>; the category beside each scale is the rule as it stands right now.
+    Permanent and casual come from payroll's employment type, not from the word in the scale's name.
+    <% if (t.no_scale_people) { %><strong><%= t.no_scale_people %></strong> <%= t.no_scale_people === 1 ? 'person carries' : 'people carry' %> no pay classification at all and <%= t.no_scale_people === 1 ? 'is' : 'are' %> shown in the row above with no name.<% } %>
+  </p>
+  <% } %>
+</div>
+
+<% if (scales.rows.length) { %>
+<details class="card working">
+  <summary><strong>The categories</strong> — what each one adds up to</summary>
+  <div style="overflow-x:auto;margin-top:10px;"><table>
+    <thead><tr><th>Category</th><th class="num">People</th><th class="num">Scales</th></tr></thead>
+    <tbody>
+      <% scales.byCategory.forEach(function(c){ %>
+      <tr><td><%= c.label %></td><td class="num"><%= c.people %></td><td class="num"><%= c.scales %></td></tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="footnote" style="margin-top:12px;">
+    The rule reads the scale's <em>family</em> and its <em>level</em> separately, so a Casual CSE Level 5 lands where a Permanent CSE Level 5 does, and a suffix such as “17 yrs” does not break the match — while “Teachers … Level 3” and “CSE Level 3” stay the different scales they are. Teachers scales are ECT; CSE 1–2 Trainee, 3–4 Cert 3, 5–6 Dip, 7–8 Management; Support Worker scales are Support (their L1.1 is a support-worker step, never a CSE level); anything else is Unclassified.
+  </p>
+</details>
+<% } %>
+
+<p class="footnote">
+  Read-only. The mapping lives in <code>services/classification.js</code>; changing it is a code change, then a talent sync. This page exists so a scale that is unmapped or in the wrong category can be seen rather than inferred from a number that looks wrong.
+</p>
+<%- include('partials/footer') %>
