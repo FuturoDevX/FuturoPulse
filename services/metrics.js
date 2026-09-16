@@ -1732,16 +1732,27 @@ function pcTurnoverReport(ownaId = null, month = null) {
 }
 // The combined rolling rate month by month, in the shape the P&C chart tabs already consume. Only
 // months with an entry become points, so the line is sparse-but-honest like every other P&C series.
+//
+// Every point is put on the SAME twelve-month basis. The rolling rate is leavers summed over the
+// entered months ÷ headcount averaged over them, so while the window is still filling the numerator
+// grows month after month against a denominator that does not: a centre with identical figures every
+// month would climb 5, 10, 15, 20… purely because more months are entered, on an axis shared with
+// full-year points and with the target line. Scaling a window of `entered` months to twelve makes the
+// points comparable — flat business, flat line — and `partial` lets the view say so.
 function pcTurnoverSeries(ownaId = null, full = false, limit = 12) {
   const months = db.prepare(`SELECT DISTINCT month FROM pc_turnover_entry WHERE (resignations IS NOT NULL OR terminations IS NOT NULL OR headcount IS NOT NULL)${ownaId ? " AND owna_id = ?" : ""} ORDER BY month`)
     .all(...(ownaId ? [ownaId] : [])).map((r) => r.month);
-  const pts = months.map((mth) => ({ month: mth, value: _pcTurnoverScope(ownaId, monthsEndingAt(mth, PC_TURNOVER_WINDOW)).rates.combined }))
-    .filter((p) => p.value != null);
+  const pts = months.map((mth) => {
+    const r = _pcTurnoverScope(ownaId, monthsEndingAt(mth, PC_TURNOVER_WINDOW));
+    const v = r.rates.combined; // null unless at least one month carries a headcount, so entered >= 1
+    return { month: mth, value: v == null ? null : Math.round((v * PC_TURNOVER_WINDOW / r.window.entered) * 10) / 10, complete: r.window.complete };
+  }).filter((p) => p.value != null);
   const shown = (!full && limit && limit < pts.length) ? pts.slice(-limit) : pts;
   return {
     labels: shown.map((p) => _pcPeriodLabel(p.month, "month")),
     points: shown.map((p) => p.value),
     cadence: "month", full: pts.length, shown: shown.length,
+    partial: shown.filter((p) => !p.complete).length, // points annualised from a part-filled window
   };
 }
 

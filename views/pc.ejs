@@ -53,6 +53,9 @@
   const pts = s.points;
   const latest = pts.length ? pts[pts.length-1] : null;
   const pcLc = { labels: s.labels, height: 300, suf: mt.suf, target: mt.target, connect: true, series: [ { name: mt.name, points: pts } ] };
+  // A turnover point drawn from a part-filled window is scaled to a year so it sits on the same axis
+  // as the full ones; say so while any of the plotted points are.
+  const cadence = (mt.key === 'turnover' && s.partial > 0) ? 'rolling 12 months · annualised while fewer are entered' : mt.cadence;
 %>
 <div class="pc-tabs">
   <% METRICS.forEach(function(x){ %>
@@ -63,7 +66,7 @@
   <div class="pc-head">
     <div>
       <div class="pcm-name" style="font-size:20px;"><%= mt.name %></div>
-      <div class="pcm-cad"><%= mt.cadence %><% if(mt.target!=null){ %> · target <%= mt.better==='low'?'≤':'≥' %><%= mt.target %><%= mt.suf %><% } %></div>
+      <div class="pcm-cad"><%= cadence %><% if(mt.target!=null){ %> · target <%= mt.better==='low'?'≤':'≥' %><%= mt.target %><%= mt.suf %><% } %></div>
     </div>
     <div class="pcm-val <%= flag(latest, mt.target, mt.better) %>" style="font-size:40px;"><%= latest==null ? '—' : latest+mt.suf %></div>
   </div>

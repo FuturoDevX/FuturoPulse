@@ -288,11 +288,51 @@ test('Turnover the owner enters — by centre, by month', async (t) => {
       db.prepare("INSERT INTO pc_metrics (owna_id, month, turnover, updated_at) VALUES ('a','2026-09',77.7,datetime('now'))").run();
       const s = freeze(FROZEN, () => m.pcTurnoverSeries(null, true));
       assert.ok(s.points.length >= 2);
-      assert.equal(s.points[s.points.length - 1], 46.9);
+      // The plotted figure is the rolling rate put on a twelve-month basis, so it can share an axis
+      // with the full-year points: 46.9% over the five entered months is 46.9 × 12/5 a year.
+      assert.equal(s.points[s.points.length - 1], 112.6);
       assert.ok(!s.points.includes(77.7), 'the uploaded spreadsheet figure is not plotted');
       const again = await freeze(FROZEN, () => page('/pc?metric=turnover', cookie));
       assert.ok(!again.includes('77.7'), 'and it is nowhere on the page');
       db.prepare("DELETE FROM pc_metrics WHERE owna_id='a' AND month='2026-09'").run();
+    });
+
+    await t.test('a filling window does not read as a rising trend: partial points are annualised', async () => {
+      // Echo, entered from scratch and perfectly flat — 1 resignation, 1 termination, headcount 40 in
+      // every month from April to September. Nothing about the business changes across the six months.
+      const flat = (mth) => db.prepare("INSERT OR IGNORE INTO pc_turnover_entry (owna_id, month, resignations, terminations, headcount, updated_at) VALUES ('e',?,1,1,40,datetime('now'))").run(mth);
+      ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'].forEach(flat);
+
+      const s = freeze(FROZEN, () => m.pcTurnoverSeries('e', true));
+      assert.equal(s.points.length, 6);
+      // Two leavers a month against 40 is 60% a year, and every point says 60. Plotting the raw rolling
+      // figure gave 5, 10, 15, 20, 25, 30 — a sixfold "rise" that was only the window filling up.
+      assert.deepEqual(s.points, [60, 60, 60, 60, 60, 60]);
+      assert.equal(s.partial, 6, 'and all six are scaled from a part-filled window');
+      // The group line had the same shape, so it gets the same treatment.
+      assert.equal(new Set(freeze(FROZEN, () => m.pcTurnoverSeries('e', true)).points).size, 1);
+
+      // On the page: a flat line, a headline that is not six times the first month, and a label that
+      // says what has been done rather than the bare "rolling 12 months" the points were not.
+      const cookie = await login('exec');
+      const html = await freeze(FROZEN, () => page('/pc?metric=turnover&owna=e', cookie));
+      assert.match(html, /annualised while fewer are entered/, 'the chart says what it has done');
+      assert.ok(!html.includes('rolling 12 months · entered'), 'and does not claim a year it does not have');
+      s.labels.forEach((l) => assert.ok(html.includes('Turnover · ' + l + ': 60%'), l + ' must read 60%'));
+      assert.ok(!html.includes('Turnover · ' + s.labels[0] + ': 5%'), 'the first month is no longer 5%');
+
+      // Fill the whole window and the scaling is a no-op (12/12): the same 60%, the flag clears, and
+      // the chart goes back to calling itself a rolling twelve months.
+      for (let i = 2024 * 12 + 9; i <= 2026 * 12 + 2; i++) flat(`${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`);
+      const year = freeze(FROZEN, () => m.pcTurnoverSeries('e'));
+      assert.equal(year.shown, 12);
+      assert.equal(year.partial, 0, 'every plotted point now covers a full twelve months');
+      assert.deepEqual(new Set(year.points), new Set([60]));
+      const yearHtml = await freeze(FROZEN, () => page('/pc?metric=turnover&owna=e', cookie));
+      assert.match(yearHtml, /rolling 12 months · entered/);
+      assert.ok(!yearHtml.includes('annualised while fewer are entered'));
+
+      db.prepare("DELETE FROM pc_turnover_entry WHERE owna_id='e'").run();
     });
 
     await t.test('the entry stores counts only — no name, no employee id, no date of birth', () => {
