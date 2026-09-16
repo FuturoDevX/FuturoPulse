@@ -386,6 +386,46 @@ test('eNPS survey trial',async(t)=>{
   assert.equal(counts.used,days.length,'the admin page counts answers off the flag');
  });
 
+ await t.test('strip the token and a centre\'s invitations are two kinds of row: spent and not',()=>{
+  // The test above catches a column that holds a response's DAY, because it matches each column
+  // against submitted_on. It would NOT catch the same fact written in another shape — an instant, an
+  // epoch, a counter of the order people answered — since matching '2026-10-02' against those returns
+  // nothing and the assertion passes for the wrong reason. Each of those re-identifies just as well:
+  // order the spent invitations by a sequence and order the answers by id, and the two lists line up.
+  //
+  // So state the invariant the guarantee actually rests on, over every round in the database rather
+  // than the one the previous test built. Within a centre the only column that may vary is the token;
+  // the spent flag may take the two values a flag has and no others. Drop the token and what is left
+  // of a centre's rows must collapse to at most TWO distinct tuples — spent, and not spent. A column
+  // that tells two respondents apart is a per-respondent value whatever its type, and a per-respondent
+  // value on this side of the severing is a name. used_on gave one tuple per person who had answered.
+  const cols=db.prepare('PRAGMA table_info(survey_invitations)').all().map((c)=>c.name);
+  const rest=cols.filter((c)=>c!=='token');
+  // Every round that issued invitations, not every round: the closed-round test above creates one that
+  // was never exported, and an empty round proves nothing either way.
+  const allRounds=db.prepare('SELECT DISTINCT round_id AS id FROM survey_invitations ORDER BY round_id').all();
+  assert.ok(allRounds.length>=2,'both invited rounds must be in the database, or this proves nothing');
+  let checked=0;
+  for(const r of allRounds){
+   const centres=db.prepare('SELECT DISTINCT owna_id FROM survey_invitations WHERE round_id=?').all(r.id);
+   for(const c of centres){
+    const rows=db.prepare('SELECT * FROM survey_invitations WHERE round_id=? AND owna_id IS ?').all(r.id,c.owna_id);
+    // The flag must BE a flag. Widen it to a day, an instant or a sequence number and a centre where
+    // only one person has answered would still collapse to two tuples, so say this outright.
+    for(const row of rows)
+     assert.ok(row.used===0||row.used===1,`survey_invitations.used holds ${JSON.stringify(row.used)} — that is not a flag`);
+    const shapes=new Set(rows.map((row)=>JSON.stringify(rest.map((k)=>row[k]))));
+    assert.ok(shapes.size<=2,
+      `round ${r.id}, centre ${c.owna_id}: ${rows.length} invitations take ${shapes.size} distinct shapes `
+      +`once the token is removed — a column past the spent flag is telling respondents apart`);
+    checked+=rows.length;
+   }
+  }
+  assert.equal(checked,db.prepare('SELECT COUNT(*) n FROM survey_invitations').get().n,
+    'the scan missed invitations, so it proved less than it says');
+  assert.ok(checked>=ACTIVE_WITH_EMAIL*2,'both rounds\' invitations must be in the scan');
+ });
+
  // ===== Reporting =====
  await t.test('the five-response threshold hides a small centre and still counts it in the group',async()=>{
   surveyRoutes.resetRateLimit();
