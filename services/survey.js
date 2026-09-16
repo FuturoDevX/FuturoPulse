@@ -9,7 +9,10 @@
 //                        export reads it from payroll, writes it into the file the admin mail-merges
 //                        from, and drops it. It is never written to this database. Nor is a person
 //                        implied by a row's POSITION — see exportRows() for why that had to be bought
-//                        with a key rather than assumed.
+//                        with a key rather than assumed. The one column that says WHOSE a row is,
+//                        assign_rank, says it only to someone holding that key: it is an HMAC of the
+//                        round, the centre and a payroll id, the key lives in the environment, and
+//                        without it the value is 64 hex characters that match nothing.
 //   survey_responses     round, centre, score, the two free-text answers, the DAY it was submitted —
 //                        and nothing that says which invitation it came from.
 //
@@ -116,16 +119,37 @@ function currentRound(today = cal.today()) {
 // magic link survives a mail merge intact.
 function newToken() { return crypto.randomBytes(32).toString("base64url"); }
 
-// Issue tokens for a round so that each centre has at least `want` of them, and return every invitation
-// for that round grouped by centre, in creation order. Called by the export; safe to call again.
+// Issue one token per RANK that does not have one yet, and return every invitation for that round
+// grouped by centre. Called by the export; safe to call again, and that is the point — a rank is a
+// person's own keyed value (see exportRows), so calling this a second time mints a row for a new starter
+// and nothing at all for anybody who already has one. It is idempotent per person rather than per
+// headcount, which is what stops a re-run handing someone a second live link.
 function ensureInvitations(roundId, wantByCentre, today = cal.today()) {
   const r = round(roundId);
   if (!r) throw new Error("No such round.");
-  const ins = db.prepare(`INSERT INTO survey_invitations (token, round_id, owna_id, centre_label, issued_on) VALUES (?,?,?,?,?)`);
+  // issued_on is a ROUND-WIDE date, which is the whole of what it is allowed to be: a row carrying its
+  // own date is a row that can be told from its neighbours, and at a centre where one person started
+  // this week, "the invitation issued on Tuesday" and "the person who started on Tuesday" are the same
+  // sentence. So a token minted for a new starter joins the date the round was issued on.
+  const issuedOn = (db.prepare("SELECT MIN(issued_on) d FROM survey_invitations WHERE round_id = ?").get(roundId) || {}).d || today;
+  const ins = db.prepare(`INSERT INTO survey_invitations (token, round_id, owna_id, centre_label, issued_on, assign_rank)
+    VALUES (?,?,?,?,?,?)`);
+  // Over the whole ROUND, not one centre of it: a rank names one person, and the unique index on
+  // (round_id, assign_rank) says so too. A payroll record that turns up under two locations must still
+  // come away with one token rather than a constraint error.
+  const have = new Set(db.prepare(`SELECT assign_rank FROM survey_invitations
+    WHERE round_id = ? AND assign_rank IS NOT NULL`).all(roundId).map((x) => x.assign_rank));
   db.transaction(() => {
-    for (const { owna_id, centre_label, want } of wantByCentre) {
-      const have = db.prepare(`SELECT COUNT(*) n FROM survey_invitations WHERE round_id = ? AND owna_id IS ?`).get(roundId, owna_id).n;
-      for (let i = have; i < want; i++) ins.run(newToken(), roundId, owna_id, centre_label, today);
+    for (const { owna_id, centre_label, ranks } of wantByCentre) {
+      // In RANK order, never in the order the caller holds its people. The caller reads payroll, and
+      // payroll order is a name for every row: mint a centre's tokens in payroll order and rowid order
+      // pairs them off against the payroll list for anyone holding this file, with no key and nothing
+      // kept. Rank order is the keyed order, which without the key is no order at all.
+      for (const rank of [...(ranks || [])].sort()) {
+        if (have.has(rank)) continue;
+        ins.run(newToken(), roundId, owna_id, centre_label, issuedOn, rank);
+        have.add(rank);            // a payroll list that names someone twice must still get one token
+      }
     }
   })();
   return invitationPool(roundId);
@@ -134,11 +158,11 @@ function ensureInvitations(roundId, wantByCentre, today = cal.today()) {
 // The invitations a round already has, grouped by centre. Reads, and only reads — the preview in
 // exportRows() runs on this alone, so that looking at a round cannot bring its tokens into existence.
 //
-// rowid order is creation order. It is a STABLE order, which is what lets a pool be indexed the same
-// way twice, and it is not a meaningful one: which person takes which of these rows is decided by the
-// keyed shuffle in exportRows(), so a rowid is not an employee number.
+// rowid order is creation order. It is a STABLE order and not a meaningful one: which person takes
+// which of these rows is decided by the rank each row carries, so a rowid is not an employee number.
 function invitationPool(roundId) {
-  const all = db.prepare(`SELECT rowid AS rid, token, owna_id, centre_label, used FROM survey_invitations WHERE round_id = ? ORDER BY rowid`).all(roundId);
+  const all = db.prepare(`SELECT rowid AS rid, token, owna_id, centre_label, used, assign_rank
+                          FROM survey_invitations WHERE round_id = ? ORDER BY rowid`).all(roundId);
   const byCentre = new Map();
   for (const inv of all) {
     const k = inv.owna_id == null ? "" : inv.owna_id;
@@ -360,15 +384,21 @@ async function activeStaff({ today = cal.today() } = {}) {
 //
 // THE KEY MUST NOT BE KEPT WITH THE BACKUPS. It is the one thing that turns that file back into names.
 //
-// Stability is still exactly as good as the staff list, which is all it ever was: same key and same
-// people, same links; a joiner or a leaver re-shuffles that centre, where before it shifted every
-// position after theirs. Either way a changed list means changed links — so once a centre's tokens have
-// been issued, an export that would re-shuffle that centre REFUSES rather than silently re-pairing. See
-// the guard in exportRows() for what re-pairing costs, and the admin page for the saved file it sends
-// the admin back to.
+// AND THE RANK IS WRITTEN ON THE INVITATION, at the moment it is issued. That is the difference between
+// this and a shuffle. A shuffle gave a person a POSITION in their centre, and a position is a fact about
+// their colleagues: change the set of payroll ids at a centre and every position moves, so the pairing
+// could only ever be recomputed, never honoured. One resignation plus one new starter at the same centre
+// on the same day is such a change while leaving the headcount alone — and the reminder then handed a
+// survivor somebody else's link, which is a second live link in a real inbox and a second vote in the
+// same eNPS figure. Recording the rank makes a person's token a fact about THEM: a leaver's row is never
+// matched again, a joiner gets a freshly minted one, and every survivor keeps the exact token they were
+// sent. Nothing is given away that was not already — the rank is the same keyed value the export has
+// always computed, and without the key it pairs nobody. See db/schema.sql.
 const ASSIGN_KEY = process.env.SURVEY_ASSIGN_KEY || process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
-// Reads after the admin route's "Could not build the export: " and after "Last send failed: ".
+// Both read after the admin route's "Could not build the export: " and after "Last send failed: ".
 const STAFF_LIST_MOVED = "the staff list has changed since this round was sent — merge the reminder from the file you saved";
+const ASSIGN_KEY_MOVED = "SURVEY_ASSIGN_KEY is not the key this round's links were issued under, so which link is whose "
+  + "cannot be worked out — restore that key, or merge the reminder from the file you saved. Nothing has been sent.";
 function assignRank(roundId, centreKey, payrollId) {
   return crypto.createHmac("sha256", ASSIGN_KEY).update(`enps-assign|${roundId}|${centreKey}|${payrollId}`).digest("hex");
 }
@@ -379,18 +409,13 @@ function assignRank(roundId, centreKey, payrollId) {
 const PREVIEW_TOKEN = "PREVIEW-LINK-NOT-A-REAL-TOKEN";
 
 // { preview: true } is READ-ONLY: it mints no token and stamps no sent_on, so it can be run on a whim.
-//
-// That is not tidiness. The guard below arms on a round's invitations EXISTING, and the dry run on the
-// admin page — the owner's pre-flight, run repeatedly before the real send — used to go through here in
-// full: it minted the round's tokens and stamped them sent. One resignation between that dry run and the
-// send then re-shuffled a centre, the guard fired, and the round could no longer be exported or sent at
-// all — while nothing had been sent and no file had been saved to merge the reminder from. So the guard
-// is armed by handing links out, and looking is not handing out.
+// The dry run on the admin page — the owner's pre-flight, run repeatedly before the real send — goes
+// through here, and looking at a round must not bring its tokens into existence.
 //
 // A preview reports against the invitations that already exist (after a real export or send, that is all
-// of them, and the report is exact). Where a round has none yet, the row carries PREVIEW_TOKEN so the
-// count, the centre and the address are still real — which is what the dry run is for — and the link is
-// visibly not anyone's.
+// of them, and the report is exact). Where a person has none yet — a round not issued at all, or a new
+// starter since it was — the row carries PREVIEW_TOKEN so the count, the centre and the address are
+// still real, which is what the dry run is for, and the link is visibly not anyone's.
 async function exportRows(roundId, { baseUrl, today = cal.today(), preview = false } = {}) {
   const r = round(roundId);
   if (!r) throw new Error("No such round.");
@@ -402,56 +427,93 @@ async function exportRows(roundId, { baseUrl, today = cal.today(), preview = fal
     if (!byCentre.has(k)) byCentre.set(k, []);
     byCentre.get(k).push(p);
   }
-  // >>> REFUSE TO RE-SHUFFLE. <<<
-  // Who takes which of a centre's tokens is a function of WHO ELSE works there, so once a centre's
-  // tokens are out, a joiner or a leaver re-pairs the whole centre — and nothing here records who was
-  // sent what, so the old pairing cannot be honoured, only guessed at. Handing out the new one costs
-  // two things, both invisible on every page: a person who has not answered is given a spent token and
-  // meets "this survey isn't open" with no way back in, and a person who has already answered is given
-  // an unspent one and a second vote into the same eNPS figure. So the export stops instead, and the
-  // admin merges the reminder from the file they saved, which still names the right links.
-  // Counted per centre, in both directions, and over the centres in the round as well as the centres in
-  // today's payroll, so a centre that has emptied out or appeared since is a change too.
-  const issued = db.prepare(`SELECT owna_id, COUNT(*) n FROM survey_invitations WHERE round_id = ? GROUP BY owna_id`).all(roundId);
-  if (issued.length) {
-    const have = new Map(issued.map((x) => [x.owna_id == null ? "" : x.owna_id, x.n]));
-    const moved = [...new Set([...have.keys(), ...byCentre.keys()])]
-      .some((k) => (have.get(k) || 0) !== (byCentre.get(k) || []).length);
+  // Every active person's own rank — their centre, this round and their payroll id under the key, and
+  // nothing about anybody else.
+  const rankOf = new Map();
+  for (const [k, list] of byCentre) for (const p of list) rankOf.set(String(p.id), assignRank(roundId, k, p.id));
+
+  let pool = invitationPool(roundId);
+  const byRank = new Map();                       // rank -> the invitation carrying it, over the whole round
+  const index = () => { byRank.clear(); for (const list of pool.values()) for (const inv of list) if (inv.assign_rank) byRank.set(inv.assign_rank, inv); };
+  index();
+  // A person's own row, wherever this round issued it. Their rank carries the centre they worked at when
+  // it was issued, so somebody who has TRANSFERRED to another Futuro centre since reads as a leaver at
+  // one and a new starter at the other — and minting for them would put a second live link in the inbox
+  // of someone who may already have answered. So they are looked for at every centre this round knows
+  // about, not only at today's one, and keep the link they were sent.
+  const centreKeys = () => [...new Set([...pool.keys(), ...byCentre.keys()])];
+  const mine = (p) => {
+    const here = byRank.get(rankOf.get(String(p.id)));
+    if (here) return here;
+    for (const k of centreKeys()) { const there = byRank.get(assignRank(roundId, k, p.id)); if (there) return there; }
+    return null;
+  };
+
+  // ---- Rounds issued before the rank was recorded ---------------------------------------------------
+  // Their rows carry no rank, so there is exactly one way to know whose each one is: the pairing they
+  // were handed out with — that centre's people ordered by rank against that centre's rows in rowid
+  // order. That pairing is only sound while the centre's people are the same people, which is the count
+  // check this export has always made, so it is made here, once, and the answer is written down. After
+  // this a round is ranked and nobody's token depends on anybody else again.
+  const unranked = [...pool.values()].flat().filter((inv) => !inv.assign_rank);
+  if (unranked.length) {
+    if (unranked.length !== [...pool.values()].flat().length) throw new Error(STAFF_LIST_MOVED); // half-ranked: cannot happen, never guess
+    const moved = [...new Set([...pool.keys(), ...byCentre.keys()])]
+      .some((k) => (pool.get(k) || []).length !== (byCentre.get(k) || []).length);
     if (moved) throw new Error(STAFF_LIST_MOVED);
+    const adopted = [];
+    for (const [k, list] of pool) {
+      (byCentre.get(k) || []).map((p) => ({ id: String(p.id), rank: rankOf.get(String(p.id)) }))
+        .sort((a, b) => (a.rank < b.rank ? -1 : a.rank > b.rank ? 1 : a.id.localeCompare(b.id)))
+        .forEach((x, i) => { if (list[i]) { list[i].assign_rank = x.rank; byRank.set(x.rank, list[i]); adopted.push([x.rank, list[i].token]); } });
+    }
+    if (!preview) {
+      const stampRank = db.prepare("UPDATE survey_invitations SET assign_rank = ? WHERE token = ? AND assign_rank IS NULL");
+      db.transaction(() => { for (const [rank, token] of adopted) stampRank.run(rank, token); })();
+    }
   }
 
-  const pool = preview ? invitationPool(roundId)
-    : ensureInvitations(roundId, [...byCentre.values()].map((list) =>
-      ({ owna_id: list[0].owna_id, centre_label: list[0].centre_label, want: list.length })), today);
+  // ---- The key has to be the same key ---------------------------------------------------------------
+  // A rank is an HMAC under ASSIGN_KEY, which falls back to SESSION_SECRET and then to a value minted for
+  // this process alone. Change it and nobody's rank matches the row they were sent: every person reads as
+  // a new starter, and minting for them all would hand the whole round a SECOND link — the exact thing
+  // the rank exists to prevent. So a round that already holds invitations has to still recognise at least
+  // one of the people on today's payroll. Recognising nobody is the key moving, not the staff.
+  if (byRank.size && staff.length && !staff.some((p) => mine(p))) throw new Error(ASSIGN_KEY_MOVED);
 
-  // The shuffle. Each centre's people are ordered by their keyed rank and take that centre's pool in
-  // rowid order, so a person's slot is a function of the key and of who else works there — never of
-  // where they sit in the payroll list. Payroll ids are unique across the company, so one map does.
-  const slot = new Map();
-  for (const [k, list] of byCentre) {
-    list.map((p) => ({ id: String(p.id), rank: assignRank(roundId, k, p.id) }))
-      .sort((a, b) => (a.rank < b.rank ? -1 : a.rank > b.rank ? 1 : a.id.localeCompare(b.id)))
-      .forEach((x, i) => slot.set(x.id, i));
+  // Issue a token for anyone who does not have one yet — the whole round on the first export, one new
+  // starter afterwards. Anybody the round already holds a row for is not in this list at all, which is
+  // what makes running the export again a reminder rather than a second batch of links.
+  if (!preview) {
+    const wanted = new Map();
+    for (const [k, list] of byCentre) for (const p of list) {
+      if (mine(p)) continue;
+      if (!wanted.has(k)) wanted.set(k, { owna_id: p.owna_id, centre_label: p.centre_label, ranks: [] });
+      wanted.get(k).ranks.push(rankOf.get(String(p.id)));
+    }
+    if (wanted.size) { pool = ensureInvitations(roundId, [...wanted.values()], today); index(); }
   }
+
   const rows = staff.map((p) => {
-    const k = p.owna_id == null ? "" : p.owna_id;
-    const inv = (pool.get(k) || [])[slot.get(String(p.id))];
-    // The guard above means every slot has an invitation; if one is ever missing the list moved anyway,
-    // and stopping says so instead of throwing a TypeError at the admin. A preview is the exception: a
+    const inv = mine(p);
+    // Every person was either matched above or minted one just now, so this cannot fire on a real
+    // export; saying so is still better than a TypeError at the admin. A preview is the exception — a
     // round whose tokens have not been minted is exactly what it is there to look at.
     if (!inv && !preview) throw new Error(STAFF_LIST_MOVED);
     // A spent token here is this person's own — the pairing is unchanged, so they answered — and it has
     // to go back out spent. Minting them a fresh one because the flag is set would hand every
     // respondent a second working link on every reminder, which is the same defect from the other side.
     const token = inv ? inv.token : PREVIEW_TOKEN;
-    return { email: p.email, centre: p.centre_label, token, link: linkFor(baseUrl, token) };
+    // The centre on the row is the INVITATION's, which is the centre the magic link will ask them about
+    // and the centre their answer will be filed under. The two are the same for everybody but a person
+    // who has moved centres mid-round, and for them the invitation is the honest one.
+    return { email: p.email, centre: inv ? inv.centre_label : p.centre_label, token, link: linkFor(baseUrl, token) };
   });
-  // Record that these tokens have been handed out, so the page can say when the round was last sent.
-  // A preview hands nothing out and writes nothing.
-  if (!preview) {
-    const stamp = db.prepare("UPDATE survey_invitations SET sent_on = ? WHERE token = ?");
-    db.transaction(() => { for (const row of rows) stamp.run(today, row.token); })();
-  }
+  // Record that this round has been handed out, so the page can say when it was last sent. Stamped over
+  // the ROUND and not over the rows in the file, for the same reason issued_on is round-wide: the row of
+  // someone who has since left payroll would otherwise keep an older date than everybody else's and be
+  // the one row at that centre a reader could pick out. A preview hands nothing out and writes nothing.
+  if (!preview) db.prepare("UPDATE survey_invitations SET sent_on = ? WHERE round_id = ?").run(today, roundId);
   return { rows, noEmail: noEmail.length, round: r, preview };
 }
 

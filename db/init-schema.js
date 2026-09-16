@@ -40,6 +40,13 @@ function leaveTotals(input) {
 
 function initSchema(db) {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
+  // BEFORE the schema, because the schema's unique index is on a column a live database may not have
+  // yet: survey_invitations.assign_rank, which pins a person's magic link to that person instead of to
+  // their position among today's colleagues (see db/schema.sql and exportRows in services/survey.js).
+  // Rows issued before this release keep a NULL here and are ranked, in place, by the next export.
+  const invCols = db.prepare("PRAGMA table_info(survey_invitations)").all().map((c) => c.name);
+  if (invCols.length && !invCols.includes("assign_rank")) db.exec("ALTER TABLE survey_invitations ADD COLUMN assign_rank TEXT");
+
   db.exec(schema); // all CREATE ... IF NOT EXISTS — safe to run every boot
 
   // Lightweight migrations for columns added after a table's first release.

@@ -295,6 +295,66 @@ test('Microsoft Graph sender for the eNPS invitations', async (t) => {
     assert.equal(sends().length, 0, 'nothing at all leaves when everyone already has their link');
   });
 
+  // ===== One in, one out: the staff change a headcount guard cannot see =====
+  // The retry above is only safe while the same person comes back with the same token. That used to
+  // hold for as long as the SET of people at a centre held, because a person's link was their position
+  // once the centre was ordered — and the export guarded it by comparing HEADCOUNTS. One resignation
+  // and one new starter at the same centre on the same day is a change a count cannot see: the export
+  // waved it through and re-paired the centre, the delivery log skipped the tokens it had already sent
+  // — which now belonged to different people — and the result was a second live link in one inbox, two
+  // votes into the same eNPS figure, and two people sent nothing at all. Every one of those is
+  // irreversible: it is a real message in a real person's inbox.
+  await t.test('a 403 half way, then a resignation and a new starter, and the retry still sends one link each', async () => {
+    reset();
+    const round = newRound('one-in-one-out');
+    const first = await rowsFor(round);
+    const tokenOf = new Map(first.map((r) => [r.email, r.token]));
+
+    // Two delivered, then the RBAC 403 that stops a run — the interruption the Retry button exists for.
+    let n = 0;
+    handler = async (u) => {
+      if (u.includes('/oauth2/v2.0/token')) return tokenResponse();
+      n += 1;
+      return n <= 2 ? accepted() : new Response(null, { status: 403 });
+    };
+    await assert.rejects(() => surveyMail.graphSendRound(first, { roundId: round.id, closesOn: CLOSES, sleep: quiet, log: quiet }), /403/);
+    const deliveredFirst = sends().slice(0, 2).map(recipient);
+    assert.equal(deliveredFirst.length, 2, 'two delivered before the run stopped');
+    assert.equal(surveyMail.deliveredTokens(round.id).size, 2);
+
+    const real = eh.allEmployees;
+    try {
+      // Employee 11 resigns and employee 14 starts at Alpha. Three people before, three people after.
+      eh.allEmployees = async () => [...EMPLOYEES.filter((e) => e.id !== 11), emp(14, 'Futuro Alpha')].map((e) => ({ ...e }));
+      reset();
+      const again = await rowsFor(round);
+      assert.equal(again.filter((r) => r.centre === 'Alpha').length, 3, 'the fixture must leave the headcount identical');
+      for (const r of again) if (tokenOf.has(r.email)) assert.equal(r.token, tokenOf.get(r.email), r.email + '\'s link moved when a colleague was replaced');
+      const starter = again.find((r) => r.email === 'staff14@personal.example');
+      assert.ok(starter, 'the new starter is not in the file');
+      assert.ok(![...tokenOf.values()].includes(starter.token), 'the new starter was handed a link that is already somebody else\'s');
+
+      // The admin presses "Retry the undelivered".
+      const out = await surveyMail.graphSendRound(again, { roundId: round.id, closesOn: CLOSES, sleep: quiet, log: quiet });
+      const second = sends().map(recipient);
+      assert.equal(out.sent, second.length);
+
+      // THE ASSERTIONS THAT MATTER, in the order the harm would arrive.
+      const all = [...deliveredFirst, ...second];
+      assert.equal(new Set(all).size, all.length, 'an address was sent a link twice');
+      for (const r of again) assert.ok(all.includes(r.email), r.email + ' was never sent a link at all — their token was marked delivered to somebody else');
+      // Nobody holds two links, delivered or not: one person, one token, across both exports.
+      const byEmail = new Map();
+      for (const r of [...first, ...again]) { if (!byEmail.has(r.email)) byEmail.set(r.email, new Set()); byEmail.get(r.email).add(r.token); }
+      for (const [email, set] of byEmail) assert.equal(set.size, 1, email + ' has been handed ' + set.size + ' different links');
+      // And in the form a respondent would meet it: no address has two links that both still open.
+      for (const [email, set] of byEmail)
+        assert.ok([...set].filter((tok) => survey.tokenState(tok, TODAY).state === 'open').length <= 1, email + ' holds two live links');
+      // The leaver keeps the link they were sent; it is not handed on and not reissued.
+      assert.ok(!again.some((r) => r.token === tokenOf.get('staff11@personal.example')), 'the leaver\'s token was re-paired to somebody else');
+    } finally { eh.allEmployees = real; }
+  });
+
   // ===== The order the log is written in, which is a column nobody declared =====
   await t.test('the delivery log records nothing about the order the round was sent in', async () => {
     reset();

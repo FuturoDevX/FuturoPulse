@@ -119,8 +119,10 @@ services:
       # a payroll call, so the pairing is an HMAC under this key instead. KEEP IT OUT OF THE BACKUPS:
       # stored beside the database file it undoes the anonymity it exists to protect. Unset, the app
       # falls back to SESSION_SECRET, which is also outside the database — so an existing deployment is
-      # safe without this variable. Changing it re-pairs the links, so a reminder for a round already
-      # sent must be merged from the saved file rather than a fresh export.
+      # safe without this variable. DO NOT CHANGE IT WHILE A ROUND IS OPEN: the rank each invitation
+      # carries was computed under this key, so a new one makes every link unrecognisable. The export
+      # stops rather than re-pairing when it sees that, but the only way on is to restore the key or to
+      # merge the reminder from the saved file.
       - key: SURVEY_ASSIGN_KEY
         generateValue: true
       # The magic link is a public route, so it is rate-limited per 10 minutes. The limit that matters is

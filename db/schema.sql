@@ -607,16 +607,45 @@ CREATE TABLE IF NOT EXISTS survey_rounds (
 -- the environment and never in this file, so the ordinal of a row is not an employee number and this
 -- file on its own pairs nobody. Anything that makes the assignment reproducible from stored data —
 -- ordering these rows by who they were issued for, or storing the slot — puts the identifier back.
+--
+-- assign_rank is that keyed value itself, written down, and it is NOT the slot. The slot was an ordinal
+-- within a centre, and an ordinal is a function of WHO ELSE works there: leave it unwritten and the only
+-- way to honour a pairing later is to recompute the whole centre, so one resignation plus one new starter
+-- on the same day quietly handed a survivor somebody else's token — a second live link in a real inbox.
+-- The rank is HMAC(SURVEY_ASSIGN_KEY, round | centre | payroll id): a person's own value, depending on
+-- nothing about their colleagues, so a leaver's row is simply never matched again and everyone else keeps
+-- the exact token they were sent. It gives this file away to nobody it did not already: it is the same
+-- keyed value the export has always computed, the key still lives only in the environment, and without
+-- the key the column is 64 hex characters uncorrelated with any payroll id. It is also scoped to ONE
+-- round, so two rounds of this table cannot be lined up to say "these two rows are the same person".
+--
+-- A centre's tokens are minted in RANK order, never in the order payroll returns its people, so rowid
+-- order is the keyed order and pairs nobody off against the payroll list. The residue, stated plainly: a
+-- token minted AFTER the round was issued — a new starter part way through — is the newest rowid at its
+-- centre, and payroll says who started that week. Its date columns do not give it away (both are
+-- round-wide, above), but its position in the table does, so someone holding this file and payroll can
+-- pick that one row out and read whether it has been spent. Never what it said: that is the other table,
+-- and nothing joins them.
 CREATE TABLE IF NOT EXISTS survey_invitations (
   token        TEXT PRIMARY KEY,     -- 32 random bytes, base64url; single-use
   round_id     INTEGER NOT NULL,
   owna_id      TEXT,                 -- the centre; NULL = a payroll location that is not a centre (support office)
   centre_label TEXT NOT NULL,        -- what question 1 says: "…recommend Futuro <centre_label>?"
-  issued_on    TEXT,                 -- YYYY-MM-DD the token was created (same day for the whole round)
-  sent_on      TEXT,                 -- YYYY-MM-DD it was last handed to an export / mail sender
-  used         INTEGER NOT NULL DEFAULT 0  -- 1 = spent. WHEN it was spent is deliberately not recorded
+  issued_on    TEXT,                 -- YYYY-MM-DD the ROUND was issued. Round-wide, including a token minted
+                                      -- later for a new starter: a row with its own date is a row that can be
+                                      -- told from its neighbours, and payroll knows who started that day
+  sent_on      TEXT,                 -- YYYY-MM-DD the ROUND was last handed to an export / mail sender.
+                                      -- Round-wide for the same reason: stamp only the rows in the file and
+                                      -- the row of someone who has since left keeps an older date of its own
+  used         INTEGER NOT NULL DEFAULT 0, -- 1 = spent. WHEN it was spent is deliberately not recorded
+  assign_rank  TEXT                  -- the keyed rank above. NULL on rows issued before it was recorded
 );
 CREATE INDEX IF NOT EXISTS idx_survey_inv_round ON survey_invitations(round_id, owna_id);
+-- One invitation per person per round, as a rule the database keeps rather than one the export
+-- remembers to apply: the rank already carries the centre, so (round, rank) is that person. NULLs do not
+-- collide in SQLite, which is exactly right for the rows issued before the column existed — they are
+-- ranked on the first export after this release and constrained from then on.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_inv_rank ON survey_invitations(round_id, assign_rank);
 
 -- TWO: the answers. Deliberately severed from the table above — no foreign key, no token, no invitation
 -- id, nothing that identifies which invitation this came from. The only columns the two tables share are

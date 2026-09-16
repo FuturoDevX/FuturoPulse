@@ -158,11 +158,46 @@ test('eNPS survey trial',async(t)=>{
    }
   }
   assert.ok(scanned>0,'the scan found no rows at all, so it proved nothing');
-  // The invitation table holds a token, a round, a centre, two round-wide dates and a spent flag.
-  // Nothing else, and in particular no date that varies from respondent to respondent — see the
-  // severing test below for why a day of use would be enough to undo all of this.
+  // The invitation table holds a token, a round, a centre, two round-wide dates, a spent flag and the
+  // keyed rank that says whose row it is TO SOMEONE HOLDING THE KEY and to nobody else. Nothing else,
+  // and in particular no date that varies from respondent to respondent — see the severing test below
+  // for why a day of use would be enough to undo all of this.
   assert.deepEqual(db.prepare('PRAGMA table_info(survey_invitations)').all().map((c)=>c.name),
-    ['token','round_id','owna_id','centre_label','issued_on','sent_on','used']);
+    ['token','round_id','owna_id','centre_label','issued_on','sent_on','used','assign_rank']);
+ });
+
+ await t.test('the rank written on an invitation says nothing without the key',()=>{
+  // assign_rank is the one column that knows whose row this is, so what it gives away KEYLESS is the
+  // whole question. It is an HMAC of the round, the centre and a payroll id: 64 hex characters, one per
+  // row, and computable only by someone holding SURVEY_ASSIGN_KEY — which this process has as
+  // SESSION_SECRET, so the test can be the attacker and check it needs exactly that.
+  const crypto=require('crypto');
+  const rank=(key,rid,centre,id)=>crypto.createHmac('sha256',key).update(`enps-assign|${rid}|${centre}|${id}`).digest('hex');
+  const ranks=db.prepare('SELECT assign_rank r FROM survey_invitations WHERE round_id=?').all(round.id).map((x)=>x.r);
+  assert.equal(ranks.length,ACTIVE_WITH_EMAIL);
+  for(const r of ranks) assert.match(r,/^[0-9a-f]{64}$/,'a rank must be an HMAC digest and nothing else');
+  assert.equal(new Set(ranks).size,ranks.length,'two people share a rank, so two people share a link');
+
+  // WITH the key it names the row, which is what makes the reminder possible: employee 11 works at
+  // Alpha, and the row carrying employee 11's rank holds the link employee 11 was actually sent.
+  const key='fixture-session-only';              // = SESSION_SECRET, the documented fallback
+  const mine=db.prepare('SELECT token FROM survey_invitations WHERE round_id=? AND assign_rank=?').get(round.id,rank(key,round.id,'a',11));
+  assert.ok(mine,'employee 11\'s own rank matches no invitation, so the reminder could not find their link');
+  assert.equal(mine.token,exported.rows.find((x)=>x.email==='staff11@personal.example').token,
+    'the row carrying a person\'s rank must be the row carrying their link');
+
+  // WITHOUT it, nothing. Another key, an unkeyed hash of the payroll id, the payroll id itself — none of
+  // them is in this table, so a copy of the file plus a payroll call still pairs nobody.
+  const stored=new Set(ranks);
+  for(const e of EMPLOYEES){
+   assert.ok(!stored.has(rank('a-different-key',round.id,'a',e.id)),'the rank is computable under another key');
+   assert.ok(!stored.has(crypto.createHash('sha256').update(String(e.id)).digest('hex')),
+     'the rank is an unkeyed hash of the payroll id, which pairs everybody from this file alone');
+   assert.ok(!stored.has(String(e.id)));
+  }
+  // And it is scoped to ONE round, so this table cannot be self-joined across rounds to say "these two
+  // rows are the same person" — a pseudonym that would outlive every round and every leaver.
+  for(const e of EMPLOYEES) assert.ok(!stored.has(rank(key,round.id+1,'a',e.id)),'a rank is the same in the next round, so it is a standing employee id');
  });
 
  await t.test('generating the export again hands the same person the same link',async()=>{
@@ -201,6 +236,16 @@ test('eNPS survey trial',async(t)=>{
   for(const k of ['a','b']){
    assert.equal(guessed.get(k).truth.length,6);
    assert.notDeepEqual(guessed.get(k).guess,guessed.get(k).truth,'centre '+k+' reconstructs in payroll order');
+  }
+  // The same attack run down the one column that DOES know whose row this is. A centre's tokens are
+  // minted in rank order, so ordering its rows by assign_rank is ordering them by rowid — and neither
+  // is payroll order, because the rank is keyed. This is the assertion that fails the moment a future
+  // export mints a centre's tokens in the order payroll hands its people over.
+  for(const k of ['a','b']){
+   const byRank=db.prepare('SELECT token FROM survey_invitations WHERE round_id=? AND owna_id=? ORDER BY assign_rank').all(round.id,k).map((x)=>x.token);
+   const payroll=staff.filter((p)=>p.owna_id===k).map((p)=>truthFor(p));
+   assert.equal(byRank.length,6);
+   assert.notDeepEqual(byRank,payroll,'centre '+k+' comes out in payroll order when its rows are sorted by rank');
   }
   // The pairing is keyed, so it lives outside this file: nothing stored may reproduce it. The column
   // list is pinned above — a slot column, or these rows ordered by who they were issued for, puts the
@@ -398,12 +443,18 @@ test('eNPS survey trial',async(t)=>{
   }
  });
 
- await t.test('a staff change between exports must not re-pair a centre\'s links',async()=>{
-  // The reminder is where this bites. Who takes which of a centre's tokens is a function of who else
-  // works there, and nothing here records who was sent what — so a joiner or a leaver silently re-pairs
-  // the whole centre, and the two ways that lands are both invisible on every page: a person who has
-  // NOT answered is handed a spent token and meets "this survey isn't open" with no way back in, and a
-  // person who already answered is handed an unspent one and a second vote into the same eNPS figure.
+ await t.test('a staff change between exports gives everyone else the link they already have',async()=>{
+  // THE REMINDER IS WHERE THIS BITES, and it used to bite hard. Which of a centre's tokens a person got
+  // was their POSITION once the centre was ordered by rank — a fact about their colleagues, not about
+  // them — so changing WHO works there moved everybody's link. The export guarded that by comparing
+  // HEADCOUNTS, which one resignation and one new starter at the same centre on the same day walk
+  // straight through: the guard saw six and six, re-paired the centre, and the retry then sent a second
+  // live link to someone who already had one and nothing at all to two people who had none.
+  //
+  // So a person's rank is written on their invitation when it is issued, and the pairing is theirs
+  // alone. Every case below is the same assertion: NOBODY IS EVER SENT TWO DIFFERENT LINKS, and nobody
+  // who is still on payroll loses the one they have.
+  //
   // Its own round, in December, so nothing above is disturbed. It opens after employee 53's end date,
   // so the only thing that moves the staff list here is what this test moves.
   const D1='2026-12-02', D2='2026-12-09';
@@ -415,10 +466,17 @@ test('eNPS survey trial',async(t)=>{
   const answered=alpha.slice(0,2);
   for(const e of answered) assert.deepEqual(survey.submit(tokenOf.get(e),{score:'10'},D1),{ok:true});
 
+  // Every link anyone has ever been handed for this round, so "two different live links" is a question
+  // the test can answer at the end rather than a shape it has to guess at.
+  const everSent=new Map();
+  const record=(rows)=>{ for(const x of rows){ if(!everSent.has(x.email)) everSent.set(x.email,new Set()); everSent.get(x.email).add(x.token); } };
+  record(sent.rows);
+
   // First, the reminder that must still work: same staff list a week later, same link for everyone,
   // and the two who answered still read closed rather than being handed a fresh one.
   const again=await freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'}));
   assert.equal(again.rows.length,sent.rows.length,'no second batch of tokens was minted');
+  record(again.rows);
   for(const x of again.rows){
    assert.equal(x.token,tokenOf.get(x.email),'the unchanged reminder moved '+x.email+'\'s link');
    assert.equal(survey.tokenState(x.token,D2).state,answered.includes(x.email)?'closed':'open');
@@ -427,36 +485,145 @@ test('eNPS survey trial',async(t)=>{
   const real=eh.allEmployees;
   const invitations=()=>db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r4.id).n;
   const responses=()=>db.prepare('SELECT COUNT(*) n FROM survey_responses WHERE round_id=?').get(r4.id).n;
+  const liveFor=(email)=>[...(everSent.get(email)||[])].filter((t)=>survey.tokenState(t,D2).state==='open');
   try {
-   // A leaver: one of the two who answered resigns mid-round. Regenerating would shift every Alpha
-   // slot after theirs.
+   // ---- A leaver: one of the two who answered resigns mid-round -------------------------------------
+   // This used to shift every Alpha slot after theirs, so the export refused and the round could not be
+   // reminded or retried at all. Now their row is simply never matched again.
    const goneId=Number(answered[0].match(/staff(\d+)@/)[1]);
    eh.allEmployees=async()=>EMPLOYEES.filter((e)=>e.id!==goneId).map((e)=>({...e}));
-   await assert.rejects(()=>freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'})),
-     /staff list has changed/,'the export re-paired a centre instead of stopping');
-   assert.equal(invitations(),sent.rows.length,'a refused export minted tokens anyway');
-   // Every link that is already out there still does exactly what it did: everyone who has not
-   // answered can still answer, and nobody who has can answer again.
-   for(const x of sent.rows)
-    assert.equal(survey.tokenState(tokenOf.get(x.email),D2).state,answered.includes(x.email)?'closed':'open',
-      x.email+' was locked out of a round that is still open');
-   for(const e of answered) assert.deepEqual(survey.submit(tokenOf.get(e),{score:'0'},D2),{ok:false,reason:'closed'});
-   assert.equal(responses(),2,'someone answered twice');
-   // And the admin is told why, in the words the route puts on the page.
+   const afterLeaver=await freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'}));
+   record(afterLeaver.rows);
+   assert.equal(afterLeaver.rows.length,sent.rows.length-1,'the leaver is out of the file and nobody else is');
+   assert.equal(invitations(),sent.rows.length,'a leaver must mint nothing: their row is orphaned, not reissued');
+   for(const x of afterLeaver.rows) assert.equal(x.token,tokenOf.get(x.email),x.email+'\'s link moved when a colleague left');
+   assert.ok(!afterLeaver.rows.some((x)=>x.token===tokenOf.get(answered[0])),'the leaver\'s token was handed to somebody else');
+   // And the admin gets the file rather than the page telling them to go and find the saved one.
    const adminCookie=await login('admin');
    const resp=await freeze(D2+'T03:00:00Z',()=>fetch(base+'/admin/survey/'+r4.id+'/export.csv',{headers:{cookie:adminCookie},redirect:'manual'}));
-   assert.equal(resp.status,302,'the download must not return a re-paired file'); await resp.text();
-   assert.match(decodeURIComponent(resp.headers.get('location')||''),/staff list has changed/);
+   assert.equal(resp.status,200,'the reminder must still be downloadable after somebody leaves');
+   const csv=await resp.text();
+   assert.equal(csv.trim().split('\r\n').length,sent.rows.length,'one header and one row per remaining staff member');
+   for(const x of afterLeaver.rows) assert.ok(csv.includes(x.token),'the file must carry the link '+x.email+' already has');
 
-   // The mirror case, which is the worse one: a joiner shifts the pairing the other way, so someone
-   // who has already answered comes up holding an unspent token.
+   // ---- A joiner: a new starter at the same centre ---------------------------------------------------
    eh.allEmployees=async()=>[...EMPLOYEES,emp(19,'Futuro Alpha')].map((e)=>({...e}));
-   await assert.rejects(()=>freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'})),
-     /staff list has changed/,'a joiner re-paired the centre instead of stopping');
-   assert.equal(invitations(),sent.rows.length,'a refused export minted tokens anyway');
+   const afterJoiner=await freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'}));
+   record(afterJoiner.rows);
+   assert.equal(afterJoiner.rows.length,sent.rows.length+1);
+   assert.equal(invitations(),sent.rows.length+1,'a joiner mints exactly one token');
+   for(const x of afterJoiner.rows.filter((y)=>y.email!=='staff19@personal.example'))
+    assert.equal(x.token,tokenOf.get(x.email),x.email+'\'s link moved when somebody joined');
+   const joiner=afterJoiner.rows.find((x)=>x.email==='staff19@personal.example');
+   assert.ok(joiner&&!new Set(tokenOf.values()).has(joiner.token),'the new starter was handed a link that is already someone else\'s');
+   assert.equal(survey.tokenState(joiner.token,D2).state,'open');
+   // A new starter's row must not be the one row at its centre with a date of its own, or payroll's
+   // start dates pick it out of the file without the key.
+   assert.equal(db.prepare('SELECT COUNT(DISTINCT issued_on) n FROM survey_invitations WHERE round_id=?').get(r4.id).n,1,
+     'a token minted mid-round carries its own issue date, which names the person who started that day');
+
+   // ---- ONE IN, ONE OUT, SAME HEADCOUNT — the change the old guard could not see --------------------
+   // Employee 11 resigns and employee 20 starts at Alpha on the same day. The centre still has seven
+   // people, so a guard that counts sees nothing at all.
+   eh.allEmployees=async()=>[...EMPLOYEES.filter((e)=>e.id!==11),emp(19,'Futuro Alpha'),emp(20,'Futuro Alpha')].map((e)=>({...e}));
+   const swapped=await freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'}));
+   record(swapped.rows);
+   assert.equal(swapped.rows.filter((x)=>x.centre==='Alpha').length,7,'the fixture must keep the headcount identical');
+   assert.equal(invitations(),sent.rows.length+2,'exactly one new token, for the one new starter');
+   for(const x of swapped.rows.filter((y)=>y.email!=='staff20@personal.example'))
+    assert.equal(x.token,tokenOf.get(x.email)||afterJoiner.rows.find((y)=>y.email===x.email).token,
+      x.email+'\'s link moved on a one-in-one-out at their centre');
+   const starter=swapped.rows.find((x)=>x.email==='staff20@personal.example');
+   assert.ok(starter&&!swapped.rows.some((x)=>x.email!==starter.email&&x.token===starter.token));
+   assert.ok(!swapped.rows.some((x)=>x.token===tokenOf.get('staff11@personal.example')),'the leaver\'s token was re-paired to somebody else');
+   const tokens=swapped.rows.map((x)=>x.token);
+   assert.equal(new Set(tokens).size,tokens.length,'two people are in the file holding the same link');
+
+   // ---- A TRANSFER: the same person, a different centre, mid-round ----------------------------------
+   // Their rank carries the centre they worked at when the round was issued, so they read as a leaver at
+   // Alpha and a new starter at Beta — and minting for them would be a second live link for somebody who
+   // may already have answered. They keep the one they were sent, and the file names the centre their
+   // link will actually ask them about.
+   // Somebody who has already ANSWERED moves from Alpha to Beta, so a second token would be a second vote.
+   const movedEmail=answered[1], movedId=Number(movedEmail.match(/staff(\d+)@/)[1]);
+   eh.allEmployees=async()=>[...EMPLOYEES.filter((e)=>e.id!==11),emp(19,'Futuro Alpha'),emp(20,'Futuro Alpha')]
+     .map((e)=>(e.id===movedId?{...e,primaryLocation:at('Futuro Beta')}:{...e}));
+   const moved=await freeze(D2+'T03:00:00Z',()=>survey.exportRows(r4.id,{baseUrl:'https://pulse.example'}));
+   record(moved.rows);
+   assert.equal(invitations(),sent.rows.length+2,'a transfer minted a second token for somebody who already had one');
+   const who=moved.rows.find((x)=>x.email===movedEmail);
+   assert.ok(who,'the transferred staff member is not in the file at all');
+   assert.equal(who.token,tokenOf.get(movedEmail),'a transfer moved their link');
+   assert.equal(who.centre,'Alpha','the file must name the centre their link asks about, which is where it was issued');
+   assert.equal(survey.tokenState(who.token,D2).state,'closed','they answered before the transfer, and that must still stand');
+
+   // >>> THE ASSERTION THE OWNER CARES ABOUT. <<< Over every export this test has run: nobody has been
+   // handed two different links, and nobody who has answered can answer again.
+   for(const [email,set] of everSent)
+    assert.equal(set.size,1,email+' has been sent '+set.size+' different links — two votes into the same eNPS figure');
+   for(const email of [...everSent.keys()]) assert.ok(liveFor(email).length<=1,email+' holds two live links');
    for(const e of answered) assert.deepEqual(survey.submit(tokenOf.get(e),{score:'0'},D2),{ok:false,reason:'closed'});
    assert.equal(responses(),2,'someone answered twice');
+   // Everyone still on payroll who has not answered can still answer, including through the swap.
+   for(const x of swapped.rows) assert.equal(survey.tokenState(x.token,D2).state,answered.includes(x.email)?'closed':'open',
+     x.email+' was locked out of a round that is still open');
   } finally { eh.allEmployees=real; }
+ });
+
+ await t.test('a round issued before the rank was recorded keeps every link it handed out',async()=>{
+  // The upgrade path. A round issued by the previous release carries no rank, and there is exactly one
+  // honest way to read those rows: the pairing they were sent with. So the first export after the
+  // upgrade adopts it — under the headcount check that release always applied — and writes it down.
+  // Nobody's link moves, and from then on nobody's link depends on anybody else.
+  const D='2026-12-20';
+  const r5=await freeze(D+'T03:00:00Z',()=>survey.createRound({name:'eNPS — issued before ranks',opens_on:D,closes_on:'2026-12-31'}));
+  const sent=await freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'}));
+  db.prepare('UPDATE survey_invitations SET assign_rank=NULL WHERE round_id=?').run(r5.id);   // as the old release left them
+  const after=await freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'}));
+  assert.equal(after.rows.length,sent.rows.length);
+  for(const x of after.rows) assert.equal(x.token,sent.rows.find((y)=>y.email===x.email).token,
+    x.email+'\'s link moved when the round was upgraded');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=? AND assign_rank IS NULL').get(r5.id).n,0,
+    'the adopted pairing must be written down, or it is guessed at again on the next export');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r5.id).n,sent.rows.length,'the upgrade minted a second batch');
+
+  // And where the staff list HAS moved, the old pairing cannot be recovered — there is nothing written
+  // down to recover it from — so that one export refuses, exactly as the previous release did.
+  db.prepare('UPDATE survey_invitations SET assign_rank=NULL WHERE round_id=?').run(r5.id);
+  const real=eh.allEmployees;
+  try {
+   eh.allEmployees=async()=>EMPLOYEES.filter((e)=>e.id!==11).map((e)=>({...e}));
+   await assert.rejects(()=>freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'})),
+     /staff list has changed/,'an unranked round whose staff have moved must not be paired by guesswork');
+   assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r5.id).n,sent.rows.length,'a refused export minted tokens anyway');
+  } finally { eh.allEmployees=real; }
+  await freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'}));  // re-rank it for the scans below
+ });
+
+ await t.test('an export refuses rather than reissue when the assign key is not the one the round was issued under',async()=>{
+  // SURVEY_ASSIGN_KEY falls back to SESSION_SECRET and then to a value minted for one process. Change
+  // it and no rank matches: every person reads as a new starter and minting would hand the WHOLE round
+  // a second link. Simulated the only way a test can without reloading the module — by replacing the
+  // stored ranks with values from some other key, which is exactly what the export would then see.
+  const D='2027-01-12';
+  const r6=await freeze(D+'T03:00:00Z',()=>survey.createRound({name:'eNPS — a key that moved',opens_on:D,closes_on:'2027-01-26'}));
+  const sent=await freeze(D+'T03:00:00Z',()=>survey.exportRows(r6.id,{baseUrl:'https://pulse.example'}));
+  const rows=db.prepare('SELECT token FROM survey_invitations WHERE round_id=?').all(r6.id);
+  const set=db.prepare('UPDATE survey_invitations SET assign_rank=? WHERE token=?');
+  rows.forEach((x,i)=>set.run(require('crypto').createHash('sha256').update('other-key|'+i).digest('hex'),x.token));
+  await assert.rejects(()=>freeze(D+'T03:00:00Z',()=>survey.exportRows(r6.id,{baseUrl:'https://pulse.example'})),
+    /SURVEY_ASSIGN_KEY is not the key/,'a changed key reissued the round instead of stopping');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r6.id).n,sent.rows.length,
+    'the whole round was minted a second link');
+  // Put the round back the way the fixture found it, so the scans below read a real round.
+  const back=db.prepare('UPDATE survey_invitations SET assign_rank=? WHERE token=?');
+  const crypto2=require('crypto');
+  const { staff }=await freeze(D+'T03:00:00Z',()=>survey.activeStaff({today:D}));
+  const tokenFor=new Map(sent.rows.map((x)=>[x.email,x.token]));
+  for(const p of staff)
+   back.run(crypto2.createHmac('sha256','fixture-session-only').update(`enps-assign|${r6.id}|${p.owna_id==null?'':p.owna_id}|${p.id}`).digest('hex'),tokenFor.get(p.email));
+  const restored=await freeze(D+'T03:00:00Z',()=>survey.exportRows(r6.id,{baseUrl:'https://pulse.example'}));
+  for(const x of restored.rows) assert.equal(x.token,tokenFor.get(x.email),'restoring the key must restore every link');
  });
 
  // ===== The severing =====
@@ -560,7 +727,7 @@ test('eNPS survey trial',async(t)=>{
   assert.equal(counts.used,days.length,'the admin page counts answers off the flag');
  });
 
- await t.test('strip the token and a centre\'s invitations are two kinds of row: spent and not',()=>{
+ await t.test('strip the token and the rank and a centre\'s invitations are two kinds of row: spent and not',()=>{
   // The test above catches a column that holds a response's DAY, because it matches each column
   // against submitted_on. It would NOT catch the same fact written in another shape — an instant, an
   // epoch, a counter of the order people answered — since matching '2026-10-02' against those returns
@@ -568,13 +735,18 @@ test('eNPS survey trial',async(t)=>{
   // order the spent invitations by a sequence and order the answers by id, and the two lists line up.
   //
   // So state the invariant the guarantee actually rests on, over every round in the database rather
-  // than the one the previous test built. Within a centre the only column that may vary is the token;
-  // the spent flag may take the two values a flag has and no others. Drop the token and what is left
-  // of a centre's rows must collapse to at most TWO distinct tuples — spent, and not spent. A column
-  // that tells two respondents apart is a per-respondent value whatever its type, and a per-respondent
-  // value on this side of the severing is a name. used_on gave one tuple per person who had answered.
+  // than the one the previous test built. Within a centre exactly TWO columns may vary, and both of
+  // them are opaque: the token, and the keyed rank beside it (see "the rank written on an invitation
+  // says nothing without the key" above — 64 hex characters of HMAC, round-scoped, computable only
+  // with SURVEY_ASSIGN_KEY, and matching nothing on the response side, which carries no rank, no token
+  // and no order). The spent flag may take the two values a flag has and no others. Drop those two and
+  // what is left of a centre's rows must collapse to at most TWO distinct tuples — spent, and not
+  // spent. A THIRD tuple is a per-respondent value in a column that is not opaque — a date of its own,
+  // a counter, a slot — and a per-respondent value like that on this side of the severing is a name.
+  // used_on gave one tuple per person who had answered; a token minted mid-round for a new starter
+  // would give one per new starter if it carried its own issued_on.
   const cols=db.prepare('PRAGMA table_info(survey_invitations)').all().map((c)=>c.name);
-  const rest=cols.filter((c)=>c!=='token');
+  const rest=cols.filter((c)=>c!=='token'&&c!=='assign_rank');
   // Every round that issued invitations, not every round: the closed-round test above creates one that
   // was never exported, and an empty round proves nothing either way.
   const allRounds=db.prepare('SELECT DISTINCT round_id AS id FROM survey_invitations ORDER BY round_id').all();
