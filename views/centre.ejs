@@ -255,7 +255,7 @@
     <div class="chart" style="height:150px;">
       <% hpbTrend.forEach(function(x){ %>
         <div class="chart-col" title="wk <%= x.week_starting %>: <%= x.avg_hpb %> HPOP · rostered <%= hnum(x.total_hours) %>h · paid <%= hnum(x.paid_hours) %>h">
-          <div class="chart-bar" style="height:<%= Math.round(x.avg_hpb/hmax*100) %>%; background:var(--navy);"></div>
+          <div class="chart-bar" style="height:<%= Math.round(x.avg_hpb/hmax*100) %>%; background:var(--brand);"></div>
           <div class="chart-x"><%= x.week_starting.slice(5) %><br><span><%= x.avg_hpb %></span></div>
         </div>
       <% }); %>

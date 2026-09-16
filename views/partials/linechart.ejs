@@ -15,7 +15,9 @@
   const _rng = (_hi - _lo) || 1, _n = lc.labels.length;
   const _x = (i) => _n <= 1 ? _W / 2 : (i / (_n - 1)) * _W;
   const _y = (v) => _h - ((v - _lo) / _rng) * (_h - 6) - 3;
-  const _COLORS = ['#1f3864','#6d2e46','#2e7d32','#b8860b','#2b7a9b','#9a5b00'];
+  // Series colours come from the :root palette. They are applied through style="…" rather than an
+  // SVG presentation attribute, because var() is not honoured in a presentation attribute.
+  const _COLORS = ['var(--series-1)','var(--series-2)','var(--series-3)','var(--series-4)','var(--series-5)','var(--series-6)'];
   const _step2 = Math.max(1, Math.ceil(_n / 9));
   const _fmtAxis = (v) => {
     if (!lc.money) return (Math.round(v*10)/10) + (lc.suf||'');
@@ -39,16 +41,16 @@
   </div>
   <div style="margin-left:<%= _yaxisW %>px;height:<%= _h %>px;">
     <svg viewBox="0 0 <%= _W %> <%= _h %>" preserveAspectRatio="none" style="width:100%;height:<%= _h %>px;display:block;">
-      <% _ticks.forEach(function(t){ %><line x1="0" y1="<%= _y(t).toFixed(1) %>" x2="<%= _W %>" y2="<%= _y(t).toFixed(1) %>" stroke="var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/><% }); %>
-      <% if (lc.target != null) { %><line x1="0" y1="<%= _y(lc.target).toFixed(1) %>" x2="<%= _W %>" y2="<%= _y(lc.target).toFixed(1) %>" stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.75" vector-effect="non-scaling-stroke"/><% } %>
+      <% _ticks.forEach(function(t){ %><line x1="0" y1="<%= _y(t).toFixed(1) %>" x2="<%= _W %>" y2="<%= _y(t).toFixed(1) %>" style="stroke:var(--line)" stroke-width="1" vector-effect="non-scaling-stroke"/><% }); %>
+      <% if (lc.target != null) { %><line x1="0" y1="<%= _y(lc.target).toFixed(1) %>" x2="<%= _W %>" y2="<%= _y(lc.target).toFixed(1) %>" style="stroke:var(--warn)" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.75" vector-effect="non-scaling-stroke"/><% } %>
       <% lc.series.forEach(function(s, si){ var col = s.color || _COLORS[si % _COLORS.length];
            var df = (s.dashFrom != null) ? s.dashFrom : lc.dashFrom;
            var hist = df==null ? s.points : s.points.map(function(v,i){ return i<=df ? v : null; });
            var proj = df==null ? s.points.map(function(){return null;}) : s.points.map(function(v,i){ return i>=df ? v : null; });
       %>
-        <% _segs(hist).forEach(function(sg){ %><polyline points="<%= sg.join(' ') %>" fill="none" stroke="<%= col %>" stroke-width="2.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><% }); %>
-        <% _segs(proj).forEach(function(sg){ %><polyline points="<%= sg.join(' ') %>" fill="none" stroke="<%= col %>" stroke-width="2.2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><% }); %>
-        <% s.points.forEach(function(v,i){ if(v!=null){ %><circle cx="<%= _x(i).toFixed(1) %>" cy="<%= _y(v).toFixed(1) %>" r="3" fill="<%= col %>"><title><%= s.name %> · <%= lc.labels[i] %>: <%= _fmtVal(v) %></title></circle><% } }); %>
+        <% _segs(hist).forEach(function(sg){ %><polyline points="<%= sg.join(' ') %>" fill="none" style="stroke:<%= col %>" stroke-width="2.2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><% }); %>
+        <% _segs(proj).forEach(function(sg){ %><polyline points="<%= sg.join(' ') %>" fill="none" style="stroke:<%= col %>" stroke-width="2.2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><% }); %>
+        <% s.points.forEach(function(v,i){ if(v!=null){ %><circle cx="<%= _x(i).toFixed(1) %>" cy="<%= _y(v).toFixed(1) %>" r="3" style="fill:<%= col %>"><title><%= s.name %> · <%= lc.labels[i] %>: <%= _fmtVal(v) %></title></circle><% } }); %>
       <% }); %>
     </svg>
     <div class="lc-xaxis"><% lc.labels.forEach(function(l,i){ %><span><%= (i % _step2 === 0 || i === _n-1) ? l : '' %></span><% }); %></div>

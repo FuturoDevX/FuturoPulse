@@ -4,75 +4,121 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Futuro Pulse</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <%# Both faces are self-hosted from /public/fonts. There is deliberately no font CDN link here:
+      this dashboard names centres and staff, and its users should not be announced to a third party
+      on every page load. See the licence note at the top of public/style.css. %>
+  <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/source-serif-4-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
+<%
+  // Nav icons. Small, stroked, one weight, drawn inline — no icon font and nothing fetched.
+  const ICONS = {
+    overview:   '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
+    ask:        '<path d="M11 3.2 12.8 8 17.6 9.8 12.8 11.6 11 16.4 9.2 11.6 4.4 9.8 9.2 8 11 3.2Z"/><path d="M18 14.6l.75 1.95 1.95.75-1.95.75-.75 1.95-.75-1.95-1.95-.75 1.95-.75.75-1.95Z"/>',
+    people:     '<path d="M15.5 19.5v-1.6a3.6 3.6 0 0 0-3.6-3.6H7.1a3.6 3.6 0 0 0-3.6 3.6v1.6"/><circle cx="9.5" cy="7.4" r="3.3"/><path d="M20.5 19.5v-1.5a3.6 3.6 0 0 0-2.7-3.5M15.3 4.5a3.4 3.4 0 0 1 0 5.9"/>',
+    quality:    '<path d="M12 3 19 6v5.6c0 4.2-2.9 7.7-7 8.6-4.1-.9-7-4.4-7-8.6V6l7-3Z"/><path d="m9 11.7 2.1 2.1L15.2 9.5"/>',
+    plans:      '<path d="M15 5.2h2A1.8 1.8 0 0 1 18.8 7v11.2A1.8 1.8 0 0 1 17 20H7a1.8 1.8 0 0 1-1.8-1.8V7A1.8 1.8 0 0 1 7 5.2h2"/><rect x="9" y="3.2" width="6" height="3.4" rx="1.1"/><path d="m9.1 13.3 1.9 1.9 3.6-3.9"/>',
+    safety:     '<path d="M10.6 4.4 3.3 17a1.6 1.6 0 0 0 1.4 2.4h14.6A1.6 1.6 0 0 0 20.7 17L13.4 4.4a1.6 1.6 0 0 0-2.8 0Z"/><path d="M12 9.4v4.1"/><path d="M12 16.8h.01"/>',
+    roster:     '<rect x="3.4" y="5" width="17.2" height="15.4" rx="2.1"/><path d="M3.4 10h17.2M8.4 3.2v3.6M15.6 3.2v3.6"/>',
+    feedback:   '<path d="M20.6 11.9a7.6 7.6 0 0 1-11 6.8L4.4 20.4l1.4-5.1A7.6 7.6 0 1 1 20.6 11.9Z"/>',
+    pipeline:   '<path d="M3.6 4.8h16.8l-6.5 7.7v6.3l-3.8 2.4v-8.7L3.6 4.8Z"/>',
+    coe:        '<path d="M4 9.6A5.6 5.6 0 0 1 9.6 4H19"/><path d="m16 1.6 3.6 2.4L16 6.4"/><path d="M20 14.4A5.6 5.6 0 0 1 14.4 20H5"/><path d="m8 17.6-3.6 2.4L8 22.4"/>',
+    projection: '<path d="m3.5 16.8 6-6 3.5 3.5 7.5-8"/><path d="M14.8 6.3h5.7V12"/>',
+    exits:      '<path d="M14.6 4H18a1.9 1.9 0 0 1 1.9 1.9v12.2A1.9 1.9 0 0 1 18 20h-3.4"/><path d="m9.6 16.4 4.5-4.4-4.5-4.4"/><path d="M14.1 12H3.6"/>',
+    wages:      '<path d="M12 2.9v18.2"/><path d="M16.4 7.2c-.5-1.6-2.2-2.6-4.4-2.6-2.6 0-4.4 1.2-4.4 3.1 0 4.5 9.1 2 9.1 6.7 0 2-1.9 3.3-4.7 3.3-2.6 0-4.5-1.1-5-2.9"/>',
+    compare:    '<path d="M4.4 3.6v16.8h16.2"/><rect x="8" y="11.4" width="3.6" height="5.4" rx="1"/><rect x="14.4" y="7" width="3.6" height="9.8" rx="1"/>',
+    centre:     '<path d="M3.8 10.4 12 3.6l8.2 6.8V19a1.6 1.6 0 0 1-1.6 1.6H5.4A1.6 1.6 0 0 1 3.8 19v-8.6Z"/><path d="M9.4 20.6v-6.2h5.2v6.2"/>',
+    users:      '<circle cx="12" cy="8" r="3.4"/><path d="M5.4 19.6a6.6 6.6 0 0 1 13.2 0"/>',
+    data:       '<ellipse cx="12" cy="6" rx="7.4" ry="3"/><path d="M4.6 6v12c0 1.7 3.3 3 7.4 3s7.4-1.3 7.4-3V6"/><path d="M4.6 12c0 1.7 3.3 3 7.4 3s7.4-1.3 7.4-3"/>',
+    target:     '<circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r=".7"/>',
+    places:     '<path d="m12 3 8.4 4.5L12 12 3.6 7.5 12 3Z"/><path d="m3.6 12.6 8.4 4.5 8.4-4.5"/>',
+    payscale:   '<path d="M20.1 12.9 12.7 20.3a1.7 1.7 0 0 1-2.4 0l-6.4-6.4a1.7 1.7 0 0 1-.5-1.2V5a1.7 1.7 0 0 1 1.7-1.7h7.7c.5 0 .9.2 1.2.5l6.1 6.1a1.7 1.7 0 0 1 0 2.4Z"/><circle cx="8.4" cy="8.4" r="1.3"/>',
+    survey:     '<path d="M15 5.2h2A1.8 1.8 0 0 1 18.8 7v11.2A1.8 1.8 0 0 1 17 20H7a1.8 1.8 0 0 1-1.8-1.8V7A1.8 1.8 0 0 1 7 5.2h2"/><rect x="9" y="3.2" width="6" height="3.4" rx="1.1"/><path d="M8.9 11.6h6.2M8.9 15.1h4.2"/>',
+    inbox:      '<path d="M3.2 13.6h4.3l1.3 2.4h6.4l1.3-2.4h4.3"/><path d="M6.3 4.8h11.4l3.1 8.8v3.9A1.9 1.9 0 0 1 18.9 19.4H5.1a1.9 1.9 0 0 1-1.9-1.9v-3.9l3.1-8.8Z"/>'
+  };
+  function ico(name) {
+    return '<span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">' + (ICONS[name] || ICONS.overview) + '</svg></span>';
+  }
+%>
 <% const user = locals.user; %>
 <% if (user) { %>
+<%
+  const chipName = (user.name && user.name.trim()) || String(user.email || '').split('@')[0];
+  const chipInitials = chipName.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(function (p) { return p[0]; }).join('').toUpperCase() || '?';
+%>
 <div class="app-shell">
   <aside class="sidebar">
     <div class="brand">Futuro Pulse<span>Operations</span></div>
     <nav class="side-nav">
-      <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>">Overview</a>
-      <a href="/ask" class="<%= currentPath === '/ask' ? 'active' : '' %>">✨ Ask your data</a>
-      <a href="/pc" class="<%= currentPath === '/pc' ? 'active' : '' %>">People &amp; Culture</a>
-      <% if (locals.canSeeIdentified) { %><a href="/qc" class="<%= currentPath === '/qc' ? 'active' : '' %>">Quality &amp; Compliance</a>
-      <a href="/action-plans" class="<%= currentPath.indexOf('/action-plans')===0 ? 'active' : '' %>">Action Plans</a><% } %>
-      <a href="/safety" class="<%= currentPath === '/safety' ? 'active' : '' %>">Safety &amp; Incidents</a>
-      <a href="/rostering" class="<%= currentPath === '/rostering' ? 'active' : '' %>">Rostering</a>
-      <a href="/feedback" class="<%= currentPath === '/feedback' ? 'active' : '' %>">💬 Share feedback</a>
+      <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>"><%- ico('overview') %><span class="nav-lbl">Overview</span></a>
+      <a href="/ask" class="<%= currentPath === '/ask' ? 'active' : '' %>"><%- ico('ask') %><span class="nav-lbl">Ask your data</span></a>
+      <a href="/pc" class="<%= currentPath === '/pc' ? 'active' : '' %>"><%- ico('people') %><span class="nav-lbl">People &amp; Culture</span></a>
+      <% if (locals.canSeeIdentified) { %><a href="/qc" class="<%= currentPath === '/qc' ? 'active' : '' %>"><%- ico('quality') %><span class="nav-lbl">Quality &amp; Compliance</span></a>
+      <a href="/action-plans" class="<%= currentPath.indexOf('/action-plans')===0 ? 'active' : '' %>"><%- ico('plans') %><span class="nav-lbl">Action Plans</span></a><% } %>
+      <a href="/safety" class="<%= currentPath === '/safety' ? 'active' : '' %>"><%- ico('safety') %><span class="nav-lbl">Safety &amp; Incidents</span></a>
+      <a href="/rostering" class="<%= currentPath === '/rostering' ? 'active' : '' %>"><%- ico('roster') %><span class="nav-lbl">Rostering</span></a>
+      <a href="/feedback" class="<%= currentPath === '/feedback' ? 'active' : '' %>"><%- ico('feedback') %><span class="nav-lbl">Share feedback</span></a>
       <% if (!locals.scopedOwnaId) { %>
-        <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>">Enrolment Pipeline</a>
-        <a href="/coe" class="<%= currentPath === '/coe' ? 'active' : '' %>">Continuation of Enrolment</a>
-        <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>">Enrolment Projection</a>
-        <% if (locals.canSeeIdentified) { %><a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>">Exit Report</a><% } %>
-        <a href="/wages" class="<%= currentPath === '/wages' ? 'active' : '' %>">Wages &amp; Margin</a>
-        <a href="/compare" class="<%= currentPath === '/compare' ? 'active' : '' %>">Compare</a>
+        <a href="/pipeline" class="<%= currentPath === '/pipeline' ? 'active' : '' %>"><%- ico('pipeline') %><span class="nav-lbl">Enrolment Pipeline</span></a>
+        <a href="/coe" class="<%= currentPath === '/coe' ? 'active' : '' %>"><%- ico('coe') %><span class="nav-lbl">Continuation of Enrolment</span></a>
+        <a href="/projection" class="<%= currentPath === '/projection' ? 'active' : '' %>"><%- ico('projection') %><span class="nav-lbl">Enrolment Projection</span></a>
+        <% if (locals.canSeeIdentified) { %><a href="/exits" class="<%= currentPath === '/exits' ? 'active' : '' %>"><%- ico('exits') %><span class="nav-lbl">Exit Report</span></a><% } %>
+        <a href="/wages" class="<%= currentPath === '/wages' ? 'active' : '' %>"><%- ico('wages') %><span class="nav-lbl">Wages &amp; Margin</span></a>
+        <a href="/compare" class="<%= currentPath === '/compare' ? 'active' : '' %>"><%- ico('compare') %><span class="nav-lbl">Compare</span></a>
       <% } %>
       <% var navShort = function(n){ return (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim(); }; %>
       <div class="side-nav-divider">Centres</div>
       <% (locals.navCentres || []).filter(function(c){ return !c.opening; }).forEach(function(c){ %>
-        <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= navShort(c.name) %></a>
+        <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%- ico('centre') %><span class="nav-lbl"><%= navShort(c.name) %></span></a>
       <% }); %>
       <% var openingCentres = (locals.navCentres || []).filter(function(c){ return c.opening; }); %>
       <% if (openingCentres.length) { %>
         <div class="side-nav-divider">Opening soon</div>
         <% openingCentres.forEach(function(c){ %>
-          <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%= navShort(c.name) %> <span class="nav-soon"><%= c.opening_month ? (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][c.opening_month-1] + ' ' + c.opening_year) : (c.opening_year ? c.opening_year : 'soon') %></span></a>
+          <a href="/centre/<%= c.owna_id %>" class="<%= currentPath === '/centre/' + c.owna_id ? 'active' : '' %>"><%- ico('centre') %><span class="nav-lbl"><%= navShort(c.name) %></span> <span class="nav-soon"><%= c.opening_month ? (['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][c.opening_month-1] + ' ' + c.opening_year) : (c.opening_year ? c.opening_year : 'soon') %></span></a>
         <% }); %>
       <% } %>
       <% if (['admin','ops_manager'].includes(user.role)) { %>
         <div class="side-nav-divider">Admin</div>
         <% if (user.role === 'admin') { %>
-          <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>">Users &amp; access</a>
+          <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>"><%- ico('users') %><span class="nav-lbl">Users &amp; access</span></a>
         <% } %>
         <%# /admin/pc is requireAdminOrOps since the owner's turnover numbers are entered there. %>
-        <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>">P&amp;C Data</a>
+        <a href="/admin/pc" class="<%= currentPath === '/admin/pc' ? 'active' : '' %>"><%- ico('data') %><span class="nav-lbl">P&amp;C Data</span></a>
         <% if (user.role === 'admin') { %>
-          <a href="/admin/qc" class="<%= currentPath === '/admin/qc' ? 'active' : '' %>">Q&amp;C Data</a>
-          <a href="/admin/pipeline-targets" class="<%= currentPath === '/admin/pipeline-targets' ? 'active' : '' %>">Pipeline targets</a>
+          <a href="/admin/qc" class="<%= currentPath === '/admin/qc' ? 'active' : '' %>"><%- ico('data') %><span class="nav-lbl">Q&amp;C Data</span></a>
+          <a href="/admin/pipeline-targets" class="<%= currentPath === '/admin/pipeline-targets' ? 'active' : '' %>"><%- ico('target') %><span class="nav-lbl">Pipeline targets</span></a>
         <% } %>
         <%# /admin/places is requireAdminOrOps, so an ops manager gets the link too — otherwise the only
             page they can maintain would be unreachable from the nav. %>
-        <a href="/admin/places" class="<%= currentPath === '/admin/places' ? 'active' : '' %>">Approved places</a>
-        <a href="/admin/pay-scales" class="<%= currentPath === '/admin/pay-scales' ? 'active' : '' %>">Pay classification</a>
-        <a href="/admin/survey" class="<%= currentPath === '/admin/survey' ? 'active' : '' %>">Staff survey</a>
+        <a href="/admin/places" class="<%= currentPath === '/admin/places' ? 'active' : '' %>"><%- ico('places') %><span class="nav-lbl">Approved places</span></a>
+        <a href="/admin/pay-scales" class="<%= currentPath === '/admin/pay-scales' ? 'active' : '' %>"><%- ico('payscale') %><span class="nav-lbl">Pay classification</span></a>
+        <a href="/admin/survey" class="<%= currentPath === '/admin/survey' ? 'active' : '' %>"><%- ico('survey') %><span class="nav-lbl">Staff survey</span></a>
         <% if (user.role === 'admin') { %>
-          <a href="/admin/feedback" class="<%= currentPath === '/admin/feedback' ? 'active' : '' %>">Feedback<% if (locals.fbNewCount) { %> <span class="nav-count"><%= fbNewCount %></span><% } %></a>
+          <a href="/admin/feedback" class="<%= currentPath === '/admin/feedback' ? 'active' : '' %>"><%- ico('inbox') %><span class="nav-lbl">Feedback</span><% if (locals.fbNewCount) { %><span class="nav-count"><%= fbNewCount %></span><% } %></a>
         <% } %>
       <% } %>
     </nav>
-    <div class="side-nav-footer">
-      <span class="badge role-<%= user.role %>"><%= user.role.replace('_',' ') %></span>
-      <form method="POST" action="/logout" class="inline">
-        <button type="submit" class="secondary">Log out</button>
-      </form>
-    </div>
+    <%# The concept pins a brand line at the foot of the sidebar. Nothing in this repo records a
+        Futuro tagline, and inventing one is not a styling decision — so the slot stays empty until
+        someone sets BRAND_TAGLINE (see .env.example), and renders nothing until they do. %>
+    <% if (locals.brandTagline) { %>
+      <div class="side-nav-footer"><div class="side-tagline"><%= brandTagline %></div></div>
+    <% } %>
   </aside>
   <main>
+    <div class="topbar">
+      <span class="user-chip">
+        <span class="user-avatar" aria-hidden="true"><%= chipInitials %></span>
+        <span class="user-chip-name"><%= chipName %></span>
+        <span class="badge role-<%= user.role %>"><%= user.role.replace('_',' ') %></span>
+      </span>
+      <form method="POST" action="/logout" class="inline">
+        <button type="submit" class="link-btn">Log out</button>
+      </form>
+    </div>
     <% if (locals.msg) { %><div class="flash"><%= msg %></div><% } %>
 <% } else { %>
   <main class="no-sidebar">

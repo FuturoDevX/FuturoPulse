@@ -115,7 +115,7 @@
     </tfoot>
   </table></div>
   <% if (overTarget.length) { %>
-  <p class="footnote" style="border-left:3px solid var(--navy);padding-left:10px;">
+  <p class="footnote" style="border-left:3px solid var(--sage);padding-left:10px;">
     <strong>A target above 100% of approved places is not a mistake.</strong>
     The measure it applies to is <em>booked</em> child-days ÷ (approved places × operating days), and a booking counts
     whether or not the child turns up — an absent child still holds the place — so bookings run above the children
@@ -198,7 +198,7 @@
   <p class="sub" style="margin-bottom:14px;">A child on three days a week fills a place on three days and leaves it free on two. This is why the number of children on the roll and the share of the week actually filled are different numbers, and why the second one is the one the campaign has to move. Measured over <%= dLong(ms.centres[0].week.from) %> – <%= dLong(ms.centres[0].week.to) %>.</p>
   <div class="two-col" style="margin-bottom:18px;">
     <div>
-      <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);"><%= msPartial ? msCover : 'All operating centres' %> <span class="muted" style="font-weight:400;">· <%= fmt(ms.group.mix_children) %> children, <%= fmt(ms.group.mix_child_days) %> child-days a week</span></h3>
+      <h3 style="margin:0 0 10px;font-size:14px;color:var(--brand-ink);"><%= msPartial ? msCover : 'All operating centres' %> <span class="muted" style="font-weight:400;">· <%= fmt(ms.group.mix_children) %> children, <%= fmt(ms.group.mix_child_days) %> child-days a week</span></h3>
       <% var gmax = Math.max.apply(null, ms.group.mix.map(function(b){ return b.children; }).concat([1])); %>
       <div class="coe-mix">
         <% ms.group.mix.forEach(function(b){ %><div style="height:<%= Math.round(b.children / gmax * 100) %>%;" title="<%= b.children %> children booked <%= b.days_per_week %> day<%= b.days_per_week === 1 ? '' : 's' %> a week"></div><% }); %>
@@ -208,7 +208,7 @@
       </div>
     </div>
     <div>
-      <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);">The roll against the week</h3>
+      <h3 style="margin:0 0 10px;font-size:14px;color:var(--brand-ink);">The roll against the week</h3>
       <p style="font-size:13px;margin:0 0 8px;"><strong><%= fmt(ms.group.mix_children) %> children</strong> share the <%= fmt(ms.group.places) %> licensed places, because most attend part-time — <strong><%= (ms.group.places_filled_pct / 100).toFixed(2) %></strong> children to a place. Together they book <strong><%= fmt(ms.group.mix_child_days) %></strong> of the <%= fmt(ms.group.places * 5) %> child-days a week those places could carry — <strong class="<%= tone(ms.group.days_filled_pct, ms.group.target_pct) + '-text' %>"><%= ms.group.days_filled_pct %>%</strong> of the week, against the <%= pctStr(ms.group.target_pct) %> group target.</p>
       <p style="font-size:13px;margin:0;">The group averages <strong><%= ms.group.avg_days_per_child.toFixed(2) %> days per child per week</strong>. Every extra day a week taken by an existing family is worth as much as <%= ms.group.avg_days_per_child >= 1 ? (1 / ms.group.avg_days_per_child).toFixed(2) : '—' %> of a new enrolment, and costs no marketing.</p>
     </div>
@@ -285,8 +285,8 @@
     </div>
   <% }); %>
   <div class="coe-legend">
-    <span><i style="background:var(--navy);"></i>Run rate, less the children with finish dates</span>
-    <span><i style="background:#4caf7d;"></i>Firm backfill (Offer Accepted / Pre-Offered)</span>
+    <span><i style="background:var(--brand);"></i>Run rate, less the children with finish dates</span>
+    <span><i style="background:var(--fill-good);"></i>Firm backfill (Offer Accepted / Pre-Offered)</span>
     <span><i class="coe-seg lost" style="width:14px;height:10px;"></i>Days falling away (shown beyond the fill, not inside it)</span>
     <span><i style="background:var(--warn);width:3px;"></i>That centre's own target<%= mixedTargets ? ' — a different mark on each row' : '' %></span>
   </div>
@@ -439,7 +439,7 @@
   <div class="two-col" style="margin-top:20px;">
     <% coe.opening.forEach(function(c){ var mx = Math.max.apply(null, Object.keys(c.mix).map(function(k){ return c.mix[k]; }).concat([1])); %>
       <div>
-        <h3 style="margin:0 0 10px;font-size:14px;color:var(--navy);"><%= shortName(c.name) %> · requested weekdays <span class="muted" style="font-weight:400;">· <%= c.mix_families %> families with requested days recorded</span></h3>
+        <h3 style="margin:0 0 10px;font-size:14px;color:var(--brand-ink);"><%= shortName(c.name) %> · requested weekdays <span class="muted" style="font-weight:400;">· <%= c.mix_families %> families with requested days recorded</span></h3>
         <div class="coe-mix">
           <% ['mo','tu','we','th','fr'].forEach(function(d){ %><div style="height:<%= Math.round(c.mix[d] / mx * 100) %>%;" title="<%= c.mix[d] %> families asked for this day"></div><% }); %>
         </div>

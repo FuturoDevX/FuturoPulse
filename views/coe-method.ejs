@@ -6,6 +6,9 @@
   const shortName = (n) => (n||'').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i,'').replace('Futuro ','').trim();
   const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const mLong  = (mo) => MN[Number(mo.slice(5,7))-1] + ' ' + mo.slice(0,4);
+  // mShort was used below but never defined, which made this whole page a 500. Same abbreviation
+  // the tables use: "Nov 26".
+  const mShort = (mo) => MN[Number(mo.slice(5,7))-1] + ' ' + mo.slice(2,4);
   const dLong  = (d) => d ? new Date(d+'T00:00:00Z').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : '';
   const fmt  = (n) => Math.round(Number(n)||0).toLocaleString('en-AU');
   const pctStr = (n) => (Number(n) % 1 === 0 ? String(Number(n)) : Number(n).toFixed(1)) + '%';
@@ -15,6 +18,10 @@
   let ai = coe.months.findIndex((x) => x.month === '2027-02');
   if (ai < 0) ai = Math.min(3, coe.months.length - 1);
   const am = coe.months[ai];
+  // ga and overTarget are used further down but were never carried over with the prose when it
+  // moved off /coe onto this page. Same two definitions as views/coe.ejs.
+  const ga = coe.group.months[ai];
+  const overTarget = coe.centres.filter(function (c) { return c.target_pct > 100; });
   const mi = ms ? ms.months.findIndex((x) => x.month === am.month) : -1;
   const mm = mi >= 0 ? ms.months[mi] : null;
   const msPartial = !!(ms && ms.partial);
@@ -28,7 +35,8 @@
 </div></div>
 
 <div class="card">
-  <div class="coe-method">
+  <%# One .coe-method, not two: the class sets columns:2, and nesting it split the
+      prose into four columns. %>
   <div class="coe-method">
     <p><strong>Child-days available</strong> = licensed places × operating days in the month. <strong>Licensed places</strong> is the <em>approved places</em> on each service approval — the count published on the ACECQA National Register, kept up to date on the Approved places admin page. It is not the sum of the centre’s OWNA room capacities, which is a different number and is what this page used to divide by. Operating days come from the NSW calendar (weekdays, less gazetted public holidays): <%= coe.months.map(function(x){ return mShort(x.month) + ' ' + x.operating_days; }).join(' · ') %>.</p>
     <p><strong>Run rate</strong> = child-days booked in the last complete Mon–Fri week (<%= dLong(coe.run_week.from) %> – <%= dLong(coe.run_week.to) %>), scaled by operating days ÷ 5. It counts every family who has not set a finish date, which is why it is a ceiling.</p>
@@ -48,7 +56,6 @@
     <% } else { %>
     <p><strong>The measured continuing count is pending.</strong> Once the nightly snapshot has run once (2:15am Sydney, or <code>npm run coe-snapshot</code> on demand), this page adds the count of children whose bookings reach each campaign month, the not-yet-confirmed working list, and the booking mix — all counts, no names.</p>
     <% } %>
-  </div>
   </div>
 </div>
 

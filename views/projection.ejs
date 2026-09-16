@@ -50,7 +50,7 @@
 <div class="grid kpis">
   <div class="card stat"><div class="n <%= occClass(baseAll) %>-text"><%= baseAll %>%</div><div class="l">Occupancy now (booked)</div></div>
   <div class="card stat"><div class="n <%= occClass(projAll) %>-text"><%= projAll %>%</div><div class="l">Projected with pipeline</div></div>
-  <div class="card stat"><div class="n" style="color:var(--berry);">+<%= Math.round((projAll-baseAll)*10)/10 %>pt</div><div class="l">Uplift</div></div>
+  <div class="card stat"><div class="n" style="color:var(--plum);">+<%= Math.round((projAll-baseAll)*10)/10 %>pt</div><div class="l">Uplift</div></div>
   <div class="card stat"><div class="n"><%= tFamilies %></div><div class="l">Pipeline families included</div></div>
 </div>
 
@@ -74,7 +74,7 @@
           </td>
           <td class="num"><%= r.base_occ %>%</td>
           <td class="num <%= occClass(r.proj_occ) %>-text" style="font-weight:600;"><%= r.proj_occ %>%</td>
-          <td class="num" style="color:var(--berry);font-weight:600;">+<%= up %></td>
+          <td class="num" style="color:var(--plum);font-weight:600;">+<%= up %></td>
           <td class="num"><%= r.pipeline_children %></td>
         </tr>
       <% }); %>
@@ -83,7 +83,7 @@
       <tr class="total-row">
         <td>All centres</td><td class="num"><%= p.rows.reduce((s,r)=>s+r.places,0) %></td><td></td>
         <td class="num"><%= baseAll %>%</td><td class="num"><%= projAll %>%</td>
-        <td class="num" style="color:var(--berry);">+<%= Math.round((projAll-baseAll)*10)/10 %></td>
+        <td class="num" style="color:var(--plum);">+<%= Math.round((projAll-baseAll)*10)/10 %></td>
         <td class="num"><%= tFamilies %></td>
       </tr>
     </tfoot>
@@ -99,7 +99,7 @@
 %>
 <div class="card">
   <h2 style="margin-top:0;">Weekly projection by centre</h2>
-  <p class="sub" style="margin:0 0 6px;">Solid = booked now · <span style="color:var(--berry);">shaded</span> = pipeline added · dashed line = 100% of licensed places</p>
+  <p class="sub" style="margin:0 0 6px;">Solid = booked now · <span style="color:var(--plum);">shaded</span> = pipeline added · dashed line = 100% of licensed places</p>
   <div class="proj-charts">
     <% p.rows.forEach(function(r){ %>
       <div class="proj-chart-block">

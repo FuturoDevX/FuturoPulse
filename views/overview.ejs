@@ -43,6 +43,10 @@
   <div class="card stat"><div class="n"><%= totals.past_days ? totals.attendance_rate + '%' : '—' %></div><div class="l">Attendance rate<% if (hasFuture) { %><span class="cap ahead">past days only<%= totals.past_days ? ' (' + plural(totals.past_days, 'day') + ')' : ' — none in this range' %></span><% } %></div></div>
   <div class="card stat"><div class="n <%= utilRow ? occClass(utilRow.utilisation) + '-text' : '' %>"><%= utilRow ? utilRow.utilisation + '%' : '—' %></div><div class="l">Utilisation <%= util.ytdLabel %> · <%= util.label %><span class="cap"><% if (utilRow && utilRow.annual_child_days) { %>of <%= (utilRow.annual_child_days).toLocaleString('en-AU') %> child-days a year<% } else { %>no licensed places recorded for this centre yet<% } %> · <a href="<%= yearQS('fy') %>" class="<%= util.kind === 'fy' ? 'on' : '' %>" title="Financial year, from 1 July">FY</a> | <a href="<%= yearQS('cy') %>" class="<%= util.kind === 'cy' ? 'on' : '' %>" title="Calendar year, from 1 January">CY</a></span></div></div>
   <div class="card stat"><div class="n"><%= money(totals.fee_total) %></div><div class="l"><% if (hasFuture) { %>Fees: billed to date + booked ahead<span class="cap ahead"><%= money(totals.fee_past) %> billed to date · <%= money(totals.fee_future) %> booked ahead</span><% } else { %>Fees billed<% } %></div></div>
+</div>
+<%# The tile grid closes here. It lost its closing tag when eight tiles became four, which put the
+    whole rest of the page — briefing, People & experience, trends, the centre table — inside the
+    tile grid as further grid cells. %>
 
 <%
   // Minimal, safe Markdown -> HTML for the AI briefing (headings, bullets, bold/italic).

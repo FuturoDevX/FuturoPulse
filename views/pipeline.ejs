@@ -168,8 +168,8 @@
     <div class="chart" style="height:200px;">
       <% joins.forEach(function(j){ var isPeak = j.month===jPeak.month && j.count>0; %>
         <div class="chart-col" title="<%= mLbl(j.month) %>: <%= j.count %> new famil<%= j.count===1?'y':'ies' %> joined the waitlist">
-          <div class="chart-bar" style="height:<%= Math.round(j.count/jMax*100) %>%; background:<%= isPeak ? 'var(--berry)' : 'var(--navy)' %>;"></div>
-          <div class="chart-x"><strong style="color:var(--navy);"><%= j.count %></strong><br><%= mLbl(j.month) %></div>
+          <div class="chart-bar" style="height:<%= Math.round(j.count/jMax*100) %>%; background:<%= isPeak ? 'var(--plum)' : 'var(--brand)' %>;"></div>
+          <div class="chart-x"><strong style="color:var(--brand-ink);"><%= j.count %></strong><br><%= mLbl(j.month) %></div>
         </div>
       <% }); %>
     </div>

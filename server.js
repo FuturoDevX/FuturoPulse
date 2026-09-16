@@ -17,6 +17,10 @@ if (isProd && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.include
 }
 
 app.locals.privacyContact = process.env.PRIVACY_CONTACT || "the Privacy Officer";
+// The line at the foot of the sidebar. Left empty on purpose: the repo records no Futuro tagline and
+// the dashboard should not invent one. Set BRAND_TAGLINE and it appears; leave it and the slot is
+// simply not rendered.
+app.locals.brandTagline = (process.env.BRAND_TAGLINE || "").trim();
 // Every stored timestamp is UTC (SQLite datetime('now')). Views must render it in Sydney, never raw
 // and never through the host's zone — so they all go through this one helper.
 app.locals.sydneyStamp = require("./services/calendar").sydneyStamp;
@@ -24,6 +28,11 @@ app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: "256kb" })); // for the "Ask your data" fetch API
+// The two self-hosted faces never change without changing their filename, and a centre director opens
+// this on a phone many times a day. Serve them with a long cache so they are fetched once, not four
+// files on every page view. Everything else in /public (the stylesheet especially) keeps the default
+// revalidate-every-time behaviour, so a restyle still appears on the next load.
+app.use("/fonts", express.static(path.join(__dirname, "public/fonts"), { immutable: true, maxAge: "365d" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 if (isProd) app.set("trust proxy", 1);

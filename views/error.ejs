@@ -7,7 +7,7 @@
       status only — never a query, a body, or anything identifying a child, family or staff member. %>
   <% if (locals.detail && locals.user && ['admin','ops_manager'].includes(user.role)) { %>
     <p class="muted" style="font-size:13px;margin-top:14px;">What the server saw, for the developer:</p>
-    <pre style="font-size:12.5px;background:var(--rule-soft,#eef1f6);padding:10px 12px;border-radius:6px;overflow-x:auto;margin:6px 0 0;"><%= detail %></pre>
+    <pre style="font-size:12.5px;background:var(--rule-soft);padding:10px 12px;border-radius:6px;overflow-x:auto;margin:6px 0 0;"><%= detail %></pre>
   <% } %>
   <p><a class="row-link" href="/">← Back to overview</a></p>
 </div>

@@ -493,7 +493,7 @@ test('Week 1 batch 1',async(t)=>{
   let html=await page('/pipeline',admin);
   assert.match(html,/This month vs targets <span[^>]*>· \w+ \d{4} · day \d+ of \d+/);
   assert.match(html,/href="\/admin\/pipeline-targets">Set targets<\/a>/);assert.match(html,/<td class="num">—<\/td>/);
-  assert.match(html,/href="\/admin\/pipeline-targets"[^>]*>Pipeline targets<\/a>/); // admin nav
+  assert.match(html,/href="\/admin\/pipeline-targets"[^>]*>.*?<span class="nav-lbl">Pipeline targets<\/span>/); // admin nav (each link now leads with an inline SVG icon)
   assert.doesNotMatch(await page('/pipeline',exec),/Pipeline targets<\/a>/);
   for(const c of [exec,viewer,centre]) assert.equal((await request('/admin/pipeline-targets',c)).status,403);
   const post=(cookie,body)=>fetch(base+'/admin/pipeline-targets',{method:'POST',headers:{cookie,'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams(body),redirect:'manual'});
@@ -695,7 +695,7 @@ test('Week 1 batch 1',async(t)=>{
   const viewer=await page('/coe',await login('viewer'));
   assert.match(viewer,/Continuation of Enrolment/);assert.doesNotMatch(viewer,/Fixture/);
   assert.match(viewer,/href="\/coe"/);                                          // nav link, in the Enrolment group
-  assert.match(viewer,/href="\/pipeline"[^>]*>Enrolment Pipeline<\/a>\s*<a href="\/coe"[^>]*>Continuation of Enrolment<\/a>\s*<a href="\/projection"/);
+  assert.match(viewer,/href="\/pipeline"[^>]*>.*?>Enrolment Pipeline<\/span><\/a>\s*<a href="\/coe"[^>]*>.*?>Continuation of Enrolment<\/span><\/a>\s*<a href="\/projection"/);
   assert.equal((await request('/coe',await login('exec'))).status,200);
   assert.equal((await request('/coe',await login('centre'))).status,403);        // blockScoped: centre-scoped users stay on their own centre
  });
