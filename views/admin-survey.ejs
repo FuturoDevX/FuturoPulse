@@ -93,6 +93,9 @@
           The test message carries a sample link, not a real invitation.
         </div>
         <% } %>
+        <% if (send.unpaired) { %>
+          <div class="flash bad" style="margin-top:10px;"><%= send.unpaired %></div>
+        <% } %>
         <% if (send.finishedAt && send.error) { %>
           <div class="flash bad" style="margin-top:10px;">Last send failed: <%= send.error %></div>
         <% } else if (send.finishedAt) { %>
@@ -108,6 +111,7 @@
       <div class="muted" style="font-size:13.5px;margin-top:4px;">
         <%= dryRun.queued %> message(s) would go out from <%= dryRun.sender || 'GRAPH_SENDER (not set)' %><% if (dryRun.alreadyDelivered) { %>, <%= dryRun.alreadyDelivered %> already delivered and skipped<% } %><% if (dryRun.unsendable) { %>, <%= dryRun.unsendable %> unsendable<% } %><% if (dryRun.noEmail) { %>, <%= dryRun.noEmail %> staff member(s) with no address in payroll<% } %> — about <%= dryRun.minutes %> minute(s).
       </div>
+      <% if (dryRun.unpaired) { %><div class="flash bad" style="margin-top:8px;"><%= dryRun.unpaired %></div><% } %>
       <table class="data" style="margin-top:10px;">
         <thead><tr><th style="text-align:left;">Centre</th><th>Would send</th><th>Already delivered</th></tr></thead>
         <tbody>

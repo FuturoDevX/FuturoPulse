@@ -396,7 +396,12 @@ async function activeStaff({ today = cal.today() } = {}) {
 // always computed, and without the key it pairs nobody. See db/schema.sql.
 const ASSIGN_KEY = process.env.SURVEY_ASSIGN_KEY || process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 // Both read after the admin route's "Could not build the export: " and after "Last send failed: ".
-const STAFF_LIST_MOVED = "the staff list has changed since this round was sent — merge the reminder from the file you saved";
+// STAFF_LIST_MOVED does NOT name a saved file any more. On the Graph path there need not be one: "Send
+// now" builds the export inside the request and streams it nowhere, so an owner who never downloaded the
+// CSV was told to merge a reminder from a file that does not exist. It also no longer stops a whole
+// round — see the per-centre adoption in exportRows.
+const STAFF_LIST_MOVED = "this round holds a link that cannot be matched to anyone on today's staff list, and guessing "
+  + "whose it is would put a live link in the wrong inbox — so nothing has been sent";
 const ASSIGN_KEY_MOVED = "SURVEY_ASSIGN_KEY is not the key this round's links were issued under, so which link is whose "
   + "cannot be worked out — restore that key, or merge the reminder from the file you saved. Nothing has been sent.";
 function assignRank(roundId, centreKey, payrollId) {
@@ -455,19 +460,28 @@ async function exportRows(roundId, { baseUrl, today = cal.today(), preview = fal
   // order. That pairing is only sound while the centre's people are the same people, which is the count
   // check this export has always made, so it is made here, once, and the answer is written down. After
   // this a round is ranked and nobody's token depends on anybody else again.
-  const unranked = [...pool.values()].flat().filter((inv) => !inv.assign_rank);
-  if (unranked.length) {
-    if (unranked.length !== [...pool.values()].flat().length) throw new Error(STAFF_LIST_MOVED); // half-ranked: cannot happen, never guess
-    const moved = [...new Set([...pool.keys(), ...byCentre.keys()])]
-      .some((k) => (pool.get(k) || []).length !== (byCentre.get(k) || []).length);
-    if (moved) throw new Error(STAFF_LIST_MOVED);
+  //
+  // THE CHECK IS PER CENTRE, NOT OVER THE WHOLE ROUND. A rank is an HMAC of (round, centre, payroll id),
+  // so Alpha's pairing is a fact about Alpha's people and says nothing about Beta's rows. Refusing the
+  // entire round because one centre had moved stranded a round that was already half out the door: Send,
+  // "Retry the undelivered", the mail-merge export and the dry run all come through this function, so one
+  // resignation overnight took the undelivered invitations at every OTHER centre down with it — at 221
+  // staff, about a hundred people holding a link and the rest with no button on the dashboard that could
+  // reach them. A centre whose people HAVE moved is still never guessed at; it is reported instead.
+  const unpairable = new Set();                   // the centre keys this round can no longer place anybody at
+  {
     const adopted = [];
     for (const [k, list] of pool) {
-      (byCentre.get(k) || []).map((p) => ({ id: String(p.id), rank: rankOf.get(String(p.id)) }))
+      if (list.every((inv) => inv.assign_rank)) continue;        // already ranked: nothing to adopt
+      const here = byCentre.get(k) || [];
+      // Half-ranked at one centre, or a headcount that has moved: the only pairing these rows ever had
+      // was positional, and it no longer holds. One of them may already be sitting in somebody's inbox.
+      if (list.some((inv) => inv.assign_rank) || list.length !== here.length) { unpairable.add(k); continue; }
+      here.map((p) => ({ id: String(p.id), rank: rankOf.get(String(p.id)) }))
         .sort((a, b) => (a.rank < b.rank ? -1 : a.rank > b.rank ? 1 : a.id.localeCompare(b.id)))
         .forEach((x, i) => { if (list[i]) { list[i].assign_rank = x.rank; byRank.set(x.rank, list[i]); adopted.push([x.rank, list[i].token]); } });
     }
-    if (!preview) {
+    if (!preview && adopted.length) {
       const stampRank = db.prepare("UPDATE survey_invitations SET assign_rank = ? WHERE token = ? AND assign_rank IS NULL");
       db.transaction(() => { for (const [rank, token] of adopted) stampRank.run(rank, token); })();
     }
@@ -484,7 +498,13 @@ async function exportRows(roundId, { baseUrl, today = cal.today(), preview = fal
   // Issue a token for anyone who does not have one yet — the whole round on the first export, one new
   // starter afterwards. Anybody the round already holds a row for is not in this list at all, which is
   // what makes running the export again a reminder rather than a second batch of links.
-  if (!preview) {
+  //
+  // While ANY centre of this round is unpairable, nobody unmatched is minted for. An unpairable centre
+  // holds rows belonging to people this export can no longer name, and one of them may be standing in
+  // front of us under a different centre — they transferred rather than resigned. Minting would hand
+  // them the second live link the rank exists to prevent, so they are reported rather than guessed at.
+  const blocked = unpairable.size > 0;
+  if (!preview && !blocked) {
     const wanted = new Map();
     for (const [k, list] of byCentre) for (const p of list) {
       if (mine(p)) continue;
@@ -494,9 +514,14 @@ async function exportRows(roundId, { baseUrl, today = cal.today(), preview = fal
     if (wanted.size) { pool = ensureInvitations(roundId, [...wanted.values()], today); index(); }
   }
 
-  const rows = staff.map((p) => {
+  const rows = [], unplaced = [];
+  for (const p of staff) {
     const inv = mine(p);
-    // Every person was either matched above or minted one just now, so this cannot fire on a real
+    // A legacy round with a centre whose staff have moved: this person cannot be given a link from here
+    // without guessing. They are left out of the file and counted, the way a staff member with no address
+    // is — never dropped in silence — and everybody else's invitation still goes out.
+    if (!inv && blocked) { unplaced.push(p); continue; }
+    // Every other person was either matched above or minted one just now, so this cannot fire on a real
     // export; saying so is still better than a TypeError at the admin. A preview is the exception — a
     // round whose tokens have not been minted is exactly what it is there to look at.
     if (!inv && !preview) throw new Error(STAFF_LIST_MOVED);
@@ -507,14 +532,34 @@ async function exportRows(roundId, { baseUrl, today = cal.today(), preview = fal
     // The centre on the row is the INVITATION's, which is the centre the magic link will ask them about
     // and the centre their answer will be filed under. The two are the same for everybody but a person
     // who has moved centres mid-round, and for them the invitation is the honest one.
-    return { email: p.email, centre: inv ? inv.centre_label : p.centre_label, token, link: linkFor(baseUrl, token) };
-  });
+    rows.push({ email: p.email, centre: inv ? inv.centre_label : p.centre_label, token, link: linkFor(baseUrl, token) });
+  }
+  // Counts per centre, which is all the page needs and all it may have: no address, no token, no name.
+  const byLabel = new Map();
+  for (const p of unplaced) byLabel.set(p.centre_label, (byLabel.get(p.centre_label) || 0) + 1);
+  const unpaired = [...byLabel].map(([centre_label, people]) => ({ centre_label, people }))
+    .sort((a, b) => a.centre_label.localeCompare(b.centre_label));
+
   // Record that this round has been handed out, so the page can say when it was last sent. Stamped over
   // the ROUND and not over the rows in the file, for the same reason issued_on is round-wide: the row of
   // someone who has since left payroll would otherwise keep an older date than everybody else's and be
-  // the one row at that centre a reader could pick out. A preview hands nothing out and writes nothing.
-  if (!preview) db.prepare("UPDATE survey_invitations SET sent_on = ? WHERE round_id = ?").run(today, roundId);
-  return { rows, noEmail: noEmail.length, round: r, preview };
+  // the one row at that centre a reader could pick out. A preview hands nothing out and writes nothing,
+  // and an export that produced no row handed nothing out either — "last sent today" would be untrue.
+  if (!preview && rows.length) db.prepare("UPDATE survey_invitations SET sent_on = ? WHERE round_id = ?").run(today, roundId);
+  return { rows, noEmail: noEmail.length, round: r, preview, unpaired };
+}
+
+// What the admin page says when a round issued by the previous release holds rows this export cannot
+// place. It is not an error — the rest of the round goes out — so it reads as a count, and it names no
+// file: on the Graph path the export is built inside the request and streamed nowhere, so telling the
+// owner to merge from "the file you saved" points at something that need not exist.
+function unpairedNote(unpaired) {
+  const list = (unpaired || []).filter((x) => x && x.people);
+  if (!list.length) return null;
+  const n = list.reduce((a, x) => a + x.people, 0);
+  return `${n} staff member(s) at ${list.map((x) => x.centre_label).join(", ")} were left out. This round was issued `
+    + "before a link was pinned to a person, and those centres' staff have changed since, so which of their links is "
+    + "whose can no longer be worked out — sending one would be a guess. Everybody else in the round is unaffected.";
 }
 
 function linkFor(baseUrl, token) {
@@ -569,6 +614,6 @@ module.exports = {
   createRound, round, rounds, setClosesOn, roundState, currentRound,
   newToken, ensureInvitations, invitationPool, invitation, tokenState, parseScore, submit,
   enps, results, comments,
-  isActiveStaff, activeStaff, exportRows, PREVIEW_TOKEN, linkFor, csv,
+  isActiveStaff, activeStaff, exportRows, unpairedNote, PREVIEW_TOKEN, linkFor, csv,
   invitationEmail, friendlyDate,
 };

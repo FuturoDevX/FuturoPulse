@@ -587,17 +587,50 @@ test('eNPS survey trial',async(t)=>{
     'the adopted pairing must be written down, or it is guessed at again on the next export');
   assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r5.id).n,sent.rows.length,'the upgrade minted a second batch');
 
-  // And where the staff list HAS moved, the old pairing cannot be recovered — there is nothing written
-  // down to recover it from — so that one export refuses, exactly as the previous release did.
+  // And where the staff list HAS moved, the old pairing cannot be recovered at THAT CENTRE — there is
+  // nothing written down to recover it from — so its rows are left alone. The rest of the round is a
+  // different question: a rank is an HMAC of (round, CENTRE, payroll id), so Alpha's people say nothing
+  // about Beta's rows, and refusing the whole round because one centre moved is what stranded a
+  // half-sent round with no way to reach anybody.
   db.prepare('UPDATE survey_invitations SET assign_rank=NULL WHERE round_id=?').run(r5.id);
   const real=eh.allEmployees;
   try {
    eh.allEmployees=async()=>EMPLOYEES.filter((e)=>e.id!==11).map((e)=>({...e}));
-   await assert.rejects(()=>freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'})),
-     /staff list has changed/,'an unranked round whose staff have moved must not be paired by guesswork');
-   assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r5.id).n,sent.rows.length,'a refused export minted tokens anyway');
+   const moved=await freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'}));
+   // Alpha is never guessed at: nobody there is in the file, no row of theirs is ranked, and none is minted.
+   assert.deepEqual(moved.unpaired,[{centre_label:'Alpha',people:5}],'the centre that moved must be reported, not guessed at');
+   assert.equal(moved.rows.filter((x)=>x.centre==='Alpha').length,0,'a link at the moved centre was handed to somebody');
+   assert.equal(db.prepare("SELECT COUNT(*) n FROM survey_invitations WHERE round_id=? AND owna_id='a' AND assign_rank IS NOT NULL").get(r5.id).n,0,
+     'the moved centre\'s rows were paired by guesswork');
+   assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r5.id).n,sent.rows.length,'an export that could not place a centre minted tokens anyway');
+   assert.match(survey.unpairedNote(moved.unpaired),/Alpha/);
+   assert.doesNotMatch(survey.unpairedNote(moved.unpaired),/file you saved/,'it must not name a file that need not exist');
+   // Every OTHER centre keeps the exact link it was sent, and is in the file — that is the whole point.
+   const untouched=sent.rows.filter((x)=>x.centre!=='Alpha');
+   assert.equal(moved.rows.length,untouched.length);
+   for(const x of moved.rows) assert.equal(x.token,untouched.find((y)=>y.email===x.email).token,
+     x.email+'\'s link moved because a different centre changed');
+   assert.equal(db.prepare("SELECT COUNT(*) n FROM survey_invitations WHERE round_id=? AND owna_id<>'a' AND assign_rank IS NULL").get(r5.id).n,0,
+     'the centres that did not move must be ranked and written down');
+   // A second pass does not wear the refusal down: Alpha is reported again, and still not guessed at.
+   const twice=await freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'}));
+   assert.deepEqual(twice.unpaired,moved.unpaired,'running the export again must not adopt the centre it could not place');
+   assert.deepEqual(twice.rows.map((x)=>x.token).sort(),moved.rows.map((x)=>x.token).sort());
+   assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r5.id).n,sent.rows.length);
+   // And one centre half ranked inside itself — a row lost its rank somehow — is not adopted either:
+   // pairing the rest by position is the guess the rank exists to stop.
+   const beta=db.prepare("SELECT token FROM survey_invitations WHERE round_id=? AND owna_id='b' ORDER BY rowid").all(r5.id);
+   const keep=db.prepare('SELECT assign_rank r FROM survey_invitations WHERE token=?').get(beta[0].token).r;
+   db.prepare('UPDATE survey_invitations SET assign_rank=NULL WHERE token=?').run(beta[0].token);
+   const mixed=await freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'}));
+   assert.deepEqual(mixed.unpaired.map((x)=>x.centre_label).sort(),['Alpha','Beta'],'a centre ranked in part must never be paired by position');
+   assert.equal(db.prepare('SELECT assign_rank r FROM survey_invitations WHERE token=?').get(beta[0].token).r,null);
+   assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=?').get(r5.id).n,sent.rows.length,'a centre it could not place was minted a second batch');
+   db.prepare('UPDATE survey_invitations SET assign_rank=? WHERE token=?').run(keep,beta[0].token);
   } finally { eh.allEmployees=real; }
+  db.prepare('UPDATE survey_invitations SET assign_rank=NULL WHERE round_id=?').run(r5.id);
   await freeze(D+'T03:00:00Z',()=>survey.exportRows(r5.id,{baseUrl:'https://pulse.example'}));  // re-rank it for the scans below
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=? AND assign_rank IS NULL').get(r5.id).n,0);
  });
 
  await t.test('an export refuses rather than reissue when the assign key is not the one the round was issued under',async()=>{

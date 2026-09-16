@@ -355,6 +355,85 @@ test('Microsoft Graph sender for the eNPS invitations', async (t) => {
     } finally { eh.allEmployees = real; }
   });
 
+  // ===== A round issued by the PREVIOUS release, stopped half way, and then a resignation =====
+  // Its rows carry no rank, so the export can only adopt the pairing they were handed out with, and only
+  // where that centre's people are still the same people. It used to refuse the WHOLE ROUND on any
+  // mismatch — and Send, "Retry the undelivered", the mail-merge export and the dry run all go through
+  // that one function. So one resignation overnight took every OTHER centre's undelivered invitations
+  // down with it: at 221 staff, about a hundred people holding a link and the rest with no button on the
+  // dashboard that could reach them, under a message telling the owner to merge "the file you saved" —
+  // which on the Graph path need not exist, because "Send now" builds the export inside the request and
+  // streams it nowhere. A 403 is an RBAC misconfiguration that takes tenant work to fix, so the retry
+  // comes hours or a day later, and isActiveStaff drops a leaver the moment HR sets Terminated.
+  await t.test('a legacy round stopped half way still retries every centre whose staff have not moved', async () => {
+    reset();
+    const round = newRound('legacy-half-sent');
+    const first = await rowsFor(round);
+    db.prepare('UPDATE survey_invitations SET assign_rank = NULL WHERE round_id = ?').run(round.id);  // as the old release left them
+    const tokenOf = new Map(first.map((r) => [r.email, r.token]));
+    const centreOf = new Map(first.map((r) => [r.email, r.centre]));
+
+    // Two land, then the RBAC 403 stops the run — the interruption the Retry button exists for.
+    let n = 0;
+    handler = async (u) => (u.includes('/oauth2/v2.0/token') ? tokenResponse() : (++n <= 2 ? accepted() : new Response(null, { status: 403 })));
+    await assert.rejects(() => surveyMail.graphSendRound(first, { roundId: round.id, closesOn: CLOSES, sleep: quiet, log: quiet }), /403/);
+    const deliveredFirst = sends().slice(0, 2).map(recipient);
+    assert.equal(surveyMail.deliveredTokens(round.id).size, 2, 'the round is half out the door');
+
+    const real = eh.allEmployees, cookie = await login('admin');
+    try {
+      // One Alpha educator resigns overnight. Alpha can no longer be placed; Beta and head office can.
+      eh.allEmployees = async () => EMPLOYEES.filter((e) => e.id !== 11).map((e) => ({ ...e }));
+      reset();
+
+      // 1. The export no longer refuses, and says who it had to leave out instead of naming a file.
+      const again = await freeze(FROZEN, () => survey.exportRows(round.id, { baseUrl: 'https://pulse.example' }));
+      assert.deepEqual(again.unpaired, [{ centre_label: 'Alpha', people: 2 }], 'the centre that moved must be reported, not guessed at');
+      const note = survey.unpairedNote(again.unpaired);
+      assert.match(note, /Alpha/);
+      assert.doesNotMatch(note, /file you saved/, 'on the Graph path there need not be a saved file');
+
+      // 2. Every person at a centre that did NOT move is in the file, with the link they were already sent.
+      const untouched = first.filter((r) => r.centre !== 'Alpha');
+      assert.deepEqual(again.rows.map((r) => r.email).sort(), untouched.map((r) => r.email).sort(),
+        'a centre that did not move lost its invitations because a different centre changed');
+      for (const r of again.rows) assert.equal(r.token, tokenOf.get(r.email), r.email + '\'s link moved');
+      // Alpha is never guessed at, and never minted a second time.
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id = ?').get(round.id).n, first.length, 'a second batch of links was minted');
+      assert.equal(db.prepare("SELECT COUNT(*) n FROM survey_invitations WHERE round_id = ? AND owna_id = 'a' AND assign_rank IS NOT NULL").get(round.id).n, 0);
+
+      // 3. The CSV and the dry run come through the same call, and both used to go down with it.
+      const csvRes = await freeze(FROZEN, () => realFetch(base + '/admin/survey/' + round.id + '/export.csv', { headers: { cookie }, redirect: 'manual' }));
+      assert.equal(csvRes.status, 200, 'the mail-merge download redirected to an error instead of a file');
+      assert.equal(csvRes.headers.get('x-staff-unpaired'), '2', 'a file quietly short of a centre is worse than one that says so');
+      assert.equal((await csvRes.text()).trim().split('\r\n').length - 1, again.rows.length);
+      const dry = await freeze(FROZEN, () => realFetch(base + '/admin/survey/' + round.id + '/dry-run', { method: 'POST', headers: { cookie }, redirect: 'manual' }));
+      await dry.text();
+      const said = decodeURIComponent(dry.headers.get('location') || '');
+      assert.match(said, /msg=/, 'the dry run refused a round it can report on');
+      assert.match(said, /Alpha/, 'and it must predict the people the send would leave out');
+      assert.equal(calls.length, 0, 'still no call to Microsoft for a dry run');
+
+      // 4. THE POINT: Retry finishes the round for everybody it can reach, and nobody is sent two links.
+      reset();
+      const out = await surveyMail.graphSendRound(again.rows, { roundId: round.id, closesOn: CLOSES, sleep: quiet, log: quiet });
+      const second = sends().map(recipient);
+      assert.equal(out.sent, second.length);
+      const all = [...deliveredFirst, ...second];
+      assert.equal(new Set(all).size, all.length, 'an address was sent a link twice');
+      for (const r of again.rows) assert.ok(all.includes(r.email), r.email + ' was never reached — their centre was stranded by another centre\'s resignation');
+      // Which is what used to be impossible: before the fix, all of these were still holding nothing.
+      const strandedBefore = untouched.map((r) => r.email).filter((e) => !deliveredFirst.includes(e));
+      assert.ok(strandedBefore.length, 'the fixture must leave somebody undelivered outside Alpha');
+      for (const e of strandedBefore) assert.ok(second.includes(e), e + ' at ' + centreOf.get(e) + ' is still unreachable');
+      // And nobody, at any centre, ends up holding two links that both open.
+      const byEmail = new Map();
+      for (const r of [...first, ...again.rows]) { if (!byEmail.has(r.email)) byEmail.set(r.email, new Set()); byEmail.get(r.email).add(r.token); }
+      for (const [email, set] of byEmail)
+        assert.ok([...set].filter((tok) => survey.tokenState(tok, TODAY).state === 'open').length <= 1, email + ' holds two live links');
+    } finally { eh.allEmployees = real; }
+  });
+
   // ===== The order the log is written in, which is a column nobody declared =====
   await t.test('the delivery log records nothing about the order the round was sent in', async () => {
     reset();

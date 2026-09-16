@@ -234,7 +234,11 @@ function publicBase(req) {
 // nothing else needs it afterwards — the durable record of what was delivered is survey_deliveries,
 // keyed on the token. `dry` is the last dry run's report for this round.
 const IDLE_SEND = { running: false, mode: null, roundId: null, startedAt: null, finishedAt: null,
-  total: 0, queued: 0, done: 0, sent: 0, failed: 0, skipped: 0, stopped: null, error: null };
+  total: 0, queued: 0, done: 0, sent: 0, failed: 0, skipped: 0, stopped: null, error: null,
+  // Set when a round issued by the previous release holds links this export could not place, so the
+  // people it left out are said out loud rather than quietly missing from the count. A sentence, not a
+  // list of people: see survey.unpairedNote.
+  unpaired: null };
 let send = { ...IDLE_SEND };
 let dryRun = null; // { roundId, at, ...report }
 
@@ -307,10 +311,13 @@ router.post("/survey/:id/closes", requireAdminOrOps, (req, res) => {
 router.get("/survey/:id/export.csv", requireAdminOrOps, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   try {
-    const { rows, round, noEmail } = await survey.exportRows(id, { baseUrl: publicBase(req) });
+    const { rows, round, noEmail, unpaired } = await survey.exportRows(id, { baseUrl: publicBase(req) });
     res.set("Content-Type", "text/csv; charset=utf-8");
     res.set("Cache-Control", "no-store");
     res.set("X-Staff-Without-Email", String(noEmail)); // so the count is visible without opening the file
+    // Same reason: a legacy round can hold links this export cannot place, and a file that is quietly
+    // short of a centre is worse than one that says so.
+    res.set("X-Staff-Unpaired", String((unpaired || []).reduce((a, x) => a + x.people, 0)));
     res.set("Content-Disposition", `attachment; filename="futuro-enps-${String(round.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${cal.today()}.csv"`);
     res.send(survey.csv(rows));
   } catch (e) {
@@ -338,10 +345,15 @@ router.post("/survey/:id/send", requireAdminOrOps, (req, res) => {
   send = { ...IDLE_SEND, running: true, mode: "send", roundId: id, startedAt: Date.now() };
   const contact = req.app.locals.privacyContact;
   survey.exportRows(id, { baseUrl: publicBase(req) })
-    .then((out) => surveyMail.graphSendRound(out.rows, {
-      roundId: id, closesOn: round.closes_on, contact,
-      onProgress: (p) => { if (send.roundId === id) Object.assign(send, p); },
-    }))
+    .then((out) => {
+      // Said whether the run then succeeds or fails: these are people the round cannot reach at all, and
+      // a Retry that finishes "successfully" while quietly short of a centre is the worst of both.
+      if (send.roundId === id) send.unpaired = survey.unpairedNote(out.unpaired);
+      return surveyMail.graphSendRound(out.rows, {
+        roundId: id, closesOn: round.closes_on, contact,
+        onProgress: (p) => { if (send.roundId === id) Object.assign(send, p); },
+      });
+    })
     .then((r) => { Object.assign(send, r, { error: null }); })
     .catch((e) => {
       // A stopped run carries its own counts; anything else (payroll unreachable, say) sent nothing.
@@ -374,8 +386,11 @@ router.post("/survey/:id/dry-run", requireAdminOrOps, async (req, res) => {
   try {
     const out = await survey.exportRows(id, { baseUrl: publicBase(req), preview: true });
     const report = await surveyMail.graphDryRun(out.rows, { roundId: id, closesOn: round.closes_on, contact: req.app.locals.privacyContact });
-    dryRun = { roundId: id, at: cal.today(), noEmail: out.noEmail, ...report };
-    backToSurvey(res, id, "msg", `Dry run: ${report.queued} message(s) would be sent, nothing was. About ${report.minutes} minute(s) at ${report.ratePerMinute} a minute.`);
+    const unpaired = survey.unpairedNote(out.unpaired);
+    dryRun = { roundId: id, at: cal.today(), noEmail: out.noEmail, unpaired, ...report };
+    // The dry run has to predict the send, so it reports the people the send would leave out too.
+    backToSurvey(res, id, "msg", `Dry run: ${report.queued} message(s) would be sent, nothing was. About ${report.minutes} minute(s) at ${report.ratePerMinute} a minute.`
+      + (unpaired ? " " + unpaired : ""));
   } catch (e) {
     backToSurvey(res, id, "err", "Could not build the dry run: " + surveyMail.redact(e.message));
   }
