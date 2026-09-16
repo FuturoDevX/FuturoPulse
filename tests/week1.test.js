@@ -142,11 +142,14 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(kb,/Occupancy = booked child-days ÷ \(places × operating days\)/);
   // The footnote no longer restates the holiday rule. The rule itself is asserted directly above —
   // a holiday-only range gives 0 operating days and 0% occupancy — which is the thing that matters.
-  assert.match(kb,/Avg occupancy<span class="cap">2 operating days<\/span>/);
+  // The tile is the concept's stat card since 17 Sept 2026 — badge, label, number, then the line
+  // under it — so the label and its qualifier are no longer adjacent in the markup. Same two facts
+  // asserted: this tile is Avg occupancy, and the line under it says how many operating days it covers.
+  assert.match(kb,/<span class="sc-label">Avg occupancy<\/span>[\s\S]{0,200}?<div class="sc-delta">2 operating days<\/div>/);
   assert.match(kb,/120 booked child-days over 2 operating days/);
   assert.match(kb,/bar-val">60%/);assert.doesNotMatch(kb,/bar-val">50%/);
   const hol=await page('/?from=2026-06-08&to=2026-06-08',c);
-  assert.match(hol,/Avg occupancy<span class="cap">no operating days in range<\/span>/);
+  assert.match(hol,/<span class="sc-label">Avg occupancy<\/span>[\s\S]{0,200}?<div class="sc-delta">no operating days in range<\/div>/);
   assert.doesNotMatch(hol,/bar-val">/); // every occupancy bar is suppressed, not drawn at 0%
  });
  await t.test('reg12Last12Months sums reportable incidents over the 12 months to now',()=>{

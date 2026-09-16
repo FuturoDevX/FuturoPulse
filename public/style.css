@@ -188,10 +188,15 @@ h3 { color: var(--brand-ink); }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; margin-bottom: 20px; box-shadow: var(--shadow-sm); }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }
 .kpis { margin-bottom: 22px; }
+/* A tile strip that ends a card (the Overview's People & experience row) needs no
+   gap under it: the card's own padding is the gap. */
+.card > .grid.kpis:last-child { margin-bottom: 0; }
 
-/* Card header: title left, a quiet "View all →" right. Reusable — wiring it to
-   specific pages is a later batch. */
-.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin: 0 0 14px; }
+/* Card header: title left, a quiet "View all →" right. Live on the Overview's
+   cards; the link always points at a page that already exists, and a card with
+   nowhere deeper to go (the centre table, whose every row is its own link) gets
+   the header without the link rather than a link invented to fill the slot. */
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 14px; margin: 0 0 14px; flex-wrap: wrap; }
 .card-head > h2, .card-head > h3 { margin: 0; }
 .view-all { font-family: var(--font-sans); font-size: 12.5px; font-weight: 600; color: var(--brand-ink); text-decoration: none; white-space: nowrap; flex-shrink: 0; }
 .view-all:hover { text-decoration: underline; }
@@ -207,24 +212,43 @@ h3 { color: var(--brand-ink); }
 .good-text { color: var(--good); } .warn-text { color: var(--warn); } .bad-text { color: var(--bad); }
 
 /* The concept's stat card: a pale icon badge, the label beside it, the number
-   under both, then a delta line. Reusable and unused so far — the 95 tiles now
-   on the pages carry no icon and no delta, and inventing one for each of them is
-   a content decision, not a restyle. Wiring is a later batch.
+   under both, then a delta line. Live on the Overview's four tiles; the other
+   pages still use the plain .stat above, because a badge and a delta for each of
+   their 90-odd tiles is a content decision, not a restyle.
      <div class="card stat-card">
        <div class="sc-top"><span class="icon-badge">svg</span><span class="sc-label">Occupancy</span></div>
        <div class="sc-n">95.2%</div>
        <div class="sc-delta up">+2% from last week</div>
-     </div> */
-.stat-card { padding: 18px; }
-.sc-top { display: flex; align-items: center; gap: 10px; }
-.sc-label { font-size: 12.5px; color: var(--muted); font-weight: 500; }
-.sc-n { font-size: 29px; font-weight: 700; color: var(--brand-ink); letter-spacing: -.025em; line-height: 1.1; margin-top: 12px; font-variant-numeric: tabular-nums; }
-.sc-delta { font-size: 12px; color: var(--muted); margin-top: 5px; }
+     </div>
+   .sc-delta is the concept's "+2% from last week" slot. Nothing in this app
+   compares a range against the one before it, so on the Overview the slot
+   carries the qualifier each tile already printed — how many operating days the
+   figure covers, which reporting year it is, how much of the money is booked
+   rather than billed — and a tile with nothing to qualify simply has no line.
+   An invented comparison would be a number nobody could check. */
+.stat-card { padding: 18px; transition: transform .12s, box-shadow .12s; }
+.stat-card:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+.sc-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sc-label { font-size: 12.5px; color: var(--muted); font-weight: 500; line-height: 1.3; }
+.sc-n { font-size: 29px; font-weight: 700; color: var(--brand-ink); letter-spacing: -.025em; line-height: 1.1; margin-top: 13px; font-variant-numeric: tabular-nums; }
+.sc-delta { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.4; }
+.sc-delta + .sc-delta { margin-top: 3px; }
 .sc-delta.up { color: var(--good); } .sc-delta.down { color: var(--bad); }
+/* Booked ahead rather than banked: the same plum the range bar and the fee
+   column use for anything that has not happened yet. */
+.sc-delta.ahead { color: var(--plum); }
+.sc-delta a { color: var(--brand-ink); }
+.sc-delta a.on { font-weight: 700; text-decoration: none; }
 .icon-badge { width: 32px; height: 32px; border-radius: 50%; background: var(--sage-bg); color: var(--brand-ink); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .icon-badge svg { width: 17px; height: 17px; display: block; }
 .icon-badge.warn { background: var(--warn-bg); color: var(--warn-ink); }
 .icon-badge.bad { background: var(--bad-bg); color: var(--bad-ink); }
+/* A bare icon beside a card title, no disc behind it — for a heading that wants
+   a mark rather than a badge. Drawn, like every other icon here: the sparkle on
+   the AI briefing card used to be the ✨ emoji, which renders in whatever colour
+   and weight the reader's emoji font feels like and matches nothing else. */
+.title-ico { display: inline-flex; color: var(--sage); flex-shrink: 0; }
+.title-ico svg { width: 17px; height: 17px; display: block; }
 
 /* ===== Priority row ===================================================== */
 /* The concept's "Today's priorities" / "Executive attention" list. Reusable;
@@ -270,11 +294,17 @@ a.row-link:hover { text-decoration: underline; }
 /* A count, not a state: no dot. */
 .badge.count::before { display: none; }
 
-/* ===== Inline progress bar ============================================== */
-.bar-wrap { position: relative; background: var(--track); border-radius: var(--radius-pill); height: 20px; width: 100%; overflow: hidden; }
+/* ===== Inline progress bar ==============================================
+   The concept's occupancy column: the figure on its own line, a slim rounded
+   track under it. It used to be a 20px slab with the number printed inside it,
+   where the number sat on the fill at 90% and on the empty track at 40% and
+   changed contrast as the bar moved under it. Same markup, restyled — the
+   number now sits in the margin above the track, so it reads the same at every
+   width. Used on the Overview, the centre page and the projection table. */
+.bar-wrap { position: relative; background: var(--track); border-radius: var(--radius-pill); height: 9px; width: 100%; margin-top: 17px; overflow: visible; }
 .bar { height: 100%; border-radius: var(--radius-pill); }
 .bar.good { background: var(--fill-good); } .bar.warn { background: var(--fill-warn); } .bar.bad { background: var(--fill-bad); }
-.bar-val { position: absolute; top: 0; left: 10px; line-height: 20px; font-size: 12px; font-weight: 600; color: var(--text); }
+.bar-val { position: absolute; top: -17px; left: 0; line-height: 1; font-size: 13px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 
 /* ===== Mini column chart ================================================ */
 .chart { display: flex; align-items: flex-end; gap: 8px; height: 180px; padding-top: 10px; overflow-x: auto; }
@@ -341,7 +371,10 @@ tr:hover td.hot { background: var(--hot-bg-strong); }
 
 /* ===== Pipeline card on centre page ===================================== */
 .pipeline-card { border-left: 3px solid var(--plum); }
-.pc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* Title left, an action (a button, not a link) right. Wraps rather than crushing
+   the title into two words a line when the action is a button and the window is
+   narrow — the AI briefing card on the Overview is the tight one. */
+.pc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px 12px; flex-wrap: wrap; }
 .stat.hot-card { background: var(--hot-bg); border-color: var(--hot-line); }
 
 /* ===== Exit report reason bars ========================================== */
@@ -526,7 +559,14 @@ tr:hover td.hot { background: var(--hot-bg-strong); }
 .pcm-chart { display: block; width: 100%; height: 90px; margin-top: 14px; overflow: visible; }
 .pcm-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 4px; }
 
-/* ===== Multi-line trend chart (linechart partial) ====================== */
+/* ===== Multi-line trend chart (linechart partial) ======================
+   The chart box is fixed to the plot height so the y-axis ticks, which are
+   absolutely positioned inside it, land on their gridlines. The x-axis labels
+   sit below the plot and therefore hang outside that box — so whatever follows
+   the chart was drawn on top of them, and on the Overview the trends legend
+   printed straight through "Sep 25 / Nov 25". This reserves the 18px the labels
+   need. Pre-existing, on every page that draws a line chart. */
+.lc { margin-bottom: 18px; }
 .lc-yaxis { position: absolute; left: 0; top: 0; height: 100%; }
 .lc-yaxis span { position: absolute; right: 8px; transform: translateY(-50%); font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lc-xaxis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 6px; }
@@ -619,6 +659,16 @@ tr.coe-anchor td { background: var(--row-total); }
   /* Tiles two-up rather than one enormous column of eight. */
   .grid.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .card.stat .n { font-size: 24px; }
+  /* The concept's stat card at half a 375px screen: about 160px of tile, of
+     which the badge takes 32. Shrink the badge and the number rather than let a
+     two-word label wrap to three lines beside a disc it is taller than. */
+  .stat-card { padding: 14px; }
+  .stat-card .sc-n { font-size: 24px; margin-top: 10px; }
+  .stat-card .sc-top { gap: 8px; align-items: flex-start; }
+  .stat-card .icon-badge { width: 26px; height: 26px; }
+  .stat-card .icon-badge svg { width: 14px; height: 14px; }
+  .stat-card .sc-label { font-size: 12px; }
+  .stat-card .sc-delta { font-size: 11.5px; }
   h1 { font-size: 26px; }
   h2 { font-size: 18px; }
   /* Date range controls stack instead of overflowing. */

@@ -30,6 +30,20 @@
   const dLbl = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
   const yearQS = (k) => `/?${rangeQS}&year=${k}`;
   const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+
+  // Tile badge icons. Small, stroked, one weight, drawn inline — no icon font, nothing fetched, no
+  // emoji. The sidebar's own set lives in views/partials/header.ejs; an EJS include does not hand its
+  // scope back to the parent, so these four are declared here rather than reached for. If a third page
+  // wants badges, move both sets into one partial instead of writing a third copy.
+  const TILE_ICONS = {
+    occupancy:  '<path d="M4.2 16.9a9 9 0 1 1 15.6 0"/><path d="m12 13.4 3.9-3.6"/><circle cx="12" cy="16.9" r="1"/>',
+    attendance: '<circle cx="9.6" cy="7.8" r="3.4"/><path d="M3.6 19.6a6 6 0 0 1 9.6-4.8"/><path d="m14.8 17.6 2 2 3.8-4.2"/>',
+    year:       '<rect x="3.4" y="5" width="17.2" height="15.4" rx="2.1"/><path d="M3.4 10h17.2M8.4 3.2v3.6M15.6 3.2v3.6"/>',
+    fees:       '<path d="M12 3v18"/><path d="M16.2 7.4c-.5-1.5-2.1-2.5-4.2-2.5-2.5 0-4.2 1.2-4.2 3 0 4.3 8.7 1.9 8.7 6.4 0 1.9-1.8 3.2-4.5 3.2-2.5 0-4.3-1-4.8-2.8"/>',
+    sparkle:    '<path d="M11 3.2 12.8 8 17.6 9.8 12.8 11.6 11 16.4 9.2 11.6 4.4 9.8 9.2 8 11 3.2Z"/><path d="M18 14.6l.75 1.95 1.95.75-1.95.75-.75 1.95-.75-1.95-1.95-.75 1.95-.75.75-1.95Z"/>'
+  };
+  const svgIco = (name) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">' + TILE_ICONS[name] + '</svg>';
+  const badge = (name) => '<span class="icon-badge" aria-hidden="true">' + svgIco(name) + '</span>';
 %>
 <div class="grid kpis">
 <%# Eight tiles down to four, 16 Sept 2026. Booked child-days, Seats filled, Casual
@@ -39,10 +53,39 @@
     every centre. They are all still in the table, per centre, where they can be compared.
     Utilisation STAYS: it is a different question — this range against annual capacity, year to date —
     and it is the figure the CEO asked for against 251 days × 499 places. The year toggle hangs off it. %>
-  <div class="card stat"><div class="n <%= totals.op_days ? occClass(totals.occupancy) + '-text' : '' %>"><%= totals.op_days ? totals.occupancy + '%' : '—' %></div><div class="l">Avg occupancy<span class="cap"><%= totals.op_days ? plural(totals.op_days, 'operating day') : 'no operating days in range' %></span><% if (hasFuture) { %><span class="cap ahead"><%= aheadCap %></span><% } %></div></div>
-  <div class="card stat"><div class="n"><%= totals.past_days ? totals.attendance_rate + '%' : '—' %></div><div class="l">Attendance rate<% if (hasFuture) { %><span class="cap ahead">past days only<%= totals.past_days ? ' (' + plural(totals.past_days, 'day') + ')' : ' — none in this range' %></span><% } %></div></div>
-  <div class="card stat"><div class="n <%= utilRow ? occClass(utilRow.utilisation) + '-text' : '' %>"><%= utilRow ? utilRow.utilisation + '%' : '—' %></div><div class="l">Utilisation <%= util.ytdLabel %> · <%= util.label %><span class="cap"><% if (utilRow && utilRow.annual_child_days) { %>of <%= (utilRow.annual_child_days).toLocaleString('en-AU') %> child-days a year<% } else { %>no licensed places recorded for this centre yet<% } %> · <a href="<%= yearQS('fy') %>" class="<%= util.kind === 'fy' ? 'on' : '' %>" title="Financial year, from 1 July">FY</a> | <a href="<%= yearQS('cy') %>" class="<%= util.kind === 'cy' ? 'on' : '' %>" title="Calendar year, from 1 January">CY</a></span></div></div>
-  <div class="card stat"><div class="n"><%= money(totals.fee_total) %></div><div class="l"><% if (hasFuture) { %>Fees: billed to date + booked ahead<span class="cap ahead"><%= money(totals.fee_past) %> billed to date · <%= money(totals.fee_future) %> booked ahead</span><% } else { %>Fees billed<% } %></div></div>
+<%# The concept's shape, 17 Sept 2026: pale icon badge, label beside it, big number, then the small
+    line under it. Every word of label and sub-line is the wording these tiles already carried — the
+    tiles gained a badge and lost the cramped label-then-caption stack, not any new content.
+    The concept's sub-line is a delta ("+2% from last week"). This app holds no prior-period figure for
+    any of these four — the range is whatever the reader picked, and nothing computes the one before it
+    — so the slot carries the qualifier each tile already printed, and Attendance and Fees, which have
+    no qualifier on a past-only range, print no line at all rather than a comparison nobody could check.
+    The occClass -text classes are kept as they were; note that they are currently inert everywhere in
+    this app, because .stat .n and .sc-n both set a colour and out-specify .good-text. %>
+  <div class="card stat-card">
+    <div class="sc-top"><%- badge('occupancy') %><span class="sc-label">Avg occupancy</span></div>
+    <div class="sc-n <%= totals.op_days ? occClass(totals.occupancy) + '-text' : '' %>"><%= totals.op_days ? totals.occupancy + '%' : '—' %></div>
+    <div class="sc-delta"><%= totals.op_days ? plural(totals.op_days, 'operating day') : 'no operating days in range' %></div>
+    <% if (hasFuture) { %><div class="sc-delta ahead"><%= aheadCap %></div><% } %>
+  </div>
+  <div class="card stat-card">
+    <div class="sc-top"><%- badge('attendance') %><span class="sc-label">Attendance rate</span></div>
+    <div class="sc-n"><%= totals.past_days ? totals.attendance_rate + '%' : '—' %></div>
+    <% if (hasFuture) { %><div class="sc-delta ahead">past days only<%= totals.past_days ? ' (' + plural(totals.past_days, 'day') + ')' : ' — none in this range' %></div><% } %>
+  </div>
+  <div class="card stat-card">
+    <div class="sc-top"><%- badge('year') %><span class="sc-label">Utilisation <%= util.ytdLabel %> · <%= util.label %></span></div>
+    <div class="sc-n <%= utilRow ? occClass(utilRow.utilisation) + '-text' : '' %>"><%= utilRow ? utilRow.utilisation + '%' : '—' %></div>
+    <div class="sc-delta"><% if (utilRow && utilRow.annual_child_days) { %>of <%= (utilRow.annual_child_days).toLocaleString('en-AU') %> child-days a year<% } else { %>no licensed places recorded for this centre yet<% } %></div>
+    <%# The year toggle gets its own line: on one line with the denominator it wrapped between the FY
+        and the CY, which reads as a broken sentence rather than a choice of two. %>
+    <div class="sc-delta"><a href="<%= yearQS('fy') %>" class="<%= util.kind === 'fy' ? 'on' : '' %>" title="Financial year, from 1 July">FY</a> | <a href="<%= yearQS('cy') %>" class="<%= util.kind === 'cy' ? 'on' : '' %>" title="Calendar year, from 1 January">CY</a></div>
+  </div>
+  <div class="card stat-card">
+    <div class="sc-top"><%- badge('fees') %><span class="sc-label"><%= hasFuture ? 'Fees: billed to date + booked ahead' : 'Fees billed' %></span></div>
+    <div class="sc-n"><%= money(totals.fee_total) %></div>
+    <% if (hasFuture) { %><div class="sc-delta ahead"><%= money(totals.fee_past) %> billed to date · <%= money(totals.fee_future) %> booked ahead</div><% } %>
+  </div>
 </div>
 <%# The tile grid closes here. It lost its closing tag when eight tiles became four, which put the
     whole rest of the page — briefing, People & experience, trends, the centre table — inside the
@@ -70,8 +113,8 @@
 <div class="card ai-brief" id="briefing">
   <div class="pc-head" style="margin-bottom:6px;">
     <div>
-      <div class="pcm-name" style="display:flex;align-items:center;gap:8px;">✨ AI briefing
-        <span class="badge" style="font-size:10px;"><%= briefingRangeLabel %></span>
+      <div class="pcm-name" style="display:flex;align-items:center;gap:8px;"><span class="title-ico" aria-hidden="true"><%- svgIco('sparkle') %></span>AI briefing
+        <span class="badge count" style="font-size:10px;"><%= briefingRangeLabel %></span>
       </div>
       <div class="pcm-cad">Written by Claude from the selected period<% if (briefing) { %> · generated <%= (briefing.created_at||'').slice(0,16) %><% } %></div>
     </div>
@@ -79,7 +122,7 @@
       <form method="POST" action="/ai/briefing" class="inline" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Generating…';">
         <input type="hidden" name="from" value="<%= from %>">
         <input type="hidden" name="to" value="<%= to %>">
-        <button type="submit" class="secondary-btn"><%= briefing ? '↻ Refresh' : '✨ Generate for these dates' %></button>
+        <button type="submit" class="secondary-btn"><%= briefing ? '↻ Refresh' : 'Generate for these dates' %></button>
       </form>
     <% } %>
   </div>
@@ -101,11 +144,11 @@
      const pv = (v,suf='')=> v==null?'—':v+suf;
 %>
 <div class="card">
-  <div class="pc-head">
-    <h2 style="margin:0;">People &amp; experience <span class="muted" style="font-weight:400;font-size:13px;">· group average · <%= mlab(pcGroup.month) %></span></h2>
-    <a class="row-link" href="/pc">People &amp; Culture detail →</a>
+  <div class="card-head">
+    <h2>People &amp; experience <span class="muted" style="font-weight:400;font-size:13px;">· group average · <%= mlab(pcGroup.month) %></span></h2>
+    <a class="view-all" href="/pc">People &amp; Culture</a>
   </div>
-  <div class="grid kpis" style="margin-top:14px;">
+  <div class="grid kpis">
     <div class="card stat"><div class="n <%= pf(pcGroup.enps,t.enps,'high') %>"><%= pv(pcGroup.enps) %></div><div class="l">eNPS<% if(t.enps!=null){ %> · ≥<%= t.enps %><% } %></div></div>
     <div class="card stat"><div class="n <%= pf(pcGroup.family_nps,t.family_nps,'high') %>"><%= pv(pcGroup.family_nps) %></div><div class="l">Family NPS<% if(t.family_nps!=null){ %> · ≥<%= t.family_nps %><% } %></div></div>
     <div class="card stat"><div class="n <%= pf(pcGroup.turnover,t.turnover,'low') %>"><%= pv(pcGroup.turnover,'%') %></div><div class="l">Turnover<% if(t.turnover!=null){ %> · ≤<%= t.turnover %>%<% } %></div></div>
@@ -129,7 +172,7 @@
      const revLc = { labels: revMonths.map(function(t){return mLbl(t.month);}), height:170, money:true, series:[ { name:'Fees billed', points: revMonths.map(function(t){return t.fee_total;}) } ]};
 %>
 <div class="card">
-  <div class="pc-head"><h2 style="margin:0;">Group trends <span class="muted" style="font-weight:400;font-size:13px;">· monthly</span></h2><a class="row-link" href="/compare">Compare centres →</a></div>
+  <div class="card-head"><h2>Group trends <span class="muted" style="font-weight:400;font-size:13px;">· monthly</span></h2><a class="view-all" href="/compare">Compare centres</a></div>
   <h3 class="card-sub">Occupancy &amp; attendance % <span class="muted" style="font-weight:400;font-size:12px;">· dashed = projected from scheduled bookings</span></h3>
   <%- include('partials/linechart', { lc: occLc }) %>
   <h3 class="card-sub">Fees billed (revenue) <span class="muted" style="font-weight:400;font-size:12px;">· complete months</span></h3>
@@ -138,8 +181,11 @@
 <% } %>
 
 <div class="card">
-  <h2 style="margin-top:0;">By centre</h2>
-  <div style="overflow-x:auto;">
+  <%# No "View all →" here on purpose: every row already carries its own Details → into that centre,
+      and the only all-centres page deeper than this table is /compare, which the trends card above
+      already points at. A second link to it would be a link added to fill a slot. %>
+  <div class="card-head"><h2>By centre</h2></div>
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
