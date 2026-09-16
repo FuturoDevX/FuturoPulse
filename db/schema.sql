@@ -639,3 +639,27 @@ CREATE TABLE IF NOT EXISTS survey_responses (
   submitted_on  TEXT NOT NULL        -- YYYY-MM-DD. NEVER a time of day — see above
 );
 CREATE INDEX IF NOT EXISTS idx_survey_resp_round ON survey_responses(round_id, owna_id);
+
+-- THREE: the delivery log. Which invitations have actually left the building, so a retry after a
+-- failed or interrupted run sends only to the people who never got one and nobody is sent two links.
+--
+-- KEYED ON THE TOKEN, and that is the whole reason this table can exist at all. exportRows() is
+-- deterministic — the same key and the same staff list hand the same person the same token — so
+-- "already delivered" can be answered from the token alone and the address never has to be written
+-- down. No address, no name, no employee id: the columns below are the columns, and the address the
+-- message went to is read from payroll inside the sending run and dropped with it.
+--
+-- updated_on is a DAY, like everywhere else here, and it is the day a message was SENT, not the day a
+-- token was spent — survey_invitations.sent_on already records exactly that event at exactly that
+-- granularity, so this adds no new kind of fact. The day a token is USED is still recorded nowhere:
+-- that is the value that would join these rows to survey_responses, and it does not exist.
+CREATE TABLE IF NOT EXISTS survey_deliveries (
+  token      TEXT PRIMARY KEY,          -- the invitation's token; the only identifier in this table
+  round_id   INTEGER NOT NULL,
+  status     TEXT NOT NULL,             -- 'sent' (Graph returned 202) | 'failed'
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,                      -- an error CLASS ('throttled', 'forbidden', …) — never a
+                                        -- message, a body or an address
+  updated_on TEXT                       -- YYYY-MM-DD. NEVER a time of day — see above
+);
+CREATE INDEX IF NOT EXISTS idx_survey_deliveries_round ON survey_deliveries(round_id, status);

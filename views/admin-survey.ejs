@@ -58,15 +58,65 @@
         <% } else { %>
           <div class="muted" style="font-size:13.5px;margin-top:8px;">Employment Hero credentials are not configured, so the staff list cannot be read.</div>
         <% } %>
-      <% } else if (s.available) { %>
-        <form method="POST" action="/admin/survey/<%= selected.id %>/send" style="margin-top:10px;">
-          <button type="submit" class="secondary" <%= sending ? 'disabled' : '' %>><%= sending ? 'Sending…' : 'Send now' %></button>
+      <% } else { %>
+        <%
+          const delivered = deliveries.sent || 0, failedOut = deliveries.failed || 0;
+          const running = send.running, retrying = delivered > 0;
+        %>
+        <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <% if (payrollReady) { %>
+          <%# The dry run needs the staff list, not Graph — so it is offered before the tenant work is done %>
+          <form method="POST" action="/admin/survey/<%= selected.id %>/dry-run">
+            <button type="submit" class="secondary" <%= running ? 'disabled' : '' %>>Dry run (sends nothing)</button>
+          </form>
+          <% } %>
+          <% if (s.available && payrollReady) { %>
+          <form method="POST" action="/admin/survey/<%= selected.id %>/send"
+                onsubmit="return confirm('<%= retrying ? "Send to the staff who have not been delivered a link yet?" : "Send the invitation to every active staff member?" %>');">
+            <button type="submit" <%= running ? 'disabled' : '' %>>
+              <%= running ? 'Sending…' : (retrying ? 'Retry the undelivered' : 'Send now') %>
+            </button>
+          </form>
+          <% } %>
+        </div>
+        <% if (s.available) { %>
+        <form method="POST" action="/admin/survey/<%= selected.id %>/test" style="margin-top:10px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+          <div><label style="display:block;font-size:13px;color:var(--muted);">Test send — one real message to</label>
+            <input type="email" name="email" placeholder="you@futuro.nsw.edu.au" required style="min-width:260px;" /></div>
+          <button type="submit" class="secondary" <%= running ? 'disabled' : '' %>>Send one test</button>
         </form>
+        <% } %>
+        <% if (s.available || delivered || failedOut) { %>
+        <div class="muted" style="font-size:13.5px;margin-top:10px;">
+          Delivered <strong><%= delivered %></strong> of <%= counts.invited || 0 %> invitation(s)<% if (failedOut) { %>, <strong><%= failedOut %></strong> not delivered<% if (deliveries.last_error) { %> (last failure: <%= deliveries.last_error %>)<% } %><% } %>.
+          Paced at <%= sendRate %> a minute, which is Exchange's ceiling for one mailbox — a full round takes about eight minutes.
+          The test message carries a sample link, not a real invitation.
+        </div>
+        <% } %>
+        <% if (send.finishedAt && send.error) { %>
+          <div class="flash bad" style="margin-top:10px;">Last send failed: <%= send.error %></div>
+        <% } else if (send.finishedAt) { %>
+          <div class="muted" style="font-size:13.5px;margin-top:6px;">Last run: <%= send.sent %> delivered<%= send.failed ? ', ' + send.failed + ' failed' : '' %><%= send.skipped ? ', ' + send.skipped + ' already had a link' : '' %>.</div>
+        <% } %>
+        <div id="send-progress" style="margin-top:10px;font-size:13.5px;<%= running ? '' : 'display:none;' %>"></div>
       <% } %>
     </div>
   <% }); %>
-  <% if (lastSend && lastSend.roundId === selected.id) { %>
-    <p class="footnote" style="margin-top:12px;"><% if (lastSend.error) { %>Last send failed: <%= lastSend.error %><% } else { %>Last send: <%= lastSend.sent %> delivered, <%= lastSend.failed %> failed.<% } %></p>
+  <% if (dryRun) { %>
+    <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;">
+      <div style="font-weight:600;">Dry run — <%= dryRun.at %>. Nothing was sent.</div>
+      <div class="muted" style="font-size:13.5px;margin-top:4px;">
+        <%= dryRun.queued %> message(s) would go out from <%= dryRun.sender || 'GRAPH_SENDER (not set)' %><% if (dryRun.alreadyDelivered) { %>, <%= dryRun.alreadyDelivered %> already delivered and skipped<% } %><% if (dryRun.unsendable) { %>, <%= dryRun.unsendable %> unsendable<% } %><% if (dryRun.noEmail) { %>, <%= dryRun.noEmail %> staff member(s) with no address in payroll<% } %> — about <%= dryRun.minutes %> minute(s).
+      </div>
+      <table class="data" style="margin-top:10px;">
+        <thead><tr><th style="text-align:left;">Centre</th><th>Would send</th><th>Already delivered</th></tr></thead>
+        <tbody>
+          <% dryRun.centres.forEach(function(c){ %>
+            <tr><td><%= c.centre %></td><td style="text-align:center;"><%= c.queued %></td><td style="text-align:center;"><%= c.delivered %></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
   <% } %>
   <p class="footnote" style="margin-top:12px;">
     <strong>Keep the file.</strong> Send the reminder by merging the same file again — everyone gets the reminder, because nothing here records who has answered. Generating it a second time gives the same person the same link only while the staff list is unchanged; once someone joins or leaves, both this button and <em>Send now</em> stop rather than re-pair the links, and the saved file is the only correct one.
@@ -113,5 +163,34 @@
     </tbody>
   </table>
 </div>
+<% } %>
+<% if (selected) { %>
+<script>
+// Progress while a send runs. Eight minutes is a long time to look at a page that says nothing, so this
+// polls the counts — and only counts: the status endpoint knows how many, never who.
+(function(){
+  var box = document.getElementById('send-progress');
+  if (!box) return;
+  var url = '/admin/survey/<%= selected.id %>/send-status';
+  var timer = null;
+  function line(s){
+    if (s.error) return 'Stopped: ' + s.error;
+    var of = s.queued || s.total || 0;
+    var head = s.running ? ('Sending… ' + (s.done || 0) + ' of ' + of) : ((s.done || 0) + ' of ' + of + ' done');
+    var bits = [head, (s.sent || 0) + ' delivered'];
+    if (s.failed) bits.push(s.failed + ' failed');
+    if (s.skipped) bits.push(s.skipped + ' already had a link');
+    return bits.join(' · ');
+  }
+  function poll(){
+    fetch(url, { headers: { 'Accept': 'application/json' } }).then(function(r){ return r.json(); }).then(function(s){
+      box.style.display = '';
+      box.textContent = line(s);
+      if (!s.running && timer) { clearInterval(timer); timer = null; setTimeout(function(){ location.reload(); }, 1500); }
+    }).catch(function(){ /* a dropped poll is not a failed send — the next one will say */ });
+  }
+  if (<%= send.running ? 'true' : 'false' %>) { poll(); timer = setInterval(poll, 3000); }
+})();
+</script>
 <% } %>
 <%- include('partials/footer') %>

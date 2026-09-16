@@ -86,17 +86,33 @@ services:
       # nothing set here: an admin downloads a CSV of address + magic link + centre from
       # /admin/survey and merges it from Outlook. The four variables below switch on the second
       # implementation, which sends from a real Futuro mailbox through Microsoft Graph — no new
-      # vendor, and the message comes from an address staff recognise. They need an Azure app
-      # registration with the **Mail.Send application permission** and a tenant admin's consent.
-      # With any of them unset the admin page offers the export instead and says what is missing;
-      # nothing fails and no invitation is lost.
+      # vendor, and the message comes from an address staff recognise. With any of them unset the
+      # admin page offers the export instead and says WHICH ONE is missing; nothing fails and no
+      # invitation is lost.
+      #
+      # The tenant side, done once (Entra app "Futuro Pulse mail", single tenant):
+      #   * the **Mail.Send APPLICATION permission**, with a tenant admin's consent;
+      #   * an **Exchange RBAC for Applications** role assignment scoping the app to the ONE mailbox
+      #     in GRAPH_SENDER. Mail.Send on its own is every mailbox in the tenant, which is not a
+      #     permission to hold for a survey. Scoped, sending as any other address returns 403 by
+      #     design — and a 403 is exactly what the app reports, naming the address, because a wrong
+      #     scope is the likeliest thing to be wrong here.
+      #   * SPF, DKIM and DMARC on the sending domain, or 217 personal inboxes filter it as spam.
       - key: GRAPH_TENANT_ID
         sync: false
       - key: GRAPH_CLIENT_ID
         sync: false
+      # The client secret. Entra secrets EXPIRE on a date: when sign-in starts failing with a 400,
+      # this is why. It is never logged, never rendered and never written to the database.
       - key: GRAPH_CLIENT_SECRET
         sync: false
-      - key: SURVEY_FROM_MAILBOX     # the mailbox invitations are sent FROM, e.g. people@futuro.nsw.edu.au
+      # The mailbox invitations are sent FROM, e.g. people@futuro.nsw.edu.au. Must be the mailbox the
+      # RBAC scope above covers.
+      - key: GRAPH_SENDER
+        sync: false
+      # The previous name for GRAPH_SENDER, still read so a deployment already carrying it keeps
+      # sending. Set GRAPH_SENDER and leave this unset; if both are set, GRAPH_SENDER wins.
+      - key: SURVEY_FROM_MAILBOX
         sync: false
       # Which of a centre's magic links a given staff member is sent. Assigning them by position in the
       # payroll list would make the whole token-to-person map derivable from a copy of the database plus

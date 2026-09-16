@@ -8,8 +8,11 @@ process.env.DB_PATH=path.join(dir,'test.db');process.env.NODE_ENV='test';
 process.env.ADMIN_EMAIL='test-admin@example.test';process.env.ADMIN_DEFAULT_PASSWORD='FixturePasswordOnly!';
 process.env.SESSION_SECRET='fixture-session-only';process.env.ANTHROPIC_API_KEY='fixture';
 // Graph must be OFF for these tests: the export is the implementation that has to work with nothing set.
-delete process.env.GRAPH_TENANT_ID; delete process.env.GRAPH_CLIENT_ID;
-delete process.env.GRAPH_CLIENT_SECRET; delete process.env.SURVEY_FROM_MAILBOX;
+// Set to EMPTY, not deleted — db/db.js calls dotenv, which fills any name that is unset, so a developer
+// whose own .env carries real Graph credentials would otherwise switch the second sender on underneath
+// these assertions. An empty string is "present", so dotenv leaves it alone, and the sender reads it as
+// not configured either way.
+for (const k of ["GRAPH_TENANT_ID", "GRAPH_CLIENT_ID", "GRAPH_CLIENT_SECRET", "GRAPH_SENDER", "SURVEY_FROM_MAILBOX"]) process.env[k] = "";
 const db=require('../db/db'), bcrypt=require('bcryptjs');
 const pass='FixturePasswordOnly!';
 // Three operating centres: two big enough to report, one the size of Oran Park.

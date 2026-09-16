@@ -230,8 +230,13 @@ function publicBase(req) {
   return host ? "https://" + host.replace(/^https?:\/\//, "").replace(/\/+$/, "") : req.protocol + "://" + req.get("host");
 }
 
-let sending = false;
-let lastSend = null; // { at, roundId, sent, failed, error }
+// The state of the one send that may be running, held in memory because it belongs to this process and
+// nothing else needs it afterwards — the durable record of what was delivered is survey_deliveries,
+// keyed on the token. `dry` is the last dry run's report for this round.
+const IDLE_SEND = { running: false, mode: null, roundId: null, startedAt: null, finishedAt: null,
+  total: 0, queued: 0, done: 0, sent: 0, failed: 0, skipped: 0, stopped: null, error: null };
+let send = { ...IDLE_SEND };
+let dryRun = null; // { roundId, at, ...report }
 
 function surveyPageModel(req) {
   const all = survey.rounds();
@@ -251,7 +256,7 @@ function surveyPageModel(req) {
     // as a staff member would receive it. The sample token is not a real invitation.
     draft: survey.invitationEmail({
       centre: "Austral",
-      link: survey.linkFor(base, "EXAMPLE-LINK-NOT-A-REAL-TOKEN"),
+      link: survey.linkFor(base, surveyMail.TEST_LINK_TOKEN), // the same sample link the test send carries
       closesOn: selected ? selected.closes_on : "",
       contact: req.app.locals.privacyContact,
     }),
@@ -262,7 +267,15 @@ function surveyPageModel(req) {
     centreCounts: selected ? db.prepare(`SELECT centre_label, COUNT(*) invited, SUM(used) answered
                                          FROM survey_invitations WHERE round_id = ?
                                          GROUP BY owna_id, centre_label ORDER BY centre_label`).all(selected.id) : [],
-    base, today: cal.today(), sending, lastSend,
+    base, today: cal.today(),
+    // Sending: what Graph can do right now, what has actually been delivered for this round, and the
+    // run in flight if there is one. Delivery counts come off survey_deliveries, so they survive a
+    // restart and are what the Retry button counts.
+    graph: surveyMail.graphAvailability(),
+    deliveries: selected ? surveyMail.deliveryCounts(selected.id) : { sent: 0, failed: 0, last_error: null, last_on: null },
+    send: selected && send.roundId === selected.id ? send : { ...IDLE_SEND },
+    dryRun: dryRun && selected && dryRun.roundId === selected.id ? dryRun : null,
+    sendRate: surveyMail.MESSAGES_PER_MINUTE,
     minResponses: survey.MIN_RESPONSES,
     payrollReady: require("../services/eh").eh.hasCreds(),
     msg: req.query.msg, err: req.query.err,
@@ -305,24 +318,80 @@ router.get("/survey/:id/export.csv", requireAdminOrOps, async (req, res) => {
   }
 });
 
-// Send the round from a Futuro mailbox through Microsoft Graph. Backgrounded like the OWNA refresh —
-// 221 messages paced so the tenant does not read them as a compromised mailbox takes about a minute,
-// which is far longer than a request should hold open.
-router.post("/survey/:id/send", requireAdminOrOps, async (req, res) => {
+const backToSurvey = (res, id, kind, text) =>
+  res.redirect("/admin/survey" + (id ? "?round=" + id + "&" : "?") + kind + "=" + encodeURIComponent(text));
+
+// Send the round from a Futuro mailbox through Microsoft Graph. Backgrounded like the OWNA refresh:
+// Exchange caps a mailbox at about 30 messages a minute, so 221 invitations take roughly eight minutes
+// — far longer than a request may hold open. The page polls /admin/survey/:id/send-status.
+//
+// THIS IS ALSO THE RETRY. graphSendRound skips every token already recorded as delivered, so pressing it
+// again after a failure covers exactly the people who never got a link and nobody is sent two.
+router.post("/survey/:id/send", requireAdminOrOps, (req, res) => {
   const id = parseInt(req.params.id, 10);
   const avail = surveyMail.graphAvailability();
-  if (!avail.available) return res.redirect("/admin/survey?round=" + id + "&err=" + encodeURIComponent(avail.reason));
-  if (sending) return res.redirect("/admin/survey?round=" + id + "&msg=" + encodeURIComponent("A send is already running."));
+  if (!avail.available) return backToSurvey(res, id, "err", avail.reason);
+  if (send.running) return backToSurvey(res, id, "msg", "A send is already running.");
   const round = survey.round(id);
-  if (!round) return res.redirect("/admin/survey?err=" + encodeURIComponent("No such round."));
-  sending = true;
+  if (!round) return backToSurvey(res, null, "err", "No such round.");
+
+  send = { ...IDLE_SEND, running: true, mode: "send", roundId: id, startedAt: Date.now() };
   const contact = req.app.locals.privacyContact;
   survey.exportRows(id, { baseUrl: publicBase(req) })
-    .then((out) => surveyMail.graphSendRound(out.rows, { closesOn: round.closes_on, contact }))
-    .then((r) => { lastSend = { at: cal.today(), roundId: id, ...r, error: null }; })
-    .catch((e) => { lastSend = { at: cal.today(), roundId: id, sent: 0, failed: 0, error: e.message }; })
-    .finally(() => { sending = false; });
-  res.redirect("/admin/survey?round=" + id + "&msg=" + encodeURIComponent("Sending started — reload in a minute to see how many went."));
+    .then((out) => surveyMail.graphSendRound(out.rows, {
+      roundId: id, closesOn: round.closes_on, contact,
+      onProgress: (p) => { if (send.roundId === id) Object.assign(send, p); },
+    }))
+    .then((r) => { Object.assign(send, r, { error: null }); })
+    .catch((e) => {
+      // A stopped run carries its own counts; anything else (payroll unreachable, say) sent nothing.
+      if (typeof e.sent === "number") Object.assign(send, { sent: e.sent, failed: e.failed, skipped: e.skipped, done: e.done, total: e.total, stopped: e.klass || "stopped" });
+      // redact(): nothing here should ever carry the client secret, and this line is rendered.
+      send.error = surveyMail.redact(e.message);
+    })
+    .finally(() => { send.running = false; send.finishedAt = Date.now(); });
+  res.redirect("/admin/survey?round=" + id + "&msg=" + encodeURIComponent("Sending started — the page will show progress as it goes."));
+});
+
+// Progress, polled by the page. Counts only: no address, no token, nothing about who.
+router.get("/survey/:id/send-status", requireAdminOrOps, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  res.set("Cache-Control", "no-store");
+  res.json({ ...(send.roundId === id ? send : IDLE_SEND), deliveries: surveyMail.deliveryCounts(id) });
+});
+
+// Dry run: resolve the recipients, build every message, report what would go where — and send nothing.
+// It makes no network call to Microsoft at all, so it is safe before the tenant work is finished.
+router.post("/survey/:id/dry-run", requireAdminOrOps, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const round = survey.round(id);
+  if (!round) return backToSurvey(res, null, "err", "No such round.");
+  try {
+    const out = await survey.exportRows(id, { baseUrl: publicBase(req) });
+    const report = await surveyMail.graphDryRun(out.rows, { roundId: id, closesOn: round.closes_on, contact: req.app.locals.privacyContact });
+    dryRun = { roundId: id, at: cal.today(), noEmail: out.noEmail, ...report };
+    backToSurvey(res, id, "msg", `Dry run: ${report.queued} message(s) would be sent, nothing was. About ${report.minutes} minute(s) at ${report.ratePerMinute} a minute.`);
+  } catch (e) {
+    backToSurvey(res, id, "err", "Could not build the dry run: " + surveyMail.redact(e.message));
+  }
+});
+
+// One real message to a nominated address, so the owner sees it land in a real inbox before 221 go out.
+// The address is never echoed back into the redirect: a query string lands in proxy and server logs, and
+// this one is a person's address.
+router.post("/survey/:id/test", requireAdminOrOps, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const round = survey.round(id);
+  if (!round) return backToSurvey(res, null, "err", "No such round.");
+  try {
+    const out = await surveyMail.graphSendTest((req.body && req.body.email) || "", {
+      baseUrl: publicBase(req), centre: "Austral",
+      closesOn: round.closes_on, contact: req.app.locals.privacyContact,
+    });
+    backToSurvey(res, id, "msg", `Test message sent from ${out.sender}. Check that inbox — the link in it is the sample link, not a real invitation.`);
+  } catch (e) {
+    backToSurvey(res, id, "err", "Test send failed: " + surveyMail.redact(e.message));
+  }
 });
 
 
