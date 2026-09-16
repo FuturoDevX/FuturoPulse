@@ -598,6 +598,15 @@ CREATE TABLE IF NOT EXISTS survey_rounds (
 -- export reads it from payroll, writes it into the file the admin mail-merges from, and drops it. It
 -- is never written to this database. `used` is a FLAG, not a date, for the reason set out in the
 -- comment on survey_responses below.
+--
+-- And no employee id by the back door either. A row's POSITION within its centre is a column that is
+-- not written down: pair a centre's rows in rowid order against the payroll list in payroll-id order
+-- and, if the export assigned them that way, every token has a name on it — from this file plus a
+-- payroll call, with nothing kept. So the export does NOT assign them that way. Which of a centre's
+-- tokens a person is sent is a keyed shuffle (exportRows in services/survey.js) under a key held in
+-- the environment and never in this file, so the ordinal of a row is not an employee number and this
+-- file on its own pairs nobody. Anything that makes the assignment reproducible from stored data —
+-- ordering these rows by who they were issued for, or storing the slot — puts the identifier back.
 CREATE TABLE IF NOT EXISTS survey_invitations (
   token        TEXT PRIMARY KEY,     -- 32 random bytes, base64url; single-use
   round_id     INTEGER NOT NULL,

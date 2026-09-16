@@ -7,7 +7,9 @@
 //   survey_invitations   token, round, centre, issued/sent, spent or not — and NOTHING about a person. No name,
 //                        no employee id, no email address. The address is needed at SEND TIME only: the
 //                        export reads it from payroll, writes it into the file the admin mail-merges
-//                        from, and drops it. It is never written to this database.
+//                        from, and drops it. It is never written to this database. Nor is a person
+//                        implied by a row's POSITION — see exportRows() for why that had to be bought
+//                        with a key rather than assumed.
 //   survey_responses     round, centre, score, the two free-text answers, the DAY it was submitted —
 //                        and nothing that says which invitation it came from.
 //
@@ -124,7 +126,9 @@ function ensureInvitations(roundId, wantByCentre, today = cal.today()) {
       for (let i = have; i < want; i++) ins.run(newToken(), roundId, owna_id, centre_label, today);
     }
   })();
-  // rowid order is creation order, which is what keeps a regenerated export stable — see exportRows().
+  // rowid order is creation order. It is a STABLE order, which is what lets a pool be indexed the same
+  // way twice, and it is not a meaningful one: which person takes which of these rows is decided by the
+  // keyed shuffle in exportRows(), so a rowid is not an employee number.
   const all = db.prepare(`SELECT rowid AS rid, token, owna_id, centre_label, used FROM survey_invitations WHERE round_id = ? ORDER BY rowid`).all(roundId);
   const byCentre = new Map();
   for (const inv of all) {
@@ -313,28 +317,56 @@ async function activeStaff({ today = cal.today() } = {}) {
 // One row per active staff member: their address, their magic link, their centre. Generated on demand;
 // the address goes into the file and nowhere else.
 //
-// Tokens are assigned by POSITION within a centre, over staff in payroll-id order, so generating the
-// file a second time for the same round gives the same person the same link — that is what makes a
-// reminder possible without storing anything about who was sent what. It holds as long as the staff
-// list has not changed; the admin page therefore says to keep the file and merge the reminder from it.
+// WHICH of a centre's tokens a person gets is decided by a keyed shuffle. It used to be decided by
+// POSITION — staff in payroll-id order, invitations in rowid order, paired off — and position is not a
+// secret. Both halves of that pairing are available to anyone holding a copy of the database: the
+// rowids are in it, and the staff list is the same eh.allEmployees() call this function makes. The
+// whole token-to-person map fell out of the two of them, with no kept file needed, so an invitation's
+// ordinal position within its centre was in every practical sense the stored employee id the schema
+// promises this table does not hold.
+//
+// So the pairing is an HMAC of (round, centre, payroll id) under a key that lives in the environment and
+// never in the database. With the key it is the same pairing every time, which is what makes a reminder
+// possible without recording who was sent what. Without it, a database file and the payroll list pair
+// nothing: every person in a centre is equally consistent with every one of its invitations.
+//
+// THE KEY MUST NOT BE KEPT WITH THE BACKUPS. It is the one thing that turns that file back into names.
+//
+// Stability is still exactly as good as the staff list, which is all it ever was: same key and same
+// people, same links; a joiner or a leaver re-shuffles that centre, where before it shifted every
+// position after theirs. Either way a changed list means changed links, which is why the admin page
+// says to keep the file and merge the reminder from it.
+const ASSIGN_KEY = process.env.SURVEY_ASSIGN_KEY || process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+function assignRank(roundId, centreKey, payrollId) {
+  return crypto.createHmac("sha256", ASSIGN_KEY).update(`enps-assign|${roundId}|${centreKey}|${payrollId}`).digest("hex");
+}
+
 async function exportRows(roundId, { baseUrl, today = cal.today() } = {}) {
   const r = round(roundId);
   if (!r) throw new Error("No such round.");
   const { staff, noEmail } = await activeStaff({ today });
 
-  const want = new Map();
+  const byCentre = new Map();
   for (const p of staff) {
     const k = p.owna_id == null ? "" : p.owna_id;
-    if (!want.has(k)) want.set(k, { owna_id: p.owna_id, centre_label: p.centre_label, want: 0 });
-    want.get(k).want += 1;
+    if (!byCentre.has(k)) byCentre.set(k, []);
+    byCentre.get(k).push(p);
   }
-  const pool = ensureInvitations(roundId, [...want.values()], today);
-  const taken = new Map();
+  const pool = ensureInvitations(roundId, [...byCentre.values()].map((list) =>
+    ({ owna_id: list[0].owna_id, centre_label: list[0].centre_label, want: list.length })), today);
+
+  // The shuffle. Each centre's people are ordered by their keyed rank and take that centre's pool in
+  // rowid order, so a person's slot is a function of the key and of who else works there — never of
+  // where they sit in the payroll list. Payroll ids are unique across the company, so one map does.
+  const slot = new Map();
+  for (const [k, list] of byCentre) {
+    list.map((p) => ({ id: String(p.id), rank: assignRank(roundId, k, p.id) }))
+      .sort((a, b) => (a.rank < b.rank ? -1 : a.rank > b.rank ? 1 : a.id.localeCompare(b.id)))
+      .forEach((x, i) => slot.set(x.id, i));
+  }
   const rows = staff.map((p) => {
     const k = p.owna_id == null ? "" : p.owna_id;
-    const i = taken.get(k) || 0;
-    taken.set(k, i + 1);
-    const inv = (pool.get(k) || [])[i];
+    const inv = (pool.get(k) || [])[slot.get(String(p.id))];
     return { email: p.email, centre: p.centre_label, token: inv.token, link: linkFor(baseUrl, inv.token) };
   });
   // Record that these tokens have been handed out, so the page can say when the round was last sent.

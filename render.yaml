@@ -98,6 +98,15 @@ services:
         sync: false
       - key: SURVEY_FROM_MAILBOX     # the mailbox invitations are sent FROM, e.g. people@futuro.nsw.edu.au
         sync: false
+      # Which of a centre's magic links a given staff member is sent. Assigning them by position in the
+      # payroll list would make the whole token-to-person map derivable from a copy of the database plus
+      # a payroll call, so the pairing is an HMAC under this key instead. KEEP IT OUT OF THE BACKUPS:
+      # stored beside the database file it undoes the anonymity it exists to protect. Unset, the app
+      # falls back to SESSION_SECRET, which is also outside the database — so an existing deployment is
+      # safe without this variable. Changing it re-pairs the links, so a reminder for a round already
+      # sent must be merged from the saved file rather than a fresh export.
+      - key: SURVEY_ASSIGN_KEY
+        generateValue: true
       # The magic link is a public route, so it is rate-limited per client address per 10 minutes.
       # Raise these only if a centre behind one shared connection is being turned away.
       - key: SURVEY_RATE_GETS

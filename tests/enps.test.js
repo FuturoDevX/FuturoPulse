@@ -171,6 +171,40 @@ test('eNPS survey trial',async(t)=>{
   }
  });
 
+ await t.test('the token-to-person map cannot be rebuilt from the database and payroll',async()=>{
+  // The attack, run for real. Throw the mail-merge file away and rebuild the mapping from the only two
+  // things left, both of which anyone holding a copy of this database also has: the invitation rows in
+  // it, and the same payroll call the export itself makes. If a centre's tokens are handed out by
+  // POSITION — staff in payroll-id order against invitations in rowid order — this reconstructs every
+  // row, and an invitation's ordinal within its centre is exactly the employee id the schema says the
+  // table does not hold. No kept file needed, and the free text goes with it.
+  const { staff }=await freeze(FROZEN,()=>survey.activeStaff({today:TODAY}));
+  assert.equal(staff.length,ACTIVE_WITH_EMAIL,'the reconstruction must start from the export\'s own staff list');
+  const truthFor=(p)=>exported.rows.find((x)=>x.email===p.email).token;
+  const taken=new Map(); const guessed=new Map(); let hits=0;
+  for(const p of staff){                       // activeStaff returns them in payroll-id order, as the export uses them
+   const k=p.owna_id==null?'':p.owna_id;
+   const i=taken.get(k)||0; taken.set(k,i+1);
+   const pool=db.prepare('SELECT token FROM survey_invitations WHERE round_id=? AND owna_id IS ? ORDER BY rowid').all(round.id,p.owna_id);
+   if(!guessed.has(k)) guessed.set(k,{guess:[],truth:[]});
+   guessed.get(k).guess.push(pool[i]&&pool[i].token);
+   guessed.get(k).truth.push(truthFor(p));
+   if(pool[i]&&pool[i].token===truthFor(p)) hits++;
+  }
+  assert.ok(hits<staff.length,
+    `position rebuilt ${hits} of ${staff.length} invitations from the database and payroll alone — an invitation's place in its centre is a stored employee id`);
+  // And not just "not all of them": a centre that reconstructs whole is wholly exposed, so the two
+  // six-person centres — the ones where a guess is not near-even odds — must not come out in order.
+  for(const k of ['a','b']){
+   assert.equal(guessed.get(k).truth.length,6);
+   assert.notDeepEqual(guessed.get(k).guess,guessed.get(k).truth,'centre '+k+' reconstructs in payroll order');
+  }
+  // The pairing is keyed, so it lives outside this file: nothing stored may reproduce it. The column
+  // list is pinned above — a slot column, or these rows ordered by who they were issued for, puts the
+  // identifier straight back. What is left here is a pool and a set of people, and no way across.
+  assert.equal(db.prepare('SELECT COUNT(DISTINCT token) n FROM survey_invitations WHERE round_id=?').get(round.id).n,ACTIVE_WITH_EMAIL);
+ });
+
  // ===== The magic link =====
  await t.test('the magic link needs no login',async()=>{
   surveyRoutes.resetRateLimit();
@@ -255,8 +289,11 @@ test('eNPS survey trial',async(t)=>{
  let alphaTokens;
  await t.test('an answer cannot be traced back to an invitation',async()=>{
   surveyRoutes.resetRateLimit();
-  // Five people at Alpha answer, deliberately NOT in the order their invitations were created.
-  alphaTokens=exported.rows.filter((r)=>r.centre==='Alpha').map((r)=>r.token);
+  // Five people at Alpha answer, deliberately NOT in the order their invitations were created. The
+  // order is picked over the pool's OWN rowid order, so "not in creation order" is true by
+  // construction — pick it over the export's rows instead and, now that the two orders differ, the
+  // scramble can land back on creation order by luck and assertion 4 below passes for the wrong reason.
+  alphaTokens=db.prepare("SELECT token FROM survey_invitations WHERE round_id=? AND owna_id='a' ORDER BY rowid").all(round.id).map((r)=>r.token);
   const order=[4,2,0,3,1], scores=[10,9,8,7,0];
   for(let i=0;i<order.length;i++){
    const r=await freeze(FROZEN,()=>fetch(base+'/s/'+alphaTokens[order[i]],{method:'POST',body:new URLSearchParams({score:String(scores[i]),reason:'answer '+i}),redirect:'manual'}));
