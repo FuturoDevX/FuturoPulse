@@ -6,13 +6,17 @@
 <% if (locals.err) { %><div class="err"><%= err %></div><% } %>
 
 <form method="POST" action="/s/<%= token %>">
-  <label class="q" for="score"><%= questions[0].text %> <span class="req">· required</span></label>
-  <div class="scale">
-    <% for (var i = 0; i <= 10; i++) { %>
-      <label><input type="radio" name="score" value="<%= i %>" <%= i===0 ? 'id="score"' : '' %> required /><span><%= i %></span></label>
-    <% } %>
-  </div>
-  <div class="ends"><span>0 — not at all likely</span><span>10 — extremely likely</span></div>
+  <%# A legend, not a label with for=: a label pointing at one of the eleven radios would set that
+      score when the question text itself is tapped. %>
+  <fieldset>
+    <legend class="q"><%= questions[0].text %> <span class="req">· required</span></legend>
+    <div class="scale">
+      <% for (var i = 0; i <= 10; i++) { %>
+        <label><input type="radio" name="score" value="<%= i %>" required /><span><%= i %></span></label>
+      <% } %>
+    </div>
+    <div class="ends"><span>0 — not at all likely</span><span>10 — extremely likely</span></div>
+  </fieldset>
 
   <label class="q" for="reason"><%= questions[1].text %></label>
   <textarea id="reason" name="reason" maxlength="2000" placeholder="Optional"><%= (locals.answers && answers.reason) || '' %></textarea>

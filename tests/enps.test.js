@@ -225,6 +225,32 @@ test('eNPS survey trial',async(t)=>{
   assert.doesNotMatch(html,/People &amp; Culture<\/a>|Wages &amp; Margin/);
  });
 
+ await t.test('question 1 names its own scale, and every for= points at a control that exists',async()=>{
+  surveyRoutes.resetRateLimit();
+  const tok=exported.rows.find((r)=>r.centre==='Alpha').token;
+  const r=await freeze(FROZEN,()=>fetch(base+'/s/'+tok,{redirect:'manual'}));
+  assert.equal(r.status,200);
+  const html=await r.text();
+  // A markup literal written with EJS's escaping tag renders as id=&#34;score&#34;, which the parser
+  // reads as an unquoted value containing quote characters — so the id is not there at all.
+  assert.doesNotMatch(html,/=&#34;|=&quot;/,'an attribute was HTML-escaped into the markup');
+  // Whatever the markup, every for= has to resolve to an id on the page.
+  const ids=new Set([...html.matchAll(/\sid="([^"]*)"/g)].map((m)=>m[1]));
+  const fors=[...html.matchAll(/\sfor="([^"]*)"/g)].map((m)=>m[1]);
+  assert.ok(fors.length>=2,'the two comment boxes are still labelled with for=');
+  for(const f of fors) assert.ok(ids.has(f),'for="'+f+'" points at no element on the page');
+  // The eleven radios are one named group, so a screen reader reads the question and not just "0".
+  assert.match(html,/<fieldset>[\s\S]*?<legend[^>]*>\s*How likely are you to recommend Futuro Alpha\?/);
+  // No radio carries an id, so no label can ever point at one: a question-text label that resolved to
+  // a score would set that score when the text is tapped, and score 0 is a detractor.
+  const radios=html.match(/<input[^>]*name="score"[^>]*>/g)||[];
+  assert.equal(radios.length,11,'all eleven options are present');
+  for(const tag of radios){
+   assert.doesNotMatch(tag,/\sid=/,'a score radio with an id invites a label that scores it when tapped');
+   assert.match(tag,/\srequired/,'the one required question stays required');
+  }
+ });
+
  await t.test('a token works once and then does not',async()=>{
   surveyRoutes.resetRateLimit();
   const tok=exported.rows.find((r)=>r.centre==='Beta').token;
