@@ -325,13 +325,19 @@ test('Week 1 batch 1',async(t)=>{
  await t.test('Wages page shows per child-day columns, the total row, the group tile and the footnote',async()=>{
   const c=await login('admin');
   const html=await page('/wages?week=2026-06-14',c);
-  assert.match(html,/<th class="num">Educator wages<br>per child-day<\/th>\s*<th class="num">All-in<br>per child-day<\/th>/);
-  assert.match(html,/<td class="num">\$80<\/td>\s*<td class="num">\$87<\/td>/); // Alpha
+  // The per-child-day figures moved into "Show the working" when the table went from 18 columns to 7,
+  // and the column the page exists for — educator wages as a share of revenue — became a real column
+  // instead of a number computed in metrics.js and only ever shown as a group tile.
+  assert.match(html,/<th class="num">Wages<br>% of revenue<\/th>/,'the number this page is for is now a column');
+  assert.match(html,/Show the working/);
+  assert.match(html,/<th class="num">Educator \$ per child-day<\/th>/,'the per-child-day figures are kept, behind the toggle');
+  assert.match(html,/<td class="num">\$80<\/td>\s*<td class="num">\$87<\/td>/); // Alpha, in the working
   assert.match(html,/<td class="num">\$80<\/td>\s*<td class="num">\$90<\/td>/); // Beta
-  assert.match(html,/<td class="num"><span class="muted">—<\/span><\/td>\s*<td class="num"><span class="muted">—<\/span><\/td>/); // HQ / pre-opening
-  assert.match(html,/<td class="num">\$80<\/td>\s*<td class="num">\$88<\/td>\s*<td class="num">—<\/td>/); // total row
   assert.match(html,/<div class="n">\$80<\/div><div class="l">Wages per child-day<span class="cap">educator wages ÷ 160 booked child-days · all-in \$88<\/span>/);
-  assert.match(html,/<strong>Wages per child-day<\/strong> = educator wages \(worked \+ leave \+ other\) ÷ booked child-days/);
+  assert.match(html,/<strong>Wages % of revenue<\/strong> = educator wages/);
+  // A column headed "Kitchen Hours" used to hold kitchen PLUS cleaning, which is why it never agreed
+  // with the Support Team table below it. It is named for what it contains now.
+  assert.doesNotMatch(html,/Kitchen<br>Hours/);
   assert.doesNotMatch(html,/\$80\.\d/);
   assert.equal((await request('/wages',await login('centre'))).status,403); // still blocked for centre logins
  });

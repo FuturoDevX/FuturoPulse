@@ -139,7 +139,9 @@
   <table>
     <thead>
       <tr>
-        <th>Centre</th><th title="Approved places on the service approval (ACECQA National Register)">Places</th><th class="num" title="Booked child-days ÷ days with data in the range">Avg/day</th>
+        <th>Centre</th><th title="Approved places on the service approval (ACECQA National Register)">Places</th><%# "Avg/day" removed 16 Sept 2026: booked ÷ days-with-data, which printed the same number as Seats
+    for every centre. Seats is the one to keep — it divides by OPERATING days, so a public-holiday
+    booking row cannot flatter it. %>
         <th class="num" title="Seats filled: average booked children per operating day (weekdays excluding NSW public holidays)">Seats</th>
         <th style="width:160px;" title="<%= hasFuture ? 'Includes days booked ahead — departures not yet deducted, so this overstates' : 'Booked child-days on operating days ÷ (places × operating days)' %>">Occupancy<% if (hasFuture) { %> <span class="th-cap">booked ahead</span><% } %></th>
         <th class="num" title="Projected occupancy over the next 30 days from scheduled bookings">Fcast 30d</th>
@@ -154,7 +156,6 @@
         <tr>
           <td><a class="row-link" href="/centre/<%= r.owna_id %>?<%= rangeQS %>"><%= shortName(r.name) %></a></td>
           <td><%= r.places != null ? r.places : '—' %></td>
-          <td class="num"><%= r.avg_daily_booked %></td>
           <% var sr = seats.byOwna[r.owna_id]; %>
           <td class="num"><%= sr && sr.days ? sr.seats : '—' %></td>
           <td>
@@ -182,7 +183,7 @@
          var fB=0, fCD=0; rows.forEach(function(r){ var f=fcast[r.owna_id]; if(f&&f.days&&r.places!=null){ fB+=f.booked; fCD+=r.places*f.days; } });
          var fcastAll = fCD ? Math.round(fB/fCD*1000)/10 : 0; %>
       <tr class="total-row">
-        <td>All centres</td><td><%= totals.places ? totals.places : '—' %></td><td class="num">—</td>
+        <td>All centres</td><td><%= totals.places ? totals.places : '—' %></td>
         <td class="num"><%= seatsRow && seatsRow.days ? seatsRow.seats : '—' %></td>
         <td><% if (totals.op_days) { %><div class="bar-wrap"><div class="bar <%= occClass(totals.occupancy) %>" style="width:<%= Math.min(totals.occupancy,100) %>%;"></div><span class="bar-val"><%= totals.occupancy %>%</span></div><% } else { %><span class="muted">—</span><% } %></td>
         <td class="num"><span class="<%= occClass(fcastAll) %>-text"><%= fcastAll %>%</span></td>

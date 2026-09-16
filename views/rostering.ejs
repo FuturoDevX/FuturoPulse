@@ -26,12 +26,9 @@
   <div class="card"><p class="muted" style="margin:0;">No roster data yet. It populates on the nightly sync from OWNA (endpoint <code>/api/roster</code>).</p></div>
 <% } else { %>
 
-<div class="grid kpis">
-  <div class="card stat"><div class="n"><%= h1(t.rost) %></div><div class="l">Rostered hours</div></div>
-  <div class="card stat"><div class="n"><%= groupHpb==null?'—':groupHpb %></div><div class="l">Avg HPOP (hours per occupied place)</div></div>
-  <div class="card stat"><div class="n"><%= h1(t.paid) %></div><div class="l">Worked hours (Employment Hero)</div></div>
-  <div class="card stat"><div class="n <%= varClass(groupVarPct) %>"><%= groupVar==null?'—':(groupVar>0?'+':'')+h1(groupVar) %></div><div class="l">Worked − rostered<% if(groupVarPct!=null){ %> · <%= (groupVarPct>0?'+':'')+groupVarPct %>%<% } %></div></div>
-</div>
+<%# The four tiles that sat here were the "All centres" row of the table below, moved one screen
+    up. On a phone that was a full screen of scrolling to reach the table that holds the same
+    numbers plus the per-centre breakdown a director actually needs. %>
 
 <div class="card">
   <h2 style="margin-top:0;">By centre — week of <%= wkLabel(week) %></h2>
@@ -39,7 +36,7 @@
     <thead><tr>
       <th>Centre</th>
       <th class="num">Rostered h</th><th class="num">Hrs / booking</th>
-      <th class="num">Worked h (EH)</th><th class="num">Worked − rostered</th><th class="num">Var %</th>
+      <th class="num">Worked h (EH)</th><th class="num" title="Worked minus rostered, as a share of rostered hours. The raw hours are in each cell's tooltip.">Variance</th>
     </tr></thead>
     <tbody>
       <% rows.forEach(function(r){ %>
@@ -48,8 +45,7 @@
           <td class="num"><%= h1(r.total_hours) %></td>
           <td class="num" style="font-weight:600;"><%= r.avg_hpb==null?'—':r.avg_hpb %></td>
           <td class="num"><%= h1(r.paid_hours) %></td>
-          <td class="num <%= varClass(r.variance_pct) %>"><%= r.variance==null?'—':(r.variance>0?'+':'')+h1(r.variance) %></td>
-          <td class="num <%= varClass(r.variance_pct) %>"><%= r.variance_pct==null?'—':(r.variance_pct>0?'+':'')+r.variance_pct+'%' %></td>
+          <td class="num <%= varClass(r.variance_pct) %>" title="<%= r.variance==null?'':(r.variance>0?'+':'')+h1(r.variance)+' hours' %>"><%= r.variance_pct==null?'—':(r.variance_pct>0?'+':'')+r.variance_pct+'%' %></td>
         </tr>
       <% }); %>
     </tbody>
@@ -59,8 +55,7 @@
       <td class="num"><%= h1(t.rost) %></td>
       <td class="num"><%= groupHpb==null?'—':groupHpb %></td>
       <td class="num"><%= h1(t.paid) %></td>
-      <td class="num <%= varClass(groupVarPct) %>"><%= groupVar==null?'—':(groupVar>0?'+':'')+h1(groupVar) %></td>
-      <td class="num <%= varClass(groupVarPct) %>"><%= groupVarPct==null?'—':(groupVarPct>0?'+':'')+groupVarPct+'%' %></td>
+      <td class="num <%= varClass(groupVarPct) %>" title="<%= groupVar==null?'':(groupVar>0?'+':'')+h1(groupVar)+' hours' %>"><%= groupVarPct==null?'—':(groupVarPct>0?'+':'')+groupVarPct+'%' %></td>
     </tr></tfoot>
     <% } %>
   </table></div>
