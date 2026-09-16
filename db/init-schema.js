@@ -75,6 +75,18 @@ function initSchema(db) {
   // deletes only what it can prove is past its period, and NULL proves nothing (see rule 2 there).
   addColumnIfMissing("feedback", "reviewed_at", "TEXT");
 
+  // The eNPS invitation table used to record used_on, the DAY a token was spent. survey_responses
+  // .submitted_on holds that same day, so (round, centre, day) joined the two tables the survey promises
+  // are severed: on any day one person at a centre answered, the join returned exactly one invitation.
+  // Nothing ever read the value, only whether it was set, so it becomes a flag and the column goes —
+  // dropped rather than left behind, because a database already carrying a round is exactly where the
+  // join would be run.
+  addColumnIfMissing("survey_invitations", "used", "INTEGER NOT NULL DEFAULT 0");
+  if (db.prepare("PRAGMA table_info(survey_invitations)").all().some((c) => c.name === "used_on")) {
+    db.exec("UPDATE survey_invitations SET used = 1 WHERE used_on IS NOT NULL");
+    db.exec("ALTER TABLE survey_invitations DROP COLUMN used_on");
+  }
+
   // ---- Approved places: the licensed count on each service approval (ACECQA National Register) ----
   // centres.capacity is the SUM OF OWNA ROOM CAPACITIES and the nightly snapshot rewrites it every night,
   // so it can never hold the licensed figure — Austral runs 124 approved places against a 122 room sum.

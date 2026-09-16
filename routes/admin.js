@@ -237,7 +237,7 @@ function surveyPageModel(req) {
   const all = survey.rounds();
   const selected = all.find((r) => String(r.id) === String(req.query.round)) || survey.currentRound() || null;
   const counts = selected
-    ? db.prepare(`SELECT COUNT(*) invited, SUM(CASE WHEN used_on IS NOT NULL THEN 1 ELSE 0 END) used,
+    ? db.prepare(`SELECT COUNT(*) invited, SUM(used) used,
                          MAX(sent_on) last_sent FROM survey_invitations WHERE round_id = ?`).get(selected.id)
     : { invited: 0, used: 0, last_sent: null };
   const base = publicBase(req);

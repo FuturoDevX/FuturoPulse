@@ -596,16 +596,16 @@ CREATE TABLE IF NOT EXISTS survey_rounds (
 -- ONE: the invitations. A token, the round, the centre it was issued for, whether it has been used.
 -- PRIVACY: no name, no employee id, no email address. The address is needed at SEND TIME only — the
 -- export reads it from payroll, writes it into the file the admin mail-merges from, and drops it. It
--- is never written to this database. `used_on` is a DAY, not an instant, for the reason set out in the
+-- is never written to this database. `used` is a FLAG, not a date, for the reason set out in the
 -- comment on survey_responses below.
 CREATE TABLE IF NOT EXISTS survey_invitations (
   token        TEXT PRIMARY KEY,     -- 32 random bytes, base64url; single-use
   round_id     INTEGER NOT NULL,
   owna_id      TEXT,                 -- the centre; NULL = a payroll location that is not a centre (support office)
   centre_label TEXT NOT NULL,        -- what question 1 says: "…recommend Futuro <centre_label>?"
-  issued_on    TEXT,                 -- YYYY-MM-DD the token was created
+  issued_on    TEXT,                 -- YYYY-MM-DD the token was created (same day for the whole round)
   sent_on      TEXT,                 -- YYYY-MM-DD it was last handed to an export / mail sender
-  used_on      TEXT                  -- YYYY-MM-DD it was spent; NULL = still open. NEVER a time of day
+  used         INTEGER NOT NULL DEFAULT 0  -- 1 = spent. WHEN it was spent is deliberately not recorded
 );
 CREATE INDEX IF NOT EXISTS idx_survey_inv_round ON survey_invitations(round_id, owna_id);
 
@@ -614,10 +614,11 @@ CREATE INDEX IF NOT EXISTS idx_survey_inv_round ON survey_invitations(round_id, 
 -- the round and the centre, which are group attributes rather than a joining value, and a centre is only
 -- ever reported once at least SURVEY_MIN_RESPONSES answers stand behind it.
 --
--- submitted_on is a DAY, not an instant, and so is survey_invitations.used_on. Stored to the second, the
--- two tables could be sorted by time and lined up row for row, which would undo the severing completely.
--- The invitation rowid is assigned when the round is generated, not when the token is spent, so it
--- carries no ordering of responses either.
+-- submitted_on is a DAY, not an instant, and it is the ONLY side that carries a time at all. The
+-- invitation side records that a token was spent and not when: a shared day is a joining value, because
+-- on any day one person at a centre answers, (round, centre, day) matches a single invitation. So the
+-- invitation table has no date of use to line this column up against, and its rowid is assigned when
+-- the round is generated rather than when a token is spent, so it carries no ordering either.
 CREATE TABLE IF NOT EXISTS survey_responses (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   round_id      INTEGER NOT NULL,

@@ -4,7 +4,7 @@
 // ============================ THE ANONYMITY GUARANTEE ============================
 // Two tables, deliberately severed, with no foreign key between them:
 //
-//   survey_invitations   token, round, centre, issued/sent/used — and NOTHING about a person. No name,
+//   survey_invitations   token, round, centre, issued/sent, spent or not — and NOTHING about a person. No name,
 //                        no employee id, no email address. The address is needed at SEND TIME only: the
 //                        export reads it from payroll, writes it into the file the admin mail-merges
 //                        from, and drops it. It is never written to this database.
@@ -17,10 +17,12 @@
 // including an administrator with the database file in front of them — able to connect an answer to a
 // person.
 //
-// The obvious leak is time. Stored to the second, the two tables could be sorted by timestamp and lined
-// up row for row, which would undo all of the above. So both sides store a DAY: survey_responses.
-// submitted_on and survey_invitations.used_on. The invitation rowid is no help either — it is assigned
-// when the round is generated, not when the token is spent.
+// The leak is time, and a day is not coarse enough to close it. If the invitation side recorded the day
+// a token was spent, (round, centre, day) would be a three-column join between the two tables: on any
+// day one person at a centre answers, that join returns a single invitation, and the mail-merge file
+// names them. So only the response side carries a day — survey_responses.submitted_on. The invitation
+// side records THAT a token was spent and never when. The invitation rowid is no help either: it is
+// assigned when the round is generated, not when the token is spent.
 //
 // The round and the centre ARE carried on both sides, because per-centre reporting is the point. They
 // are group attributes, not a joining value: the smallest centre has four staff, which is exactly why
@@ -123,7 +125,7 @@ function ensureInvitations(roundId, wantByCentre, today = cal.today()) {
     }
   })();
   // rowid order is creation order, which is what keeps a regenerated export stable — see exportRows().
-  const all = db.prepare(`SELECT rowid AS rid, token, owna_id, centre_label, used_on FROM survey_invitations WHERE round_id = ? ORDER BY rowid`).all(roundId);
+  const all = db.prepare(`SELECT rowid AS rid, token, owna_id, centre_label, used FROM survey_invitations WHERE round_id = ? ORDER BY rowid`).all(roundId);
   const byCentre = new Map();
   for (const inv of all) {
     const k = inv.owna_id == null ? "" : inv.owna_id;
@@ -145,7 +147,7 @@ function tokenState(token, today = cal.today()) {
   const inv = invitation(token);
   if (!inv) return { state: "closed" };
   const r = round(inv.round_id);
-  if (!r || roundState(r, today) !== "open" || inv.used_on) return { state: "closed" };
+  if (!r || roundState(r, today) !== "open" || inv.used) return { state: "closed" };
   return { state: "open", invitation: inv, round: r, label: inv.centre_label, questions: questions(inv.centre_label) };
 }
 
@@ -176,9 +178,10 @@ function submit(token, answers, today = cal.today()) {
   const reason = cleanText(answers && answers.reason);
   const other = cleanText(answers && answers.other);
   const done = db.transaction(() => {
-    // Spend the token. `used_on` is a day, never an instant. The WHERE clause re-checks used_on so two
-    // submissions racing on the same token cannot both write an answer.
-    const spent = db.prepare("UPDATE survey_invitations SET used_on = ? WHERE token = ? AND used_on IS NULL").run(today, token).changes;
+    // Spend the token. A flag, not a date: the day is written on the response side only, so it cannot be
+    // matched back. The WHERE clause re-checks `used` so two submissions racing on the same token cannot
+    // both write an answer.
+    const spent = db.prepare("UPDATE survey_invitations SET used = 1 WHERE token = ? AND used = 0").run(token).changes;
     if (!spent) return false;
     db.prepare(`INSERT INTO survey_responses (round_id, owna_id, centre_label, score, reason, other, submitted_on)
       VALUES (?,?,?,?,?,?,?)`).run(inv.round_id, inv.owna_id, inv.centre_label, score, reason, other, today);
@@ -217,7 +220,7 @@ function results(roundId, { scoped = null, today = cal.today() } = {}) {
   const r = round(roundId);
   if (!r) return null;
   const responses = db.prepare("SELECT owna_id, centre_label, score FROM survey_responses WHERE round_id = ?").all(roundId);
-  const invited = db.prepare(`SELECT owna_id, centre_label, COUNT(*) invited, SUM(CASE WHEN used_on IS NOT NULL THEN 1 ELSE 0 END) used
+  const invited = db.prepare(`SELECT owna_id, centre_label, COUNT(*) invited, SUM(used) used
                               FROM survey_invitations WHERE round_id = ? GROUP BY owna_id, centre_label`).all(roundId);
 
   const group = enps(responses.map((x) => x.score));

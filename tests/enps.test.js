@@ -155,9 +155,11 @@ test('eNPS survey trial',async(t)=>{
    }
   }
   assert.ok(scanned>0,'the scan found no rows at all, so it proved nothing');
-  // The invitation table holds a token, a round, a centre and three dates. Nothing else.
+  // The invitation table holds a token, a round, a centre, two round-wide dates and a spent flag.
+  // Nothing else, and in particular no date that varies from respondent to respondent — see the
+  // severing test below for why a day of use would be enough to undo all of this.
   assert.deepEqual(db.prepare('PRAGMA table_info(survey_invitations)').all().map((c)=>c.name),
-    ['token','round_id','owna_id','centre_label','issued_on','sent_on','used_on']);
+    ['token','round_id','owna_id','centre_label','issued_on','sent_on','used']);
  });
 
  await t.test('generating the export again hands the same person the same link',async()=>{
@@ -273,30 +275,78 @@ test('eNPS survey trial',async(t)=>{
   for(const row of db.prepare('SELECT rowid AS rid, * FROM survey_responses').all())
    for(const v of Object.values(row)) assert.ok(!tokens.has(String(v)),'a response carries a token');
 
-  // 3. Time cannot line the two tables up. Both sides store a DAY, never an instant — stored to the
-  //    second, sorting each table by time would pair them off row for row and undo everything above.
-  for(const r of db.prepare('SELECT used_on FROM survey_invitations WHERE used_on IS NOT NULL').all())
-   assert.match(r.used_on,/^\d{4}-\d{2}-\d{2}$/,'used_on must be a day, not an instant');
+  // 3. Time cannot line the two tables up. The response side stores a DAY, never an instant, and the
+  //    invitation side stores no time of use at all — only that the token is spent.
+  for(const r of db.prepare('SELECT used FROM survey_invitations WHERE used <> 0').all())
+   assert.equal(r.used,1,'a spent invitation records a flag, never when it was spent');
   for(const r of db.prepare('SELECT submitted_on FROM survey_responses').all())
    assert.match(r.submitted_on,/^\d{4}-\d{2}-\d{2}$/,'submitted_on must be a day, not an instant');
 
   // 4. And the invitation rowid is no substitute for a timestamp: it is assigned when the round is
   //    generated, not when the token is spent. Pairing the two tables in their own natural order gets
   //    the wrong answer, which is the whole point.
-  const usedInOrder=db.prepare("SELECT token FROM survey_invitations WHERE round_id=? AND owna_id='a' AND used_on IS NOT NULL ORDER BY rowid").all(round.id).map((r)=>r.token);
+  const usedInOrder=db.prepare("SELECT token FROM survey_invitations WHERE round_id=? AND owna_id='a' AND used=1 ORDER BY rowid").all(round.id).map((r)=>r.token);
   const truth=order.map((i)=>alphaTokens[i]);
   assert.notDeepEqual(usedInOrder,truth,'rowid order must not reproduce the order people answered in');
 
   // 5. The proof itself: from the database alone, every Alpha response is equally consistent with
-  //    every Alpha invitation that was spent that day. Five candidates for each of five answers —
-  //    nobody, including an administrator holding this file, can say which person wrote which.
+  //    every Alpha invitation that was spent. Five candidates for each of five answers — nobody,
+  //    including an administrator holding this file, can say which person wrote which.
   const alphaResponses=db.prepare("SELECT * FROM survey_responses WHERE round_id=? AND owna_id='a'").all(round.id);
   assert.equal(alphaResponses.length,5);
   for(const resp of alphaResponses){
    const candidates=db.prepare(`SELECT token FROM survey_invitations
-     WHERE round_id=? AND owna_id IS ? AND used_on = ?`).all(resp.round_id,resp.owna_id,resp.submitted_on);
+     WHERE round_id=? AND owna_id IS ? AND used=1`).all(resp.round_id,resp.owna_id);
    assert.equal(candidates.length,5,'an answer must not narrow to fewer invitations than were spent');
   }
+ });
+
+ await t.test('a round spread over a fortnight is severed just as hard',async()=>{
+  surveyRoutes.resetRateLimit();
+  // The five Alpha answers above all land on ONE frozen day, which is the single shape in which a day on
+  // the invitation side looks harmless. A real round is open for a fortnight, and people answer when they
+  // read the email. So: a second round, its own tokens, and five Alpha staff answering on five different
+  // days — one person per centre per day, which is the ordinary case, not a contrived one. If the
+  // invitation side recorded the day a token was spent, (round, centre, day) would return exactly ONE
+  // invitation for each of these answers, and the mail-merge file the admin page says to keep turns that
+  // token into a name.
+  const OPEN='2026-10-01';
+  const r2=await freeze(OPEN+'T03:00:00Z',()=>survey.createRound({name:'eNPS trial — October 2026',opens_on:OPEN,closes_on:'2026-10-15'}));
+  const ex2=await freeze(OPEN+'T03:00:00Z',()=>survey.exportRows(r2.id,{baseUrl:'https://pulse.example'}));
+  const alpha=ex2.rows.filter((x)=>x.centre==='Alpha').map((x)=>x.token);
+  const days=['2026-10-02','2026-10-05','2026-10-07','2026-10-09','2026-10-14'];
+  for(const [i,day] of days.entries()){
+   const r=await freeze(day+'T03:00:00Z',()=>fetch(base+'/s/'+alpha[i],{method:'POST',body:new URLSearchParams({score:String([10,9,8,7,0][i]),reason:'october '+i}),redirect:'manual'}));
+   assert.equal(r.status,200); await r.text();
+  }
+  // Exactly one Alpha answer on each of those days: the shape in which a day is a name.
+  for(const day of days)
+   assert.equal(db.prepare("SELECT COUNT(*) n FROM survey_responses WHERE round_id=? AND owna_id='a' AND submitted_on=?").get(r2.id,day).n,1);
+
+  // NO column of the invitation table may split a centre's invitations by the day an answer was
+  // submitted: matching any column against a response's day must return either nothing or the whole
+  // centre. A used_on returns one, which is the defect this guards.
+  const invCols=db.prepare('PRAGMA table_info(survey_invitations)').all().map((c)=>c.name);
+  for(const resp of db.prepare('SELECT * FROM survey_responses WHERE round_id=?').all(r2.id)){
+   const total=db.prepare('SELECT COUNT(*) n FROM survey_invitations WHERE round_id=? AND owna_id IS ?').get(r2.id,resp.owna_id).n;
+   for(const c of invCols){
+    const n=db.prepare(`SELECT COUNT(*) n FROM survey_invitations WHERE round_id=? AND owna_id IS ? AND "${c}" = ?`)
+      .get(r2.id,resp.owna_id,resp.submitted_on).n;
+    assert.ok(n===0||n===total,`survey_invitations.${c} narrows the ${resp.submitted_on} answer to ${n} of ${total} invitations`);
+   }
+  }
+  // Every one of the five answers is still consistent with every spent Alpha invitation, days apart or not.
+  const spent=db.prepare("SELECT token FROM survey_invitations WHERE round_id=? AND owna_id='a' AND used=1").all(r2.id);
+  assert.equal(spent.length,days.length);
+  // And the counting the flag has to keep doing: the response rate is the whole reason `used` exists.
+  const res2=survey.results(r2.id,{today:'2026-10-14'});
+  const alphaRow=res2.centres.find((c)=>c.label==='Alpha');
+  assert.equal(alphaRow.invited,6);
+  assert.equal(alphaRow.responses,5);
+  assert.equal(alphaRow.response_rate,83.3);
+  const counts=db.prepare('SELECT COUNT(*) invited, SUM(used) used FROM survey_invitations WHERE round_id=?').get(r2.id);
+  assert.equal(counts.invited,ACTIVE_WITH_EMAIL);
+  assert.equal(counts.used,days.length,'the admin page counts answers off the flag');
  });
 
  // ===== Reporting =====
