@@ -54,13 +54,18 @@
     <%# The supplied brand wordmark, inlined so it takes the sidebar's white rather than shipping a second
         coloured copy of the same file. "Pulse" stays as a word: it names this dashboard, not the company. %>
     <div class="brand"><%- include('wordmark') %><span>Pulse · Operations</span></div>
-    <%# On a phone the rail becomes a disclosure. There are 24 destinations here and they filled the
-        whole first screen before any content — on the one page a centre director opens on their phone,
-        that is the page. <details> so it works with no JavaScript; the stylesheet forces it open and
-        hides the summary from 761px up, so nothing about the desktop rail changes. %>
-    <details class="nav-disclosure">
-      <summary class="nav-toggle"><span class="nav-toggle-bars" aria-hidden="true"></span>Menu</summary>
-    <nav class="side-nav">
+    <%# On a phone the rail collapses behind this toggle: 24 destinations filled the whole first screen
+        before any content, on the one page a centre director opens on their phone.
+
+        A checkbox, NOT <details>. <details> was tried and silently broke the desktop nav on every page:
+        Chromium wraps the content in a ::details-content slot carrying content-visibility:hidden, and
+        overriding display on the child does not defeat it. The nav still had layout — real boxes, links
+        measurable, getBoundingClientRect reporting 244x1158 — so it measured as present while painting
+        nothing at all. A checkbox keeps visibility entirely in the stylesheet, where there is no user-
+        agent behaviour to fight, and still needs no JavaScript. %>
+    <input type="checkbox" id="nav-open" class="nav-check" />
+    <label for="nav-open" class="nav-toggle"><span class="nav-toggle-bars" aria-hidden="true"></span>Menu</label>
+    <nav class="side-nav" id="side-nav">
       <a href="/" class="<%= currentPath === '/' ? 'active' : '' %>"><%- ico('overview') %><span class="nav-lbl">Overview</span></a>
       <%# The centre manager's home: this week drawn as seats, and what to do about it. It sits above the
           reports on purpose — a director opens this to run the day, not to read a summary. %>
@@ -113,7 +118,6 @@
         <% } %>
       <% } %>
     </nav>
-    </details>
     <%# The concept pins a brand line at the foot of the sidebar. Nothing in this repo records a
         Futuro tagline, and inventing one is not a styling decision — so the slot stays empty until
         someone sets BRAND_TAGLINE (see .env.example), and renders nothing until they do. %>

@@ -789,29 +789,33 @@ details.working > *:last-child { padding-bottom: 16px; }
 .sidebar .brand .wordmark { height: 30px; color: var(--on-brand-strong); }
 .brand-lg .wordmark { height: 40px; color: var(--brand-ink); margin-bottom: 2px; }
 
-/* ===== The sidebar as a disclosure on a phone ============================ */
-/* Desktop is unchanged: the <details> is forced open and its summary hidden, so
-   the rail renders exactly as it did before it was wrapped. Only below 760px
-   does it behave as a real disclosure. */
-.nav-disclosure { min-height: 0; display: flex; flex-direction: column; flex: 1; }
+/* ===== The sidebar collapses on a phone ================================== */
+/* Desktop is untouched: .side-nav keeps its own display and there is no override
+   that has to work for the rail to appear. Only below 760px does the checkbox
+   hide it.
+
+   This was a <details> first, and that silently emptied the desktop sidebar on
+   EVERY page. Chromium puts the contents of a closed <details> in a
+   ::details-content slot carrying content-visibility:hidden; overriding display
+   on the child gives it layout back but it still never paints. So it measured as
+   present — 244x1158, every link reporting a real box — while the rail rendered
+   blank. A checkbox keeps visibility entirely in this stylesheet, where there is
+   no user-agent behaviour to fight, and still needs no JavaScript.
+   Do not reintroduce <details> here. */
+.nav-check { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
 .nav-toggle { display: none; }
-@media (min-width: 761px) {
-  /* The UA hides every non-summary child of a closed <details>; this overrides
-     that, which is what lets one piece of markup serve both layouts. */
-  .nav-disclosure:not([open]) > .side-nav { display: flex; }
-}
 @media (max-width: 760px) {
   .nav-toggle {
-    display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none;
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
     margin: 0 14px; padding: 9px 12px; border-radius: 8px;
     font-size: 14px; font-weight: 600; color: var(--on-brand-strong);
     background: var(--sidebar-hover);
   }
-  .nav-toggle::-webkit-details-marker { display: none; }   /* Safari's default triangle */
   .nav-toggle-bars { width: 16px; height: 2px; background: currentColor; border-radius: 2px; position: relative; flex-shrink: 0; }
   .nav-toggle-bars::before, .nav-toggle-bars::after { content: ""; position: absolute; left: 0; width: 16px; height: 2px; background: currentColor; border-radius: 2px; }
   .nav-toggle-bars::before { top: -5px; } .nav-toggle-bars::after { top: 5px; }
-  .nav-disclosure[open] .nav-toggle { margin-bottom: 8px; }
-  /* Closed, the rail is just the brand and the button — content starts straight away. */
-  .nav-disclosure:not([open]) + .side-nav-footer { border-top: none; }
+  /* The checkbox sits off-screen but stays focusable, so the label has to show the ring. */
+  .nav-check:focus-visible ~ .nav-toggle { outline: 2px solid var(--on-brand-strong); outline-offset: 2px; }
+  .nav-check:not(:checked) ~ .side-nav { display: none; }
+  .nav-check:checked ~ .side-nav { margin-top: 8px; }
 }
