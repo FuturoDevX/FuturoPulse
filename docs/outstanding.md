@@ -175,6 +175,13 @@ What it deliberately does **not** do, and what would unblock each:
   are empty; `qc_actions` has 30 rows for one centre and one term, and its `due_date` column holds free
   text such as "Ongoing". The data has to exist before the tile can.
 
+The first cut was reviewed adversarially and five confident-but-wrong numbers were found and fixed
+(commit 783a510): a week that had already happened reported "~0 seats likely to sit empty" while 45
+place-days had genuinely sat empty; a gazetted public holiday was drawn as a day with 67 free places,
+because OWNA keeps booking rows through a closure; those same closures were dragging the weekday
+show-rate down and inflating the forecast; the "free" and "empty seats" tiles double-counted; and a week
+past the booking horizon reported zeros where the answer was "not known". Twelve tests now pin these.
+
 Also done: the supplied Futuro wordmark now replaces the words "Futuro Pulse" in the sidebar and on the
 login page, `BRAND_TAGLINE` is set to the brief's "Our people are the difference", and the sidebar
 collapses behind a Menu button below 760px — 24 destinations filled a phone's entire first screen before

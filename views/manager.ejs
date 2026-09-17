@@ -169,7 +169,9 @@
            // and the label below says which — the picture is the same shape either way.
            const solid   = (drawSeats && d.head != null) ? Math.min(d.head, d.places) : onLicence;
            const hatched = Math.max(0, onLicence - solid);
-           const basis = !d.operating ? 'Closed' : (d.observed ? 'Measured' : 'Booked');
+           // "Booked" would be a claim about a day the sync holds nothing for, so a day with no row
+           // says so rather than labelling absent data as a booking.
+           const basis = !d.operating ? 'Closed' : (booked == null ? 'No data' : (d.observed ? 'Measured' : 'Booked'));
       %>
         <div class="seat-day <%= d.isToday ? 'is-today' : '' %> <%= d.operating ? '' : 'is-closed' %>">
           <div class="sd-head">
