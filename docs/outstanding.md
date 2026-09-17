@@ -24,6 +24,32 @@ The full sequence and reasoning live in the work plan: https://claude.ai/code/ar
   and no run has succeeded since the mechanism was added. It will populate itself the first time the sync
   works — but any freshness banner built before then will report all-clear.
 
+## Found by review, not yet fixed — the same class of bug on other pages
+
+The actual/forecast boundary fix reached the Overview, the centre page and the new manager screen. A
+five-lens review found the same pattern elsewhere and these were NOT verified before the review ran out
+of budget, so each needs confirming before it is acted on. They are listed in the order they would
+mislead someone.
+
+- [ ] **`coeOutlook`'s run-rate week crosses the boundary** (services/metrics.js) — the claim is that
+  455 group child-days counted as "actually attended" were never observed.
+- [ ] **`centreInsights`' absence tip is measured to today**, not to the last observed day, which the
+  reviewer put at understating sellable absence by about a quarter.
+- [ ] **The Overview's "past days only" caption is keyed to today**, so it hides on exactly the ranges
+  that need it.
+- [ ] **`services/ai-tools.js` reports basis "actual"** for days past the snapshot boundary — so the
+  AI answers inherit the same wrong figure the pages no longer show.
+- [ ] **The AI briefing packet carries no staleness caveat** for a period ending past the boundary.
+- [ ] **`compareTrend`** hands `placesByMonth` an axis two months past the booking horizon, drops the
+  coverage flag, and is the only occupancy figure in the app that counts public holidays.
+- [ ] **`lastActualDate()` returns today whenever the feed is healthy** — which is right for a
+  completed day but means today's own partial attendance is treated as final. Worth a decision rather
+  than a fix: should the boundary be yesterday?
+
+Refuted on inspection, recorded so they are not raised again: the claim that the closed-`<details>`
+override fails on desktop (checked in the browser — `display:flex`, 30 links, all visible), and four
+accessibility findings that verification downgraded to nits.
+
 ## Waiting on a decision or access (nobody can start these)
 
 | # | Needed | From | Blocks | Wanted by |
