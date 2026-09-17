@@ -2743,10 +2743,25 @@ function talentPayScales() {
 // about it. Everything here is drawn from observed data or from bookings, and anything that would need a
 // figure OWNA does not hold (a room's real capacity, its ratio, its age band) reports itself as not
 // configured instead of guessing. See db/schema.sql on the rooms table for why that matters.
+//
+// Two rules this file exists to keep:
+//   1. NON-OPERATING DAYS ARE NOT DAYS. OWNA keeps full booking rows on gazetted public holidays — 57
+//      children "booked" at Austral on Labour Day — with attended = 0 and absent = booked, because the
+//      centre is shut. Counting them anywhere produces nonsense in both directions: a show-rate that
+//      says nobody turns up on Mondays, and a seat grid offering 67 free places at a closed centre.
+//   2. OBSERVED AND FORECAST ARE NEVER MIXED IN ONE NUMBER. A day that has happened reports what was
+//      measured; a day that has not reports an estimate, labelled as one.
 
 // Monday of the week a date falls in. Weeks run Mon–Fri because no centre has a weekend booking row.
+// Returns null for anything that is not a real calendar date — "2026-13-45" matches the route's shape
+// check but is not a day, and letting it through reaches toISOString() and throws a 500.
 function mondayOf(d) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d || ""))) return null;
   const t = new Date(d + "T00:00:00Z");
+  if (Number.isNaN(t.getTime())) return null;
+  // Date rolls 2026-02-30 forward to 2 March rather than rejecting it. Round-tripping catches that, so
+  // an impossible date is refused instead of quietly showing a different week than the URL asked for.
+  if (t.toISOString().slice(0, 10) !== d) return null;
   const back = (t.getUTCDay() + 6) % 7;           // Sun=0 -> 6, Mon=1 -> 0
   return cal.addDays(d, -back);
 }
@@ -2769,17 +2784,24 @@ function roomsFor(ownaId) {
 // Observed show-rate by weekday, over the last `weeks` observed weeks. This is what turns a booking into
 // an expected head count — and it is a FORECAST, which is why it is returned separately from anything
 // measured rather than blended into one number the page could mistake for an actual.
+//
+// Operating days ONLY. A single public holiday in the window is enough to wreck the weekday it lands on:
+// measured at 15 May 2026, with Good Friday and Easter Monday inside the trailing eight weeks, Austral's
+// Monday rate reads 76.5% including them against 82.3% on operating days. That understates the expected
+// head count, which overstates the empty seats, which is precisely the number a director acts on.
 function showRateByDow(ownaId, weeks = 8) {
   const to = lastActualDate();
   const from = cal.addDays(to, -(weeks * 7));
+  const opDays = JSON.stringify(cal.operatingDayList(from, to));
   const rows = db.prepare(`
     SELECT CAST(strftime('%w', metric_date) AS INTEGER) AS dow,
            COALESCE(SUM(booked),0) AS booked, COALESCE(SUM(attended),0) AS attended,
            COUNT(*) AS days
     FROM daily_metrics
     WHERE owna_id = ? AND metric_date BETWEEN ? AND ?
+      AND metric_date IN (SELECT value FROM json_each(?))
     GROUP BY dow
-  `).all(ownaId, from, to);
+  `).all(ownaId, from, to, opDays);
   const out = {};
   for (const r of rows) out[r.dow] = { rate: r.booked > 0 ? r.attended / r.booked : null, days: r.days, booked: r.booked };
   return { from, to, byDow: out };
@@ -2793,7 +2815,7 @@ function showRateByDow(ownaId, weeks = 8) {
 // say "oversubscribed", never print "−13 available".
 function managerWeek(ownaId, weekStart) {
   const places = placesOf(ownaId);
-  const monday = mondayOf(weekStart || todayStr());
+  const monday = mondayOf(weekStart) || mondayOf(todayStr());
   const friday = cal.addDays(monday, 4);
   const observedTo = lastActualDate();
   const { byDow } = showRateByDow(ownaId);
@@ -2812,35 +2834,53 @@ function managerWeek(ownaId, weekStart) {
     const booked = r ? r.booked : null;
     const dow = (new Date(date + "T00:00:00Z")).getUTCDay();
     const sr = byDow[dow] ? byDow[dow].rate : null;
+    // Forecast head count, for an operating day that has not happened. Not computed for a closed day:
+    // OWNA's booking rows survive the closure and multiplying them by a show-rate invents a head count
+    // for a centre nobody attended.
+    const expected = (!observed && operating && r && sr != null) ? Math.round(r.booked * sr) : null;
+    // The head count the day will run at: measured where it can be, estimated where it cannot, null when
+    // neither is knowable. Everything the seat grid draws derives from this one number.
+    const head = !operating ? null : (observed ? (r ? r.attended : null) : expected);
     days.push({
-      date,
-      dow,
+      date, dow,
       label: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dow],
       operating,                              // a gazetted public holiday still carries booking rows in OWNA
+      holiday: !operating,
       observed,
       isToday: date === todayStr(),
       places,
       booked,
-      // Only for a day that has happened. Never derived for a forward day — that is what `expected` is for.
       attended: observed && r ? r.attended : null,
       absent: observed && r ? r.absent : null,
       casual: r ? r.casual : null,
-      // Forecast head count for a day that has not happened: bookings × this weekday's observed show-rate.
-      expected: !observed && r && sr != null ? Math.round(r.booked * sr) : null,
+      expected,
+      head,
+      headBasis: head == null ? null : (observed ? "measured" : "estimated"),
       showRate: sr == null ? null : Math.round(sr * 1000) / 10,
-      available: places != null && r ? places - r.booked : null,
-      occupancy: pctOrNull(r ? r.booked : 0, places),
+      // Seats that did, or will, sit empty — the free ones INCLUDED. places − head, so it is one quantity
+      // rather than two that overlap. Null when the head count is unknown.
+      emptySeats: (places != null && head != null) ? Math.max(0, places - head) : null,
+      available: (places != null && r && operating) ? places - r.booked : null,
+      occupancy: operating ? pctOrNull(r ? r.booked : 0, places) : null,
     });
   }
-  const withRows = days.filter((d) => d.booked != null);
+  const open = days.filter((d) => d.operating && d.booked != null);
+  const opDays = days.filter((d) => d.operating);
   return {
-    monday, friday, places, observedTo,
+    monday, friday, places,
+    observedTo,                                  // the feed's boundary, group-wide
+    // The last day OF THIS WEEK that was observed — what the attendance tile should name. Naming the
+    // group-wide boundary instead told a director reading August that the figure ran "to 10 Sep".
+    weekObservedTo: open.filter((d) => d.observed).map((d) => d.date).pop() || null,
+    isPast: friday < todayStr(),
+    isFuture: monday > todayStr(),
     days,
-    bookedTotal: withRows.reduce((s, d) => s + d.booked, 0),
-    placeDays: places != null ? places * days.filter((d) => d.operating).length : null,
-    availableTotal: places != null ? days.filter((d) => d.operating && d.booked != null)
-      .reduce((s, d) => s + (places - d.booked), 0) : null,
-    missingDays: days.filter((d) => d.operating && d.booked == null).map((d) => d.date),
+    hasData: open.length > 0,
+    bookedTotal: open.reduce((s, d) => s + d.booked, 0),
+    placeDays: places != null ? places * opDays.length : null,
+    availableTotal: places != null && open.length ? open.reduce((s, d) => s + (places - d.booked), 0) : null,
+    missingDays: opDays.filter((d) => d.booked == null).map((d) => d.date),
+    closedDays: days.filter((d) => !d.operating).map((d) => d.date),
   };
 }
 
@@ -2853,77 +2893,112 @@ function managerActions(ownaId, week) {
   const lag = actualsLagDays();
   const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
   const open = w.days.filter((d) => d.operating && d.booked != null);
+  // A week that has already ended gets described, not prescribed: telling a director to fill Tuesday is
+  // nonsense when Tuesday was three weeks ago.
+  const past = w.isPast;
+  const was = (present, pastTense) => (past ? pastTense : present);
 
   // 1. The feed itself. A manager acting on week-old numbers is the worst failure mode here, so it leads.
   if (lag >= 2) {
     out.push({
-      kind: "feed", tone: "warn", title: `Figures are ${lag} days old`,
-      detail: `The last successful OWNA sync was ${w.observedTo}. Bookings are current to then; attendance is only known to that date.`,
+      kind: "feed", tone: "warn", title: `Every figure here is ${lag} days old`,
+      detail: `The last successful OWNA sync was ${w.observedTo}. Bookings AND attendance are as at that ` +
+        "date — a booking taken since then does not appear on this page.",
       impact: null,
     });
   }
 
-  // 2. Places genuinely free on the licence — the only ones that can be sold without a judgement call.
-  //    One row for the week with the best day named; the grid beside it carries the day-by-day detail,
-  //    so repeating it here would just be the same information twice.
-  const free = open.filter((d) => d.available > 0);
+  // 2. Nothing to say at all. Better stated than left to be inferred from an empty panel.
+  if (!open.length) {
+    out.push({
+      kind: "nodata", tone: "info", title: "No booking data for this week",
+      detail: w.isFuture
+        ? "This week is past the end of the booking data OWNA has returned, so nothing is known about it — not that it is empty."
+        : "The sync holds no rows for these dates. This is not the same as a week with no children booked.",
+      impact: null,
+    });
+    return out;
+  }
+  if (w.places == null) {
+    out.push({
+      kind: "places", tone: "warn", title: "No approved places recorded for this centre",
+      detail: "Without the licensed count there is no denominator, so occupancy, free places and empty " +
+        "seats cannot be worked out at all. Record it at /admin/places.",
+      impact: null,
+    });
+  }
+
+  // 3. Places genuinely free on the licence — the only ones that can be sold without a judgement call.
+  const free = open.filter((d) => d.available != null && d.available > 0);
   if (free.length) {
     const total = free.reduce((s, d) => s + d.available, 0);
     const best = free.reduce((a, b) => (b.available > a.available ? b : a));
     out.push({
-      kind: "fill", tone: "good", title: `${plural(total, "place-day")} free this week`,
-      detail: `Across ${plural(free.length, "day")}. ${best.label} has the most room, with ${plural(best.available, "place")} against ${best.places} approved.`,
+      kind: "fill", tone: past ? "info" : "good",
+      title: `${plural(total, "place-day")} ${was("free this week", "went unbooked")}`,
+      detail: `Across ${plural(free.length, "day")}. ${best.label} ${was("has", "had")} the most room, with ` +
+        `${plural(best.available, "place")} against ${best.places} approved.`,
       impact: `${total} place-days`,
     });
   }
 
-  // 3. Days booked past the licence. Legitimate — a booking holds a place whether the child attends or not
+  // 4. Days booked past the licence. Legitimate — a booking holds a place whether the child attends or not
   //    — but it is the cue to check the roster covers the BOOKED number rather than the expected one.
-  const over = open.filter((d) => d.available < 0);
+  const over = open.filter((d) => d.available != null && d.available < 0);
   if (over.length) {
     const worst = over.reduce((a, b) => (b.available < a.available ? b : a));
     out.push({
-      kind: "over", tone: "warn",
+      kind: "over", tone: past ? "info" : "warn",
       title: `${plural(over.length, "day")} booked above approved places`,
-      detail: `${over.map((d) => d.label).join(", ")}. ${worst.label} is the tightest at ${worst.booked} booked against ${worst.places}. ` +
-        "Check the roster covers the booked number.",
+      detail: `${over.map((d) => d.label).join(", ")}. ${worst.label} ${was("is", "was")} the tightest at ` +
+        `${worst.booked} booked against ${worst.places}.` + (past ? "" : " Check the roster covers the booked number."),
       impact: `${Math.abs(worst.available)} over on ${worst.label}`,
     });
   }
 
-  // 4. The real booking opportunity, and the reason this screen exists. A day can be oversubscribed on
-  //    BOOKINGS and still run well under its approved places, because roughly one child in ten does not
-  //    attend on any given day. That gap is sellable — but only as a forecast, never as a verified place:
-  //    releasing it needs the room, the ratio and the roster checked, none of which this data can see.
-  const fc = open.filter((d) => d.expected != null && d.places != null && d.places - d.expected >= 3);
-  if (fc.length) {
-    const total = fc.reduce((s, d) => s + (d.places - d.expected), 0);
-    const best = fc.reduce((a, b) => ((b.places - b.expected) > (a.places - a.expected) ? b : a));
-    out.push({
-      kind: "opportunity", tone: "good", forecast: true,
-      title: `About ${plural(total, "seat")} likely to sit empty this week`,
-      detail: `Estimated from the last 8 observed weeks. ${best.label} is the largest gap: ${best.booked} booked, ` +
-        `but this weekday runs at ${best.showRate}% attendance so around ${best.expected} are expected. ` +
-        "Confirm room, ratio and roster before offering any of it as a casual place.",
-      impact: `~${total} seats`,
-    });
+  // 5. Seats that sat, or will sit, empty — the reason this screen exists. A day can be oversubscribed on
+  //    BOOKINGS and still run well under its licence, because roughly one child in ten does not attend.
+  //    For a week that has happened this is a MEASUREMENT; for one that has not it is an estimate, and the
+  //    two are never added together.
+  const withHead = open.filter((d) => d.emptySeats != null);
+  if (withHead.length) {
+    const total = withHead.reduce((s, d) => s + d.emptySeats, 0);
+    const best = withHead.reduce((a, b) => (b.emptySeats > a.emptySeats ? b : a));
+    const estimated = withHead.some((d) => d.headBasis === "estimated");
+    const measured = withHead.some((d) => d.headBasis === "measured");
+    if (total >= 3) {
+      out.push({
+        kind: "opportunity", tone: "good", forecast: estimated && !measured,
+        title: estimated && !measured
+          ? `About ${plural(total, "seat")} likely to sit empty this week`
+          : `${plural(total, "seat")} ${was("are sitting empty", "sat empty")}`,
+        detail: (estimated && !measured
+          ? `Estimated from the last 8 observed weeks, operating days only. ${best.label} is the largest gap: ` +
+            `${best.booked} booked, but this weekday runs at ${best.showRate}% attendance so around ${best.head} are expected. `
+          : `${best.label} was the widest: ${best.booked} booked and ${best.head} attended. `) +
+          `This is the total gap between the licence and the head count, so it includes any place with no ` +
+          `booking at all. ` + (past ? "" : "Confirm room, ratio and roster before offering any of it as a casual place."),
+        impact: `${estimated && !measured ? "~" : ""}${total} seats`,
+      });
+    }
   }
 
-  // 5. Absence already observed: places that were paid for and sat empty. The clearest evidence for (4).
+  // 6. Absence already observed: places that were paid for and sat empty. The evidence behind (5).
   const gap = open.filter((d) => d.observed && d.absent > 0).sort((a, b) => b.absent - a.absent);
   if (gap.length) {
     const d = gap[0];
     out.push({
       kind: "absence", tone: "info",
       title: `${plural(gap.reduce((s, x) => s + x.absent, 0), "booked child", "booked children")} did not attend`,
-      detail: `In the observed part of this week. ${d.label} was the highest, with ${d.attended} of ${d.booked} attending. ` +
-        "A confirmed absence can be offered as a casual place.",
+      detail: `${d.label} was the highest, with ${d.attended} of ${d.booked} attending.` +
+        (past ? "" : " A confirmed absence can be offered as a casual place."),
       impact: null,
     });
   }
 
-  // 6. The roll ahead. Children leaving are places to re-book. The lower bound matters: the `upcoming`
-  //    flag is stamped at snapshot time and goes stale, so without it already-departed children count.
+  // 7. The roll ahead. Always measured from today, never from the displayed week — a director looking back
+  //    at August still needs to know who is leaving now, and the label says "from today" so it cannot be
+  //    read as belonging to the week on screen.
   const today = todayStr();
   const leaving = db.prepare(`
     SELECT COUNT(*) AS n FROM child_exits
@@ -2931,13 +3006,13 @@ function managerActions(ownaId, week) {
   `).get(ownaId, today, cal.addDays(today, 90));
   if (leaving && leaving.n > 0) {
     out.push({
-      kind: "leaving", tone: "info", title: `${plural(leaving.n, "child", "children")} finish in the next 90 days`,
+      kind: "leaving", tone: "info", title: `${plural(leaving.n, "child", "children")} finish within 90 days of today`,
       detail: "Each is a place to re-book. Check the waitlist for a match on their days.",
       impact: `${leaving.n} places`,
     });
   }
 
-  // 7. What cannot be shown per room, stated plainly rather than drawn wrong.
+  // 8. What cannot be shown per room, stated plainly rather than drawn wrong.
   const rooms = roomsFor(ownaId);
   if (!rooms.length) {
     out.push({
@@ -2950,13 +3025,14 @@ function managerActions(ownaId, week) {
     if (unconfigured.length) {
       out.push({
         kind: "rooms", tone: "warn",
-        title: `${unconfigured.length} of ${rooms.length} rooms have no capacity in OWNA`,
-        detail: `${unconfigured.map((r) => r.name || r.room_id).join(", ")}. Per-room places cannot be shown until ` +
-          "someone who knows the room records its capacity in OWNA.",
+        title: `${unconfigured.length} of ${rooms.length} rooms have no capacity recorded`,
+        detail: `${unconfigured.map((r) => r.name || r.room_id).join(", ")}. Per-room places cannot be shown ` +
+          "for these until the capacity is set in OWNA.",
         impact: null,
       });
     }
   }
+
   const order = { warn: 0, good: 1, info: 2 };
   return out.sort((a, b) => order[a.tone] - order[b.tone]);
 }

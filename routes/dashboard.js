@@ -379,17 +379,34 @@ router.get("/exits", blockScoped, requireIdentified, (req, res) => {
 router.get("/manager", (req, res) => {
   const scoped = scopedOwnaId(req);
   const all = m.centres().filter((c) => !c.opening);
+
+  // A scoped login asking for someone else's centre is REFUSED, not quietly given its own. Silently
+  // substituting answered 200 under a URL naming the other centre, so a director sent such a link saw
+  // their own week under another centre's name and nothing was logged. /centre/:id already 403s here.
+  if (scoped && req.query.owna && req.query.owna !== scoped) {
+    return res.status(403).render("error", { message: "You can only view your own centre." });
+  }
+
   const centres = scoped ? all.filter((c) => c.owna_id === scoped) : all;
   const owna = scoped || (centres.find((c) => c.owna_id === req.query.owna) ? req.query.owna : (centres[0] && centres[0].owna_id));
   const centre = owna ? m.centre(owna) : null;
   if (!centre) return res.status(404).render("error", { message: "No operating centre to show." });
+  // A pre-opening centre has no roll, no roster and no approved places, so this screen has nothing to
+  // say about it. Send it where /centre/:id sends it — the pipeline — rather than render an empty week
+  // whose only remedy points at an admin page the director cannot open.
+  if (centre.opening) return res.redirect("/centre/" + encodeURIComponent(centre.owna_id));
 
   // The week to show. Defaults to the week containing today — a manager opens this to run today, not to
   // review the last observed week — so most of it is forward bookings, and the view says which is which.
-  const week = /^\d{4}-\d{2}-\d{2}$/.test(req.query.week) ? m.mondayOf(req.query.week) : m.mondayOf(m.todayStr());
-  const w = m.managerWeek(owna, week);
+  // mondayOf answers null for anything that is not a real date: the shape check alone let "2026-13-45"
+  // through to toISOString() and returned a 500, and let "2026-02-30" through as 2 March without saying so.
+  const asked = req.query.week ? m.mondayOf(req.query.week) : null;
+  if (req.query.week && !asked) {
+    return res.status(400).render("error", { message: "That is not a real date, so there is no week to show. Use the Previous and Next links." });
+  }
+  const w = m.managerWeek(owna, asked || m.todayStr());
   res.render("manager", {
-    title: centre.name.replace(/Futuro Childcare (and|&) Education\s*-?\s*/i, "") + " — This week",
+    title: centre.name.replace(/Futuro Childcare (and|&) Education\s*-?\s*/i, "") + " — " + (w.isPast ? "Week of " + w.monday : "This week"),
     centres, owna, centre, week: w,
     actions: m.managerActions(owna, w),
     rooms: m.roomsFor(owna),

@@ -10,38 +10,47 @@
     alert:   '<path d="M10.6 4.4 3.3 17a1.6 1.6 0 0 0 1.4 2.4h14.6A1.6 1.6 0 0 0 20.7 17L13.4 4.4a1.6 1.6 0 0 0-2.8 0Z"/><path d="M12 9.4v4.1"/><path d="M12 16.8h.01"/>',
     tick:    '<circle cx="12" cy="12" r="8.4"/><path d="m8.6 12.2 2.3 2.3 4.5-4.7"/>',
     room:    '<path d="M3.8 10.4 12 3.6l8.2 6.8V19a1.6 1.6 0 0 1-1.6 1.6H5.4A1.6 1.6 0 0 1 3.8 19v-8.6Z"/><path d="M9.4 20.6v-6.2h5.2v6.2"/>',
-    chev:    '<path d="m9.2 5.6 6.4 6.4-6.4 6.4"/>',
+    info:    '<circle cx="12" cy="12" r="8.4"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
   };
-  function svg(name, cls) {
+  function svg(name) {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (I[name] || I.tick) + '</svg>';
   }
-  // Which icon and which badge tint a priority row gets, by the kind of thing it is.
   const ROW = {
-    feed:        { ico: 'clock',  badge: 'warn' },
-    over:        { ico: 'alert',  badge: 'warn' },
-    rooms:       { ico: 'room',   badge: '' },
-    fill:        { ico: 'seat',   badge: '' },
-    opportunity: { ico: 'trend',  badge: '' },
-    absence:     { ico: 'people', badge: '' },
-    leaving:     { ico: 'people', badge: '' },
+    feed:        { ico: 'clock' },  over:   { ico: 'alert' }, rooms:   { ico: 'room' },
+    fill:        { ico: 'seat' },   places: { ico: 'alert' }, nodata:  { ico: 'info' },
+    opportunity: { ico: 'trend' },  absence:{ ico: 'people' }, leaving: { ico: 'people' },
   };
-  const fmtDay = (d) => { const [y,mn,dd] = d.split('-'); return Number(dd) + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(mn)-1]; };
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const fmtDay = (d) => { const p = String(d).split('-'); return Number(p[2]) + ' ' + MON[Number(p[1]) - 1]; };
   const shortName = (n) => (n || '').replace(/Futuro Childcare (and|&) Education\s*-?\s*/i, '').trim();
+  const num = (v) => (v == null ? '—' : v);
 
-  // Week roll-ups for the tiles. Operating days only: OWNA keeps booking rows on gazetted holidays when
-  // the centre is shut, and counting them would understate every percentage on the page.
-  const open   = week.days.filter((d) => d.operating && d.booked != null);
-  const obs    = open.filter((d) => d.observed);
-  const bookedTotal   = open.reduce((s, d) => s + d.booked, 0);
-  const placeDays     = week.places == null ? null : week.places * open.length;
-  const occPct        = placeDays ? Math.round(bookedTotal / placeDays * 1000) / 10 : null;
-  const attendedTotal = obs.reduce((s, d) => s + (d.attended || 0), 0);
+  // Week roll-ups. Operating days only, and only days that actually carry rows: a day with no booking
+  // data is UNKNOWN, not zero, and folding it into a sum would quietly assert that it was empty.
+  const open    = week.days.filter((d) => d.operating && d.booked != null);
+  const obs     = open.filter((d) => d.observed && d.attended != null);
+  const opDays  = week.days.filter((d) => d.operating);
+  const known   = open.length === opDays.length;      // is the week fully covered by the sync?
+
+  const bookedTotal = open.reduce((s, d) => s + d.booked, 0);
+  const placeDays   = (week.places == null || !open.length) ? null : week.places * open.length;
+  const occPct      = placeDays ? Math.round(bookedTotal / placeDays * 1000) / 10 : null;
+
+  const attendedTotal = obs.reduce((s, d) => s + d.attended, 0);
   const obsBooked     = obs.reduce((s, d) => s + d.booked, 0);
   const attPct        = obsBooked ? Math.round(attendedTotal / obsBooked * 1000) / 10 : null;
-  const freeTotal     = open.filter((d) => d.available > 0).reduce((s, d) => s + d.available, 0);
-  const overTotal     = open.filter((d) => d.available < 0).reduce((s, d) => s + Math.abs(d.available), 0);
-  const gapTotal      = open.filter((d) => d.expected != null && week.places != null)
-                            .reduce((s, d) => s + Math.max(0, week.places - d.expected), 0);
+
+  const freeDays  = open.filter((d) => d.available != null && d.available > 0);
+  const freeTotal = open.length ? freeDays.reduce((s, d) => s + d.available, 0) : null;
+  const overTotal = open.filter((d) => d.available != null && d.available < 0).reduce((s, d) => s + Math.abs(d.available), 0);
+
+  // Empty seats = licence − head count, so the free-on-the-licence places are INSIDE this number, not
+  // beside it. Keeping them as two separate pools invited them to be added, which double-counts.
+  const withHead  = open.filter((d) => d.emptySeats != null);
+  const emptyTotal = withHead.length ? withHead.reduce((s, d) => s + d.emptySeats, 0) : null;
+  const emptyEstimated = withHead.some((d) => d.headBasis === 'estimated');
+  const emptyMeasured  = withHead.some((d) => d.headBasis === 'measured');
+  const emptyIsForecast = emptyEstimated && !emptyMeasured;
 %>
 
 <div class="card-head">
@@ -49,8 +58,11 @@
     <h1 style="margin:0"><%= shortName(centre.name) %></h1>
     <p class="muted" style="margin:4px 0 0">
       Week of <%= fmtDay(week.monday) %> – <%= fmtDay(week.friday) %>.
+      <%# The old wording here said only attendance was stale, which told the reader the bookings were
+          current. They are not: every figure on this page comes from the same snapshot. %>
       <% if (lagDays >= 1) { %>
-        Attendance is known to <%= fmtDay(week.observedTo) %>; everything after that is booked, not observed.
+        Everything on this page is as at the last sync, <%= fmtDay(week.observedTo) %><%= lagDays >= 2 ? ' — ' + lagDays + ' days ago' : '' %>.
+        A booking taken since then does not appear.
       <% } else { %>
         Figures are current to today.
       <% } %>
@@ -65,8 +77,8 @@
 
 <% if (centres.length > 1) { %>
   <form method="GET" action="/manager" class="inline" style="margin:0 0 16px">
-    <label class="muted" style="font-size:12.5px;margin-right:6px">Centre</label>
-    <select name="owna" onchange="this.form.submit()">
+    <label class="muted" style="font-size:12.5px;margin-right:6px" for="owna-pick">Centre</label>
+    <select name="owna" id="owna-pick" onchange="this.form.submit()">
       <% centres.forEach(function (c) { %>
         <option value="<%= c.owna_id %>" <%= c.owna_id === owna ? 'selected' : '' %>><%= shortName(c.name) %></option>
       <% }); %>
@@ -80,39 +92,59 @@
   <div class="card stat-card">
     <div class="sc-top"><span class="icon-badge"><%- svg('people') %></span><span class="sc-label">Booked occupancy</span></div>
     <div class="sc-n"><%= occPct == null ? '—' : occPct + '%' %></div>
-    <div class="sc-delta"><%= bookedTotal %> booked of <%= placeDays == null ? '—' : placeDays %> place-days</div>
-    <div class="sc-delta">Over 100% is normal: a booking holds a place whether or not the child attends.</div>
+    <% if (occPct == null) { %>
+      <div class="sc-delta"><%= week.places == null ? 'No approved places recorded for this centre.' : 'No booking data for this week.' %></div>
+    <% } else { %>
+      <div class="sc-delta"><%= bookedTotal %> booked of <%= placeDays %> place-days<%= known ? '' : ' (' + open.length + ' of ' + opDays.length + ' days have data)' %></div>
+      <div class="sc-delta">Over 100% is normal: a booking holds a place whether or not the child attends.</div>
+    <% } %>
   </div>
 
   <div class="card stat-card">
-    <div class="sc-top"><span class="icon-badge"><%- svg('tick') %></span><span class="sc-label">Attendance, observed</span></div>
+    <div class="sc-top"><span class="icon-badge"><%- svg('tick') %></span><span class="sc-label">Attendance, measured</span></div>
     <div class="sc-n"><%= attPct == null ? '—' : attPct + '%' %></div>
     <% if (attPct == null) { %>
       <div class="sc-delta">No day of this week has been observed yet.</div>
     <% } else { %>
       <div class="sc-delta"><%= attendedTotal %> of <%= obsBooked %> booked children attended</div>
-      <div class="sc-delta">Across <%= obs.length %> observed day<%= obs.length === 1 ? '' : 's' %>, to <%= fmtDay(week.observedTo) %>.</div>
+      <%# Name the last observed day OF THIS WEEK. Naming the feed's global boundary told a director
+          reading an August week that the figure ran "to 10 Sep". %>
+      <div class="sc-delta">Across <%= obs.length %> observed day<%= obs.length === 1 ? '' : 's' %>, to <%= fmtDay(week.weekObservedTo) %>.</div>
     <% } %>
   </div>
 
   <div class="card stat-card">
     <div class="sc-top"><span class="icon-badge"><%- svg('seat') %></span><span class="sc-label">Free on the licence</span></div>
-    <div class="sc-n"><%= freeTotal %></div>
-    <div class="sc-delta">place-days with no booking against them</div>
-    <% if (overTotal) { %><div class="sc-delta"><%= overTotal %> place-day<%= overTotal === 1 ? '' : 's' %> booked above approved places</div><% } %>
+    <div class="sc-n"><%= freeTotal == null ? '—' : freeTotal %></div>
+    <% if (freeTotal == null) { %>
+      <div class="sc-delta"><%= week.places == null ? 'Needs the approved places at /admin/places.' : 'Not known for this week.' %></div>
+    <% } else { %>
+      <div class="sc-delta">place-days with no booking at all against them</div>
+      <% if (overTotal) { %><div class="sc-delta"><%= overTotal %> place-day<%= overTotal === 1 ? '' : 's' %> booked above approved places</div><% } %>
+    <% } %>
   </div>
 
   <div class="card stat-card">
-    <div class="sc-top"><span class="icon-badge"><%- svg('trend') %></span><span class="sc-label">Seats likely to sit empty</span></div>
-    <div class="sc-n">~<%= gapTotal %></div>
-    <div class="sc-delta ahead">Forecast, from the last 8 observed weeks</div>
-    <div class="sc-delta">Not a released place: room, ratio and roster still have to be checked.</div>
+    <div class="sc-top"><span class="icon-badge"><%- svg('trend') %></span><span class="sc-label">Seats <%= emptyIsForecast ? 'likely to sit' : (week.isPast ? 'that sat' : 'sitting') %> empty</span></div>
+    <div class="sc-n"><%= emptyTotal == null ? '—' : (emptyIsForecast ? '~' : '') + emptyTotal %></div>
+    <% if (emptyTotal == null) { %>
+      <div class="sc-delta">Needs both the approved places and a head count for the week.</div>
+    <% } else { %>
+      <% if (emptyIsForecast) { %>
+        <div class="sc-delta ahead">Forecast, from the last 8 observed weeks</div>
+      <% } else if (emptyMeasured && !emptyEstimated) { %>
+        <div class="sc-delta">Measured: approved places less the children who attended</div>
+      <% } else { %>
+        <div class="sc-delta ahead">Part measured, part forecast — see each day below</div>
+      <% } %>
+      <div class="sc-delta">The whole gap to the licence, so the <%= freeTotal == null ? 'free' : freeTotal %> free place-days are inside this figure, not extra to it.</div>
+    <% } %>
   </div>
 </div>
 
 <div class="card">
   <div class="card-head">
-    <h2>This week, seat by seat</h2>
+    <h2><%= week.isPast ? 'That week, seat by seat' : 'This week, seat by seat' %></h2>
     <span class="muted" style="font-size:12.5px">
       <%= week.places == null ? 'No approved places recorded' : week.places + ' approved places' %> · one tile per place
     </span>
@@ -124,16 +156,20 @@
   <% } else { %>
     <div class="seat-week">
       <% week.days.forEach(function (d) {
-           const booked = d.booked || 0;
-           const onLicence = Math.min(booked, d.places);        // seats a booking fills within the licence
-           const over = Math.max(0, booked - d.places);          // bookings beyond it
-           const free = Math.max(0, d.places - booked);
-           // Of the booked seats, how many are forecast to go unused. Only for a day not yet observed —
-           // once a day has happened the absences are a fact, not an estimate.
-           const gap = d.observed ? (d.absent || 0) : (d.expected == null ? 0 : Math.max(0, booked - d.expected));
-           const solid = Math.max(0, onLicence - Math.min(gap, onLicence));
-           const hatched = Math.min(gap, onLicence);
-           const basis = !d.operating ? 'Closed' : (d.observed ? 'Observed' : 'Booked');
+           const booked = d.booked;
+           // Seats only mean something on a day the centre opens. OWNA keeps booking rows through a
+           // gazetted public holiday — 57 "booked" at Austral on Labour Day, none of whom attended —
+           // so drawing them produced 67 green "free" tiles at a closed centre.
+           const drawSeats = d.operating && booked != null && d.places != null;
+           const onLicence = drawSeats ? Math.min(booked, d.places) : 0;
+           const over      = drawSeats ? Math.max(0, booked - d.places) : 0;
+           const free      = drawSeats ? Math.max(0, d.places - booked) : 0;
+           // Filled by a child who is there (or expected to be); the rest of the booked block is the
+           // gap. head is measured for an observed day and estimated for one that has not happened,
+           // and the label below says which — the picture is the same shape either way.
+           const solid   = (drawSeats && d.head != null) ? Math.min(d.head, d.places) : onLicence;
+           const hatched = Math.max(0, onLicence - solid);
+           const basis = !d.operating ? 'Closed' : (d.observed ? 'Measured' : 'Booked');
       %>
         <div class="seat-day <%= d.isToday ? 'is-today' : '' %> <%= d.operating ? '' : 'is-closed' %>">
           <div class="sd-head">
@@ -141,11 +177,17 @@
             <span class="sd-date"><%= fmtDay(d.date) %></span>
           </div>
           <div class="sd-basis <%= (!d.observed && d.operating) ? 'forecast' : '' %>"><%= basis %></div>
-          <% if (d.booked == null) { %>
-            <p class="sd-figs" style="margin:10px 0 0">No booking data for this day.</p>
+
+          <% if (!d.operating) { %>
+            <p class="sd-figs" style="margin:10px 0 0">Public holiday — the centre is closed.
+              <% if (booked != null) { %><br /><span class="muted">OWNA still holds <%= booked %> booking rows for this day; they are not places.</span><% } %>
+            </p>
+          <% } else if (booked == null) { %>
+            <p class="sd-figs" style="margin:10px 0 0">No booking data for this day.
+              <br /><span class="muted">Not known — not the same as empty.</span></p>
           <% } else { %>
             <div class="seat-grid" role="img"
-                 aria-label="<%= d.label %>: <%= booked %> booked of <%= d.places %> approved places<%= free ? ', ' + free + ' free' : '' %><%= over ? ', ' + over + ' above the licence' : '' %><%= hatched ? ', about ' + hatched + ' expected to be unused' : '' %>">
+                 aria-label="<%= d.label %>: <%= booked %> booked of <%= d.places %> approved places<%= free ? ', ' + free + ' with no booking' : '' %><%= over ? ', ' + over + ' booked above the licence' : '' %><%= hatched ? ', ' + hatched + (d.headBasis === 'measured' ? ' booked children who did not attend' : ' expected not to attend') : '' %>">
               <% for (let i = 0; i < solid; i++) { %><span class="seat booked"></span><% } %>
               <% for (let i = 0; i < hatched; i++) { %><span class="seat gap"></span><% } %>
               <% for (let i = 0; i < free; i++) { %><span class="seat free"></span><% } %>
@@ -153,11 +195,12 @@
             </div>
             <div class="sd-figs">
               <b><%= booked %></b> booked / <%= d.places %> places<br />
-              <% if (free) { %><span class="free-n"><%= free %> free</span><% } %>
+              <% if (free) { %><span class="free-n"><%= free %> unbooked</span><% } %>
               <% if (over) { %><span class="over-n"><%= over %> over</span><% } %>
               <% if (!free && !over) { %>exactly full<% } %>
-              <% if (d.observed && d.attended != null) { %><br /><%= d.attended %> attended<% if (d.absent) { %>, <%= d.absent %> away<% } %><% } %>
-              <% if (!d.observed && d.expected != null) { %><br />~<%= d.expected %> expected<% } %>
+              <% if (d.headBasis === 'measured') { %><br /><%= d.attended %> attended<% if (d.absent) { %>, <%= d.absent %> away<% } %>
+              <% } else if (d.headBasis === 'estimated') { %><br />~<%= d.head %> expected<span class="muted"> (<%= d.showRate %>%)</span><% } %>
+              <% if (d.emptySeats != null) { %><br /><span class="muted"><%= d.headBasis === 'measured' ? '' : '~' %><%= d.emptySeats %> seats empty</span><% } %>
             </div>
           <% } %>
         </div>
@@ -165,9 +208,9 @@
     </div>
 
     <div class="seat-key">
-      <span><i style="background:var(--brand)"></i> Booked, expected in</span>
-      <span><i style="background:var(--plum-bg);box-shadow:inset 0 0 0 1px var(--plum-line)"></i> Booked, likely empty</span>
-      <span><i style="background:var(--sage-bg);box-shadow:inset 0 0 0 1px var(--sage)"></i> Free on the licence</span>
+      <span><i style="background:var(--brand)"></i> A child in the seat</span>
+      <span><i style="background:var(--plum-bg);box-shadow:inset 0 0 0 1px var(--plum-line)"></i> Booked, not attending</span>
+      <span><i style="background:var(--sage-bg);box-shadow:inset 0 0 0 1px var(--sage)"></i> No booking at all</span>
       <span><i style="background:var(--warn)"></i> Booked above approved places</span>
     </div>
   <% } %>
@@ -175,12 +218,12 @@
 
 <div class="grid cols-2">
   <div class="card">
-    <div class="card-head"><h2>What to do this week</h2></div>
+    <div class="card-head"><h2><%= week.isPast ? 'What happened that week' : 'What to do this week' %></h2></div>
     <% if (!actions.length) { %>
-      <p class="pr-none">Nothing needs attention: every day this week is booked within the approved places,
-        the feed is current, and no child is scheduled to finish in the next 90 days.</p>
+      <p class="pr-none">Nothing stands out: every day this week is booked within the approved places and
+        the sync is current.</p>
     <% } else { %>
-      <% actions.forEach(function (a) { const r = ROW[a.kind] || { ico: 'tick', badge: '' }; %>
+      <% actions.forEach(function (a) { const r = ROW[a.kind] || { ico: 'tick' }; %>
         <div class="priority-row">
           <span class="icon-badge <%= a.tone === 'warn' ? 'warn' : '' %>"><%- svg(r.ico) %></span>
           <span class="pr-text">
@@ -218,8 +261,12 @@
           <% }); %>
         </tbody>
       </table>
-      <p class="footnote">A dash means OWNA does not carry that figure for the room. Seats are not drawn per
-        room until capacity, ratio and age band are all set.</p>
+      <%# Deliberately not "OWNA does not carry this". The sync reads a small set of likely field names on
+          an API whose room payload has never been seen from this network, so a dash means "not captured",
+          which is a weaker claim than "not recorded" and the one the evidence actually supports. %>
+      <p class="footnote">A dash means the figure was not captured — either it is not set in OWNA, or OWNA
+        returns it under a field name this dashboard does not yet read. Seats are not drawn per room until
+        capacity, ratio and age band are all present.</p>
     <% } %>
   </div>
 </div>

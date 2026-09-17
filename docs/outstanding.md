@@ -1,7 +1,28 @@
 # Outstanding work — Futuro Pulse
 
-Everything not yet done, and who it waits on. Updated 16 September 2026.
+Everything not yet done, and who it waits on. Updated 17 September 2026.
 The full sequence and reasoning live in the work plan: https://claude.ai/code/artifact/ec2a6dab-fcc9-41a1-be33-9ad741b73836
+
+## Live problems, found 17 September
+
+- [ ] **The nightly OWNA sync has not run successfully since 10 September.** Run 6 (7 Sep) errored, run 7
+  (10 Sep) succeeded, and nothing since — seven days. Needs the Render logs to say why, which needs Render
+  access (item 3 below). Until it runs, every attendance figure on the dashboard is a week old and the new
+  `rooms` table stays empty. **Consequence now fixed in code but not at source:** the dashboard used to
+  treat `metric_date <= today` as "observed", so the six days of forward bookings were being counted as
+  actual attendance and Heath Rd advertised 100% attendance against a real 81.1%. `lastActualDate()` now
+  derives the boundary from `snapshot_runs` instead, and the pages say how stale the figure is — but the
+  feed still has to be fixed.
+
+- [ ] **`api.owna.com.au` is blocked by Futuro's own DNS filter.** Requests from the office network get
+  DNSFilter's "Website Filtered" page instead of the API, with an HTTP 200, so a naive client sees success
+  and parses HTML as JSON. This makes it impossible to probe or develop against OWNA from a Futuro laptop.
+  Needs the domain allow-listed in DNSFilter. (The deployed app is unaffected — it calls OWNA from Render.)
+
+- [ ] **`source_sync` has no `owna` row**, so the per-source health mechanism is blind to the one feed
+  that has stalled. It is not a code fault: `recordSync("owna", ...)` is called on every successful run,
+  and no run has succeeded since the mechanism was added. It will populate itself the first time the sync
+  works — but any freshness banner built before then will report all-clear.
 
 ## Waiting on a decision or access (nobody can start these)
 
@@ -131,6 +152,37 @@ Full plan, with the audit behind it: https://claude.ai/code/artifact/8d109c7d-cd
 ## Ask OWNA support
 
 - [ ] **Request forms scope on the OWNA API key** — the `FormSubmission` and `FormResponse` endpoint groups. A survey of the live tenant on 14 September found these are the only endpoints the key is refused on: every other endpoint answers normally, while both form endpoints return the permission error. OWNA reports a permission failure as HTTP 415, which reads like a malformed request and sends you chasing the wrong thing, so this cost real time to establish. Until the scope is granted no client-side work helps and we still do not know whether the centres use OWNA form templates at all. Once granted, `npm run discover-forms` answers it in one run (field names and fill rates only, never answers). Full detail: `docs/owna-forms-survey.md`
+
+## Centre-manager screen — built 17 September
+
+`/manager` ("This week" in the nav) is the operational screen for a centre director: the week drawn as
+one tile per approved place, and a short prioritised list of what to act on. Built from the implementation
+brief's screen 2, using the design system already in `public/style.css`.
+
+What it deliberately does **not** do, and what would unblock each:
+
+- [ ] **Per-room seats.** The database holds no room capacity, ratio, age band or per-room booking count.
+  `services/snapshot.js` now persists OWNA's room list (new `rooms` table) instead of reducing it to a
+  capacity sum and discarding the rest, so room names and whatever OWNA carries will appear after the next
+  successful sync. The page shows a dash and an explanation for anything OWNA does not hold.
+- [ ] **Whether OWNA's attendance rows identify a room at all.** Unverified, and unverifiable from the
+  office network (see the DNS block above). One live call to `/api/attendance/{centreId}/{from}/{to}` from
+  the server answers it. If they do not, per-room bookings cannot come from that endpoint and a seat map is
+  blocked regardless of the room list.
+- [ ] **Ratio compliance.** Needs staff assigned to a room per day. `/api/staff/onduty/{centreId}/{date}`
+  answers and is unused, but whether it carries a room assignment is unknown.
+- [ ] **An "actions to review" tile** of the kind the brief shows. `action_plans` and `action_plan_items`
+  are empty; `qc_actions` has 30 rows for one centre and one term, and its `due_date` column holds free
+  text such as "Ongoing". The data has to exist before the tile can.
+
+Also done: the supplied Futuro wordmark now replaces the words "Futuro Pulse" in the sidebar and on the
+login page, `BRAND_TAGLINE` is set to the brief's "Our people are the difference", and the sidebar
+collapses behind a Menu button below 760px — 24 destinations filled a phone's entire first screen before
+any content.
+
+- [ ] **Still open: reduce the nav to the brief's eight destinations.** Collapsing it on mobile treats the
+  symptom. The brief's sidebar has 8 items against this app's 24, and deciding the grouping is the owner's
+  call, not a styling change.
 
 ## Housekeeping, not code
 
