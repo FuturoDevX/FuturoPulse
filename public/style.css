@@ -97,6 +97,7 @@
   --plum: #7a4b5e;          /* forward-looking: booked ahead, pipeline uplift */
   --plum-bg: #f5ecef;
   --plum-line: #e2d1d7;
+  --seat-away: #a97386;     /* a booked seat whose child is not attending — see .seat.gap */
 
   /* ---- States --------------------------------------------------------- */
   --good: #3f7a52;          /* on track / covered */
@@ -730,9 +731,11 @@ details.working > *:last-child { padding-bottom: 16px; }
 .seat-week { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .seat-day { background: var(--card-sunk); border: 1px solid var(--border); border-radius: 10px; padding: 12px 12px 13px; min-width: 0; }
 .seat-day.is-today { border-color: var(--brand-soft-line); box-shadow: inset 0 0 0 1px var(--brand-soft-line); background: var(--brand-soft); }
-.seat-day.is-closed { opacity: .55; }
+.seat-day.is-closed { background: var(--bg); border-style: dashed; }
 .sd-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
 .sd-day { font-size: 13px; font-weight: 700; color: var(--text); }
+.sd-today { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+            color: var(--on-brand-strong); background: var(--brand); border-radius: 3px; padding: 1px 5px; margin-left: 6px; }
 .sd-date { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .sd-basis { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; color: var(--muted); }
 .sd-basis.forecast { color: var(--plum); }
@@ -743,8 +746,8 @@ details.working > *:last-child { padding-bottom: 16px; }
 .seat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11px, 1fr)); gap: 3px; margin: 0 0 10px; }
 .seat { aspect-ratio: 1; border-radius: 2px; background: var(--track); }
 .seat.booked { background: var(--brand); }
-.seat.gap { background: var(--plum-bg); box-shadow: inset 0 0 0 1px var(--plum-line); }
-.seat.free { background: var(--sage-bg); box-shadow: inset 0 0 0 1px var(--sage); }
+.seat.gap { background: var(--seat-away); }            /* 3.64:1 on the card, 3.22:1 against a filled seat */
+.seat.free { background: var(--card); box-shadow: inset 0 0 0 1.5px var(--sage); }  /* 3.01:1 border */
 .seat.over { background: var(--warn); }
 .sd-figs { font-size: 12px; color: var(--muted); line-height: 1.45; }
 .sd-figs b { color: var(--text); font-variant-numeric: tabular-nums; }
