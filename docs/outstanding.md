@@ -137,7 +137,16 @@ Full plan, with the audit behind it: https://claude.ai/code/artifact/8d109c7d-cd
 - [ ] Walk the CEO through the COE page and the mock
 - [ ] Rotate the Anthropic API key that was pasted into a chat, and update `.env`
 - [ ] Delete the two stale OneDrive copies of this app (copy `services/eh-timesheet.js` out of the archived worktree first if it is wanted). A server was found running from one of them on port 3003 on 12 September, serving 1 September data
-- [ ] Push the outstanding commits to GitHub
+- [x] ~~Push the outstanding commits to GitHub~~ — **done 18 September.** `origin/main` moved
+  bc653a4 → 8d61d6c, 31 commits: the P&C role mix and turnover entry, the eNPS survey, the Graph mail
+  sender, the cream-and-forest restyle, and the attendance-boundary fixes. Roll-back point is
+  **bc653a4**. The manager screen and its review fixes are NOT in this — they are parked on
+  `origin/v2` until that version is finished.
+  - Two live defects motivated it: the Overview's KPI grid was missing a closing `</div>`, so
+    everything below the four numbers rendered as further cells of the tile grid; and the attendance
+    tile was reporting 92.5% for a week that was entirely unobserved forward bookings.
+  - Nothing could be emailed by the survey: the live database had zero rounds, zero invitations and
+    zero deliveries, and the survey tables did not exist there at all before this deploy.
 
 ## Fixed in production, recorded so it is not rediscovered
 
