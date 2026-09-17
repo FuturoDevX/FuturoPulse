@@ -387,7 +387,11 @@ router.get("/centre/:id", (req, res) => {
   const today = m.todayStr();
   const agg = daily.reduce((a, d) => {
     a.booked += d.booked; a.casual += d.casual; a.fee_total += d.fee_total; a.days += 1;
-    if (d.metric_date <= today) { // attendance only known for past/today
+    // d.observed, NOT metric_date <= today. The two differ by however long the nightly feed has been
+    // down, and every day in that gap carries OWNA's default attending flag rather than a measurement.
+    // With the feed 8 days behind, the "Ahead 90d" preset reported 98.4% attendance built entirely from
+    // days nobody observed, beside table cells printing the literal string "null%".
+    if (d.observed) {
       a.pastBooked += d.booked; a.attended += d.attended; a.absent += d.absent; a.pastDays += 1;
     }
     return a;
@@ -418,13 +422,16 @@ router.get("/centre/:id", (req, res) => {
       ...agg,
       fee_total: m.round(agg.fee_total),
       occupancy: capacityDays == null ? null : m.pct(agg.booked, capacityDays),
-      attendance_rate: m.pct(agg.attended, agg.pastBooked),
+      // null, not 0 — a range with no observed day has no attendance rate, and "0%" reads as a disaster.
+      attendance_rate: agg.pastBooked > 0 ? m.pct(agg.attended, agg.pastBooked) : null,
       ccs_total: m.ccsTotal(c.owna_id, from, to),
       avg_daily_booked: agg.days ? Math.round(agg.booked / agg.days) : 0,
     },
     presets: presetsFor(),
     fwdPresets: fwdPresetsFor(),
     today: m.todayStr(),
+    observedTo: m.lastActualDate(),
+    lagDays: m.actualsLagDays(),
     pipeline,
     occTrend: m.occupancyTrend(c.owna_id, 24),
     exits: m.centreExits(c.owna_id, "past", 100),
