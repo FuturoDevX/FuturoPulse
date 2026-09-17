@@ -38,7 +38,7 @@ for (const [role, loc] of [['centre', 'a'], ['exec', null], ['admin', null], ['c
 const dm = db.prepare('INSERT INTO daily_metrics(owna_id,metric_date,capacity,booked,attended,absent,casual,fee_total) VALUES(?,?,100,?,?,?,0,0)');
 
 // The feed's boundary: one good run finishing 2026-09-10.
-db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status) VALUES('2026-09-10 09:00:00','2026-09-10 09:50:30','ok')").run();
+db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,rows_written) VALUES('2026-09-10 09:00:00','2026-09-10 09:50:30','ok',772)").run();
 const NOW = '2026-09-17T02:00:00Z', SNAP = '2026-09-10';
 
 // --- An OBSERVED week, 31 Aug – 4 Sep: 100 booked, 90 attended each day. 10 seats empty per day. ---

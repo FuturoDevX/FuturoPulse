@@ -35,9 +35,9 @@ for (const d of ['2026-09-08', '2026-09-09', '2026-09-10']) dm.run('a', d, 100, 
 // Forward bookings, 11–18 Sep: OWNA says everyone is attending, because nothing has happened yet.
 for (const d of ['2026-09-11', '2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18']) dm.run('a', d, 100, 100, 0);
 // The feed's own record: one good run that finished on the 10th, and a later failure that wrote nothing.
-db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,window_from,window_to) VALUES(?,?,'ok',?,?)")
+db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,window_from,window_to,rows_written) VALUES(?,?,'ok',?,?,772)")
   .run('2026-09-10 09:47:14', '2026-09-10 09:50:30', '2026-05-13', '2027-05-08');
-db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status) VALUES(?,?,'error')")
+db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,rows_written) VALUES(?,?,'error',0)")
   .run('2026-09-16 08:00:46', '2026-09-16 08:18:27');
 
 test('the actuals boundary is the last successful snapshot, not today', () => {
@@ -94,4 +94,31 @@ test('with no successful run on record the boundary falls back to today rather t
     delete require.cache[require.resolve('../db/db')];
     delete require.cache[require.resolve('../services/metrics')];
   }
+});
+
+// ===== The boundary tracks the OWNA feed, not the nightly job as a whole =====
+// runSnapshot marks a run "partial" if ANY step failed, and those steps include LineLeader, the exits
+// pull and the retention purge. Keying the boundary to status='ok' meant one flaky secondary source
+// froze every attendance figure on the dashboard even though OWNA's day-rows had landed.
+test('a run that OWNA succeeded in is honoured even when another source failed', () => {
+  db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,rows_written) VALUES(?,?,'partial',?)")
+    .run('2026-09-16 09:00:00', '2026-09-16 09:40:00', 900);
+  freeze(NOW, () => {
+    assert.equal(m.lastActualDate(), '2026-09-16',
+      'a partial run that wrote day-rows still moved the OWNA feed forward');
+    assert.equal(m.actualsLagDays(), 1);
+  });
+});
+
+test('the per-source record wins over the run row, and a run that wrote nothing is ignored', () => {
+  // A later run that wrote no rows must not move the boundary: it is not evidence of anything.
+  db.prepare("INSERT INTO snapshot_runs(started_at,finished_at,status,rows_written) VALUES(?,?,'ok',0)")
+    .run('2026-09-17 02:15:00', '2026-09-17 02:16:00');
+  freeze(NOW, () => assert.equal(m.lastActualDate(), '2026-09-16', 'a zero-row run proves nothing'));
+
+  // Once the OWNA pull records itself, that is the authority.
+  db.prepare("INSERT INTO source_sync(source,last_attempt,last_success,status,rows) VALUES('owna',?,?,'ok',1200)")
+    .run('2026-09-15 09:50:00', '2026-09-15 09:50:00');
+  freeze(NOW, () => assert.equal(m.lastActualDate(), '2026-09-15',
+    'the feed’s own record is the narrower, truer answer'));
 });
