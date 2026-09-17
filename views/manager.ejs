@@ -41,7 +41,10 @@
   const attPct        = obsBooked ? Math.round(attendedTotal / obsBooked * 1000) / 10 : null;
 
   const freeDays  = open.filter((d) => d.available != null && d.available > 0);
-  const freeTotal = open.length ? freeDays.reduce((s, d) => s + d.available, 0) : null;
+  // null when there is no licensed count to be free against. Without this the reduce starts at 0 and
+  // a centre with bookings but no approved places recorded reported a confident "0 free place-days" —
+  // the reading that stops someone selling, from a comparison that was never made.
+  const freeTotal = (open.length && week.places != null) ? freeDays.reduce((s, d) => s + d.available, 0) : null;
   const overTotal = open.filter((d) => d.available != null && d.available < 0).reduce((s, d) => s + Math.abs(d.available), 0);
 
   // Empty seats = licence − head count, so the free-on-the-licence places are INSIDE this number, not
@@ -50,7 +53,11 @@
   const emptyTotal = withHead.length ? withHead.reduce((s, d) => s + d.emptySeats, 0) : null;
   const emptyEstimated = withHead.some((d) => d.headBasis === 'estimated');
   const emptyMeasured  = withHead.some((d) => d.headBasis === 'measured');
-  const emptyIsForecast = emptyEstimated && !emptyMeasured;
+  const emptyMixed     = emptyEstimated && emptyMeasured;
+  // ANY estimated day makes the number approximate. Keying the tilde and the tense off
+  // "estimated && !measured" meant a half-observed week printed a part-modelled total as a flat
+  // past-tense measurement.
+  const emptyApprox    = emptyEstimated;
 %>
 
 <div class="card-head">
@@ -125,17 +132,17 @@
   </div>
 
   <div class="card stat-card">
-    <div class="sc-top"><span class="icon-badge"><%- svg('trend') %></span><span class="sc-label">Seats <%= emptyIsForecast ? 'likely to sit' : (week.isPast ? 'that sat' : 'sitting') %> empty</span></div>
-    <div class="sc-n"><%= emptyTotal == null ? '—' : (emptyIsForecast ? '~' : '') + emptyTotal %></div>
+    <div class="sc-top"><span class="icon-badge"><%- svg('trend') %></span><span class="sc-label">Seats <%= emptyMixed ? 'empty' : (emptyApprox ? 'likely to sit empty' : (week.isPast ? 'that sat empty' : 'sitting empty')) %></span></div>
+    <div class="sc-n"><%= emptyTotal == null ? '—' : (emptyApprox ? '~' : '') + emptyTotal %></div>
     <% if (emptyTotal == null) { %>
       <div class="sc-delta">Needs both the approved places and a head count for the week.</div>
     <% } else { %>
-      <% if (emptyIsForecast) { %>
+      <% if (emptyMixed) { %>
+        <div class="sc-delta ahead">Part measured, part forecast — <%= withHead.filter(function (d) { return d.headBasis === 'measured'; }).length %> of <%= withHead.length %> days observed</div>
+      <% } else if (emptyApprox) { %>
         <div class="sc-delta ahead">Forecast, from the last 8 observed weeks</div>
-      <% } else if (emptyMeasured && !emptyEstimated) { %>
-        <div class="sc-delta">Measured: approved places less the children who attended</div>
       <% } else { %>
-        <div class="sc-delta ahead">Part measured, part forecast — see each day below</div>
+        <div class="sc-delta">Measured: approved places less the children who attended</div>
       <% } %>
       <div class="sc-delta">The whole gap to the licence, so the <%= freeTotal == null ? 'free' : freeTotal %> free place-days are inside this figure, not extra to it.</div>
     <% } %>
@@ -189,7 +196,9 @@
               <br /><span class="muted">Not known — not the same as empty.</span></p>
           <% } else { %>
             <div class="seat-grid" role="img"
-                 aria-label="<%= d.label %>: <%= booked %> booked of <%= d.places %> approved places<%= free ? ', ' + free + ' with no booking' : '' %><%= over ? ', ' + over + ' booked above the licence' : '' %><%= hatched ? ', ' + hatched + (d.headBasis === 'measured' ? ' booked children who did not attend' : ' expected not to attend') : '' %>">
+                 aria-label="<%= d.label %>: <%= booked %> booked of <%= d.places %> approved places<%= free ? ', ' + free + ' with no booking' : '' %><%= over ? ', ' + over + ' booked above the licence' : '' %><%# The hatched TILES are capped at the licence, so on an oversubscribed day they undercount the
+                 children who did not attend by the over-licence amount. Narrate the real figure. %>
+              <%= (d.booked != null && d.head != null && d.booked > d.head) ? ', ' + (d.booked - d.head) + (d.headBasis === 'measured' ? ' booked children did not attend' : ' expected not to attend') : '' %>">
               <% for (let i = 0; i < solid; i++) { %><span class="seat booked"></span><% } %>
               <% for (let i = 0; i < hatched; i++) { %><span class="seat gap"></span><% } %>
               <% for (let i = 0; i < free; i++) { %><span class="seat free"></span><% } %>

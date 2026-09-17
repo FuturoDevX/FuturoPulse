@@ -92,7 +92,13 @@ test('Week 1 batch 1',async(t)=>{
   const s=m.seatsFilled('2026-06-08','2026-06-12');
   assert.equal(s.operating_days,4);
   assert.deepEqual(s.rows.map(r=>[r.owna_id,r.booked,r.days,r.seats]),[['a',120,2,60],['b',40,1,40]]); // holiday row excluded
-  assert.deepEqual(s.group,{booked:160,days:2,seats:80});
+  // seats is the SUM OF THE CENTRE AVERAGES (60 + 40), not groupBooked ÷ distinct dates (160/2 = 80).
+  // The latter averages a centre that has no row on a date in as zero children instead of as absent
+  // data — fine here, wrong on any ragged range, where it printed a group of 326 under centre rows of
+  // 121/120/118/93. booked and days stay the raw union totals, which is what the coverage note reads.
+  assert.deepEqual(s.group,{booked:160,days:2,seats:100});
+  assert.equal(s.raggedCoverage,true,'centre a has 2 days of bookings and centre b has 1');
+  assert.deepEqual(s.coverageRange,{min:1,max:2});
   assert.equal(s.byOwna.a.seats,60);
   assert.deepEqual(m.seatsFilled('2026-06-13','2026-06-14').group,{booked:0,days:0,seats:0});
  });
@@ -167,7 +173,9 @@ test('Week 1 batch 1',async(t)=>{
   assert.match(ahead,/Fees: billed to date \+ booked ahead/);
   assert.match(ahead,/\$1,000 billed to date · \$1,200 booked ahead/);
   assert.match(ahead,/Fees billed to date \+ booked ahead/); // table header
-  assert.match(ahead,/>Seats</);
+  // On a forward range the column is a booking average, not an attendance one, and says so — every
+  // other column on that row already carries its basis ("booked ahead", "past days only").
+  assert.match(ahead,/>Seats <span class="muted"[^>]*>booked<\/span>/);
   assert.match(ahead,/Utilisation FYTD · FY/);
   // The annual denominator is the CEO's own question ("251 days × 499 places"), so it stays — but on
   // the tile it explains rather than in a 264-word footnote.
@@ -176,7 +184,8 @@ test('Week 1 batch 1',async(t)=>{
   assert.doesNotMatch(past,/booked ahead/);
   assert.doesNotMatch(past,/past days only/);
   assert.match(past,/Fees billed/);
-  assert.match(past,/>Seats</);
+  assert.match(past,/>Seats</,'a past range is measured, so the column needs no qualifier');
+  assert.doesNotMatch(past,/>Seats <span class="muted"[^>]*>booked</);
   const cy=await page(`/?from=${addDays(today,-6)}&to=${today}&year=cy`,c);
   assert.match(cy,/Utilisation CYTD · CY\d{4}/);
   assert.match(cy,/Utilisation CYTD · CY\d{4}/,'the tile names the year it is showing');
@@ -184,9 +193,13 @@ test('Week 1 batch 1',async(t)=>{
   const kb=await page('/?from=2026-06-08&to=2026-06-12',c);
   // The seats caption moved into the column header's tooltip when the tile went. The number is what
   // this test is really about, and it is asserted on the next line.
-  assert.match(kb,/<td class="num">60<\/td>/);assert.match(kb,/<td class="num">40<\/td>/);assert.match(kb,/<td class="num">80<\/td>/);
+  assert.match(kb,/<td class="num">60<\/td>/);assert.match(kb,/<td class="num">40<\/td>/);
+  // The All-centres cell is the sum of the centre averages, 60 + 40 — not 160 booked ÷ 2 distinct
+  // dates, which counted centre b as zero children on the day it has no row. Ragged coverage, so it
+  // also carries the explanatory tooltip and an asterisk.
+  assert.match(kb,/<td class="num" title="Centres have bookings over different numbers of days[^"]*">100<span class="muted">\*<\/span><\/td>/);
   // Viewer (aggregates only) and centre-scoped logins render the same tiles for their scope.
-  assert.match(await page('/',await login('viewer')),/>Seats</);
+  assert.match(await page('/',await login('viewer')),/>Seats[ <]/);
   const scoped=await page(`/?from=${today}&to=${addDays(today,7)}`,await login('centre'));
   assert.match(scoped,/booked ahead — departures not yet deducted/);assert.doesNotMatch(scoped,/Centre Beta/);
   // Per centre, not the group: a scoped login must never be shown the group's denominator. The

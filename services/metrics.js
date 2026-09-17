@@ -975,11 +975,30 @@ function seatsFilled(from, to) {
   const finish = (c) => ({ ...c, seats: c.days ? Math.round(c.booked / c.days) : 0 });
   const list = [...byCentre.values()].sort((a, b) => a.name.localeCompare(b.name)).map(finish);
   const byOwna = {}; list.forEach((r) => { byOwna[r.owna_id] = r; });
+  // The group row is the SUM OF THE CENTRE AVERAGES, not groupBooked ÷ distinct dates.
+  //
+  // Those agree only while every centre has a row on every date. Forward coverage is ragged — the
+  // centres' bookings run out on different dates (Bardia stops 2027-03-19, Austral goes to 2027-04-30),
+  // and some dates in between carry one centre and no others. Dividing the whole group's bookings by
+  // the union of dates then averages a one-centre day against a four-centre day: over 2026-09-17 to
+  // 2026-12-16 it returned 326 while the four centre rows above it read 121, 120, 118 and 93 — a group
+  // total smaller than three of its parts, under a heading that says "seats filled".
+  //
+  // The days field stays the union, because the coverage note is drawn from it; raggedCoverage says
+  // whether the centres disagree about it, so a view can qualify the figure instead of implying that
+  // every centre was measured over the same span.
+  const dayCounts = list.map((c) => c.days);
   return {
     from, to,
     operating_days: cal.operatingDays(from, to),
     rows: list, byOwna,
-    group: finish({ booked: groupBooked, days: groupDays.size }),
+    group: {
+      booked: groupBooked,
+      days: groupDays.size,
+      seats: list.reduce((sum, c) => sum + c.seats, 0),
+    },
+    raggedCoverage: dayCounts.length > 1 && Math.min(...dayCounts) !== Math.max(...dayCounts),
+    coverageRange: dayCounts.length ? { min: Math.min(...dayCounts), max: Math.max(...dayCounts) } : null,
     unknownYears: cal.unknownHolidayYears(from, to),
   };
 }
@@ -2791,7 +2810,9 @@ function roomsFor(ownaId) {
 // head count, which overstates the empty seats, which is precisely the number a director acts on.
 function showRateByDow(ownaId, weeks = 8) {
   const to = lastActualDate();
-  const from = cal.addDays(to, -(weeks * 7));
+  // BETWEEN is inclusive at both ends, so -(weeks * 7) spans weeks*7 + 1 days and gives one weekday a
+  // ninth occurrence — a lopsided sample that quietly weights whichever weekday the window opens on.
+  const from = cal.addDays(to, -(weeks * 7) + 1);
   const opDays = JSON.stringify(cal.operatingDayList(from, to));
   const rows = db.prepare(`
     SELECT CAST(strftime('%w', metric_date) AS INTEGER) AS dow,
@@ -2861,7 +2882,8 @@ function managerWeek(ownaId, weekStart) {
       // rather than two that overlap. Null when the head count is unknown.
       emptySeats: (places != null && head != null) ? Math.max(0, places - head) : null,
       available: (places != null && r && operating) ? places - r.booked : null,
-      occupancy: operating ? pctOrNull(r ? r.booked : 0, places) : null,
+      // null, not 0% — a day the sync holds no row for is unknown, and 0% reads as an empty centre.
+      occupancy: (operating && r) ? pctOrNull(r.booked, places) : null,
     });
   }
   const open = days.filter((d) => d.operating && d.booked != null);
@@ -2910,11 +2932,16 @@ function managerActions(ownaId, week) {
 
   // 2. Nothing to say at all. Better stated than left to be inferred from an empty panel.
   if (!open.length) {
+    // Three different reasons the week is empty, and they are not interchangeable.
+    const anyOperating = w.days.some((d) => d.operating);
     out.push({
-      kind: "nodata", tone: "info", title: "No booking data for this week",
-      detail: w.isFuture
+      kind: "nodata", tone: "info",
+      title: anyOperating ? "No booking data for this week" : "The centre is closed all week",
+      detail: !anyOperating
+        ? "Every weekday is a gazetted public holiday, so there are no places to fill."
+        : w.isFuture
         ? "This week is past the end of the booking data OWNA has returned, so nothing is known about it — not that it is empty."
-        : "The sync holds no rows for these dates. This is not the same as a week with no children booked.",
+        : "The sync holds no rows for the operating days of this week. This is not the same as a week with no children booked.",
       impact: null,
     });
     return out;
@@ -2966,19 +2993,27 @@ function managerActions(ownaId, week) {
     const best = withHead.reduce((a, b) => (b.emptySeats > a.emptySeats ? b : a));
     const estimated = withHead.some((d) => d.headBasis === "estimated");
     const measured = withHead.some((d) => d.headBasis === "measured");
+    // ANY estimated day makes the total an estimate. A week half observed and half forecast used to be
+    // announced as "45 seats sat empty" with no tilde, because one measured day was enough to clear the
+    // forecast flag — stating a part-modelled number as a measurement.
+    const approx = estimated;
+    const mixed = estimated && measured;
     if (total >= 3) {
       out.push({
-        kind: "opportunity", tone: "good", forecast: estimated && !measured,
-        title: estimated && !measured
-          ? `About ${plural(total, "seat")} likely to sit empty this week`
+        kind: "opportunity", tone: "good", forecast: approx,
+        title: approx
+          ? `About ${plural(total, "seat")} ${mixed ? "empty this week" : "likely to sit empty this week"}`
           : `${plural(total, "seat")} ${was("are sitting empty", "sat empty")}`,
-        detail: (estimated && !measured
+        detail: (mixed
+          ? `Part measured, part forecast: ${withHead.filter((d) => d.headBasis === "measured").length} of ` +
+            `${withHead.length} days have been observed, the rest are estimated from the last 8 observed weeks. `
+          : approx
           ? `Estimated from the last 8 observed weeks, operating days only. ${best.label} is the largest gap: ` +
             `${best.booked} booked, but this weekday runs at ${best.showRate}% attendance so around ${best.head} are expected. `
           : `${best.label} was the widest: ${best.booked} booked and ${best.head} attended. `) +
           `This is the total gap between the licence and the head count, so it includes any place with no ` +
           `booking at all. ` + (past ? "" : "Confirm room, ratio and roster before offering any of it as a casual place."),
-        impact: `${estimated && !measured ? "~" : ""}${total} seats`,
+        impact: `${approx ? "~" : ""}${total} seats`,
       });
     }
   }

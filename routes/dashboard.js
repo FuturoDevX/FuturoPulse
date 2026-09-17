@@ -78,6 +78,9 @@ router.get("/", (req, res) => {
     rows,
     totals: m.totals(rows),
     seats: m.seatsFilled(from, to),
+    // A range reaching past the last observed day makes the seats column a booking average, not an
+    // attendance one, so the header says "booked" rather than "filled".
+    seatsForward: to > m.lastActualDate(),
     util: m.utilisationYtd(yearKind, today),
     presets: presetsFor(),
     fwdPresets: fwdPresetsFor(),
@@ -433,9 +436,13 @@ router.get("/centre/:id", (req, res) => {
 
   const daily = m.centreDaily(c.owna_id, from, to);
   const today = m.todayStr();
+  // d.observed, NOT metric_date <= today. The two differ by however long the nightly feed has been
+  // down, and every day in that gap carries OWNA's default attending flag rather than a measurement.
+  // Re-deriving the guard here is what let the "Ahead 90d" preset report a 99.2% attendance rate built
+  // from a single unobserved day — the very figure services/metrics.js lastActualDate() exists to stop.
   const agg = daily.reduce((a, d) => {
     a.booked += d.booked; a.casual += d.casual; a.fee_total += d.fee_total; a.days += 1;
-    if (d.metric_date <= today) { // attendance only known for past/today
+    if (d.observed) {
       a.pastBooked += d.booked; a.attended += d.attended; a.absent += d.absent; a.pastDays += 1;
     }
     return a;
@@ -466,13 +473,16 @@ router.get("/centre/:id", (req, res) => {
       ...agg,
       fee_total: m.round(agg.fee_total),
       occupancy: capacityDays == null ? null : m.pct(agg.booked, capacityDays),
-      attendance_rate: m.pct(agg.attended, agg.pastBooked),
+      // null, not 0 — a range with no observed day has no attendance rate, and "0%" reads as a disaster.
+      attendance_rate: agg.pastBooked > 0 ? m.pct(agg.attended, agg.pastBooked) : null,
       ccs_total: m.ccsTotal(c.owna_id, from, to),
       avg_daily_booked: agg.days ? Math.round(agg.booked / agg.days) : 0,
     },
     presets: presetsFor(),
     fwdPresets: fwdPresetsFor(),
     today: m.todayStr(),
+    observedTo: m.lastActualDate(),
+    lagDays: m.actualsLagDays(),
     pipeline,
     occTrend: m.occupancyTrend(c.owna_id, 24),
     exits: m.centreExits(c.owna_id, "past", 100),

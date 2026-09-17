@@ -43,7 +43,10 @@
 
   <div class="grid kpis">
     <div class="card stat"><div class="n <%= summary.occupancy != null ? occClass(summary.occupancy) + '-text' : '' %>"><%= summary.occupancy != null ? summary.occupancy + '%' : '—' %></div><div class="l">Occupancy<% if (summary.occupancy == null) { %><span class="cap">no approved places recorded</span><% } %></div></div>
-    <div class="card stat"><div class="n"><%= summary.attendance_rate %>%</div><div class="l">Attendance rate</div></div>
+    <%# Only days that were actually observed feed this. On a forward range there are none, so it reads
+        "—" rather than a rate derived from OWNA's default attending flag. %>
+    <div class="card stat"><div class="n"><%= summary.attendance_rate == null ? '—' : summary.attendance_rate + '%' %></div>
+      <div class="l">Attendance rate<% if (summary.attendance_rate == null) { %><br /><span class="muted">no observed day in this range</span><% } else if (summary.pastDays < summary.days) { %><br /><span class="muted"><%= summary.pastDays %> of <%= summary.days %> days observed, to <%= observedTo %></span><% } %></div></div>
     <div class="card stat"><div class="n"><%= summary.avg_daily_booked %></div><div class="l">Avg booked / day</div></div>
     <div class="card stat"><div class="n"><%= summary.casual %></div><div class="l">Casual days</div></div>
     <div class="card stat"><div class="n"><%= money(summary.fee_total) %></div><div class="l">Fees billed</div></div>
@@ -91,14 +94,16 @@
         <tr><th>Date</th><th class="num">Booked</th><th style="width:150px;">Occupancy</th><th class="num">Attended</th><th class="num">Absent</th><th class="num">Attend.%</th><th class="num">Casual</th><th class="num">Fees</th></tr>
       </thead>
       <tbody>
-        <% daily.forEach(function(d){ var fut = d.metric_date > today; %>
+        <%# "Not observed" is the model's own d.observed, not a comparison with today: when the nightly
+            feed is behind, the days in between hold bookings but no measured attendance. %>
+        <% daily.forEach(function(d){ var fut = !d.observed; %>
           <tr class="<%= fut ? 'future-row' : '' %>">
             <td><%= dow(d.metric_date) %> <%= d.metric_date %><%= fut ? ' ·' : '' %><% if(fut){ %><span class="tag-fut">scheduled</span><% } %></td>
             <td class="num"><%= d.booked %></td>
             <td><% if (d.occupancy != null) { %><div class="bar-wrap"><div class="bar <%= occClass(d.occupancy) %>" style="width:<%= Math.min(d.occupancy,100) %>%;"></div><span class="bar-val"><%= d.occupancy %>%</span></div><% } else { %><span class="muted">—</span><% } %></td>
             <td class="num"><%= fut ? '—' : d.attended %></td>
             <td class="num"><%= fut ? '—' : d.absent %></td>
-            <td class="num"><%= fut ? '—' : d.attendance_rate + '%' %></td>
+            <td class="num"><%= (fut || d.attendance_rate == null) ? '—' : d.attendance_rate + '%' %></td>
             <td class="num"><%= d.casual %></td>
             <td class="num"><%= money(d.fee_total) %></td>
           </tr>
@@ -111,7 +116,7 @@
           <td><div class="bar-wrap"><div class="bar <%= occClass(summary.occupancy) %>" style="width:<%= Math.min(summary.occupancy,100) %>%;"></div><span class="bar-val"><%= summary.occupancy %>%</span></div></td>
           <td class="num"><%= summary.attended %></td>
           <td class="num"><%= summary.absent %></td>
-          <td class="num"><%= summary.attendance_rate %>%</td>
+          <td class="num"><%= summary.attendance_rate == null ? '—' : summary.attendance_rate + '%' %></td>
           <td class="num"><%= summary.casual %></td>
           <td class="num"><%= money(summary.fee_total) %></td>
         </tr>

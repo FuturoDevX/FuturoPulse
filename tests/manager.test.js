@@ -204,3 +204,59 @@ test('the /manager route: bad dates, scoping and pre-opening centres', async (t)
     await new Promise((r) => server.once('close', r));
   }
 });
+
+// ===== A week that mixes observed and forecast days =====
+// Found by the second review round: keying the tilde and the tense off "estimated && !measured" meant
+// one observed day was enough to announce a part-modelled total as a flat past-tense measurement.
+test('a week that is part observed and part forecast is never stated as a measurement', () => {
+  // Boundary is 2026-09-10 (Thursday). The week of 7 Sep therefore has Mon-Thu observed and Fri forecast.
+  for (const [d, booked, attended] of [['2026-09-07', 100, 90], ['2026-09-08', 100, 90],
+                                       ['2026-09-09', 100, 90], ['2026-09-10', 100, 90]])
+    dm.run('a', d, booked, attended, booked - attended);
+  dm.run('a', '2026-09-11', 100, 100, 0);   // forward booking: OWNA's default attending flag
+
+  freeze(NOW, () => {
+    const w = m.managerWeek('a', '2026-09-07');
+    const basis = w.days.map((d) => d.headBasis);
+    assert.deepEqual(basis, ['measured', 'measured', 'measured', 'measured', 'estimated'],
+      'the boundary falls inside this week');
+    const act = m.managerActions('a', w).find((x) => x.kind === 'opportunity');
+    assert.ok(act, 'the empty seats are surfaced');
+    assert.equal(act.forecast, true, 'one estimated day makes the whole total an estimate');
+    assert.match(act.impact, /^~/, 'and the impact carries a tilde');
+    assert.match(act.detail, /Part measured, part forecast: 4 of 5 days have been observed/);
+    assert.doesNotMatch(act.title, /sat empty/, 'it must not be phrased as a completed measurement');
+  });
+});
+
+test('a figure is not reported for a licence that was never recorded', () => {
+  db.prepare("INSERT INTO centres(owna_id,name,capacity,approved_places,opening) VALUES('nolic','No Licence',0,NULL,0)").run();
+  for (const d of ['2026-09-14', '2026-09-15', '2026-09-16']) dm.run('nolic', d, 40, 40, 0);
+  freeze(NOW, () => {
+    const w = m.managerWeek('nolic', '2026-09-14');
+    assert.equal(w.places, null);
+    for (const d of w.days.filter((x) => x.booked != null)) {
+      assert.equal(d.available, null, 'no licence means no free places, not zero free places');
+      assert.equal(d.emptySeats, null);
+      assert.equal(d.occupancy, null);
+    }
+    const acts = m.managerActions('nolic', w);
+    assert.ok(acts.some((a) => a.kind === 'places'), 'the missing licence is called out');
+    assert.ok(!acts.some((a) => a.kind === 'fill'), 'and no free-places claim is made');
+  });
+});
+
+test('an operating day with no row reports unknown occupancy, not 0%', () => {
+  freeze(NOW, () => {
+    const w = m.managerWeek('a', '2027-06-07');
+    for (const d of w.days) assert.equal(d.occupancy, null, d.date + ' has no row, so occupancy is unknown');
+  });
+});
+
+test('the show-rate window is exactly the number of weeks asked for', () => {
+  freeze(NOW, () => {
+    const sr = m.showRateByDow('a', 8);
+    const days = Math.round((Date.parse(sr.to + 'T00:00:00Z') - Date.parse(sr.from + 'T00:00:00Z')) / 86400000) + 1;
+    assert.equal(days, 56, 'BETWEEN is inclusive at both ends, so 8 weeks must span 56 days, not 57');
+  });
+});
