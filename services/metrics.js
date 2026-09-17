@@ -51,10 +51,29 @@ const todayStr = () => cal.today();
 // Rd read a flat 100%, against real figures of 89.7% and 81.1%. Every attendance guard goes through here.
 function lastActualDate() {
   const today = todayStr();
-  const row = db.prepare(`SELECT MAX(finished_at) AS ts FROM snapshot_runs WHERE status = 'ok'`).get();
-  if (!row || !row.ts) return today;                       // nothing has ever run: fall back to today
-  // finished_at is UTC (SQLite datetime('now')); the day it landed on is the Sydney one, not the UTC one.
-  const day = cal.sydneyDate(new Date(String(row.ts).replace(" ", "T") + "Z"));
+  // Ask about the OWNA FEED specifically, not about the nightly job as a whole.
+  //
+  // runSnapshot marks a run "partial" when ANY of its steps failed (services/snapshot.js: status =
+  // problems.length ? "partial" : "ok"), and those steps include LineLeader, the exits pull and the
+  // retention purge. So one flaky secondary source would have frozen this boundary — and therefore
+  // every attendance figure on the dashboard — even though OWNA's day-rows landed perfectly. The
+  // source_sync row for "owna" is written by the OWNA pull itself and answers the narrower question.
+  const sync = db.prepare(
+    `SELECT last_success, rows FROM source_sync WHERE source = 'owna' AND status = 'ok'`
+  ).get();
+  let ts = sync && sync.last_success && (sync.rows == null || sync.rows > 0) ? sync.last_success : null;
+  if (!ts) {
+    // Older databases predate per-source tracking. Fall back to the run row, accepting "partial":
+    // the attendance write happens before the steps that can turn a run partial, so its day-rows are
+    // there. A run that wrote nothing is not evidence of anything and is excluded.
+    const row = db.prepare(
+      `SELECT MAX(finished_at) AS ts FROM snapshot_runs WHERE status IN ('ok','partial') AND rows_written > 0`
+    ).get();
+    ts = row && row.ts ? row.ts : null;
+  }
+  if (!ts) return today;                                   // nothing has ever run: fall back to today
+  // Stored timestamps are UTC (SQLite datetime('now')); the day one landed on is the Sydney date.
+  const day = cal.sydneyDate(new Date(String(ts).replace(" ", "T") + "Z"));
   return day < today ? day : today;                        // never claim actuals past today
 }
 // How stale the observed data is, in whole days — 0 when the feed ran today. Pages show this so a figure
