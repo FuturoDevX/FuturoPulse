@@ -877,7 +877,10 @@ function scheduleDays(sched) {
   return DAY_KEYS.filter((d) => sched[d] && (sched[d].am || sched[d].pm)).map((d) => DAY_ABBR[d]).join(",");
 }
 // Pipeline statuses that could still convert to an enrolment (exclude Enrolled/Alumni/Withdrawn/Lost/Rejected).
-const PIPELINE_STATUSES = new Set([1, 2, 11, 3, 4, 12, 5]);
+// 13 is Pre Open — the stage a child sits at while the centre they are booked into has not opened yet. It
+// only ever appears at Cobbitty, Oran Park and Park Rd, which is why leaving it out went unnoticed: the
+// four operating centres have none. It cost Cobbitty 10 children and Oran Park 3 in every per-centre count.
+const PIPELINE_STATUSES = new Set([1, 2, 11, 3, 4, 12, 5, 13]);
 
 // The LineLeader pipeline tables hold no child or family name (APP 11.2 — see db/schema.sql). What is kept
 // per row is LineLeader's own opaque id, which is a foreign key into LineLeader and identifies nobody here.
@@ -993,7 +996,7 @@ async function runLineLeaderSnapshot({ windowDays = WINDOW_DAYS, forwardDays = F
 
   // Pipeline MEMBERS (per child) for the centre drill-down + waitlist trend.
   const statusName = new Map(statuses.map((s) => [s.id, s.values ? s.values.name : s.name]));
-  const PIPELINE_MEMBER_STATUSES = [1, 2, 11, 3, 4, 12, 5];
+  const PIPELINE_MEMBER_STATUSES = [1, 2, 11, 3, 4, 12, 5, 13];   // 13 = Pre Open, see PIPELINE_STATUSES
   const llLocalDate = (s) => (s ? String(s).slice(0, 10) : null);
   try {
     const members = await lineleader.enrolmentsByStatus(PIPELINE_MEMBER_STATUSES);
