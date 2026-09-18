@@ -94,6 +94,33 @@ test('board report', async (t) => {
   } finally { server.close(); }
 });
 
+test('the CSV never carries a figure the page refuses to show', () => {
+  // A spreadsheet is where a caveat gets lost: a beyond-horizon occupancy computed off a handful of held
+  // days looks like a real percentage to anyone sorting the column. It must be blank, with the reason in
+  // the note — not printed with a footnote beside it.
+  const model = {
+    coe: { centres: [{ owna_id: 'a', name: 'Centre Alpha', months: [
+      { month: '2026-11', enrolled: 100, continuing: 90, not_confirmed: 2, leaving: 8, continuing_pct: 90, beyond_horizon: false },
+      { month: '2026-12', beyond_horizon: true },
+    ] }] },
+    occupancy: [{ owna_id: 'a', places: 100, months: {
+      '2026-11': { avg_booked: 80, utilisation: 80, days_with_rows: 20, operating_days: 21, thin: false, beyond_horizon: false, partial_horizon: false, horizon: '2026-11-20' },
+      '2026-12': { avg_booked: 97, utilisation: 97, days_with_rows: 3, operating_days: 22, thin: true, beyond_horizon: true, partial_horizon: false, horizon: '2026-11-20' },
+    } }],
+  };
+  const rows = report.csv(model).trim().split('\n');
+  const nov = rows[1].split(','), dec = rows[2].split(',');
+  assert.equal(nov[9], '80', 'a real month keeps its occupancy');
+  assert.equal(dec[9], '', 'a beyond-horizon month carries no occupancy percentage');
+  assert.equal(dec[7], '', 'nor an average');
+  assert.equal(dec[2], '', 'nor a continuation count');
+  assert.match(rows[2], /continuation beyond this centre's booking horizon/);
+  assert.match(rows[2], /occupancy beyond this centre's booking horizon \(2026-11-20\)/);
+  // The held-days columns stay, because they are what proves the blank is a blank and not a zero.
+  assert.equal(dec[10], '3');
+  assert.equal(dec[11], '22');
+});
+
 test('occupancy is marked where the booking data stops', () => {
   // Without this, December reads as a centre with nobody in it. It is a month nobody has booked yet.
   const months = ['2026-11', '2026-12'];

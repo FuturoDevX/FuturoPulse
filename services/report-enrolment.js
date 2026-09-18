@@ -167,6 +167,15 @@ function csv(model) {
     const o = occ.get(c.owna_id);
     for (const mo of c.months) {
       const om = o && o.months[mo.month];
+      // A cell the page refuses to show must be empty here too. A spreadsheet is where a caveat gets
+      // lost — Bardia's April occupancy reads 97.4% off five held days past its last booked day, and
+      // anyone sorting this column would quote it. Blank it, and say why in the note.
+      const occHidden = !om || om.beyond_horizon;
+      const notes = [];
+      if (mo.beyond_horizon) notes.push("continuation beyond this centre's booking horizon");
+      if (om && om.beyond_horizon) notes.push("occupancy beyond this centre's booking horizon (" + om.horizon + ")");
+      else if (om && om.partial_horizon) notes.push("month runs past the last booked day (" + om.horizon + ") — occupancy understated");
+      if (om && om.thin && !om.beyond_horizon) notes.push("thin coverage — do not quote");
       out.push([
         q(SHORT(c.name)), mo.month,
         mo.beyond_horizon ? "" : mo.enrolled,
@@ -174,13 +183,10 @@ function csv(model) {
         mo.beyond_horizon ? "" : mo.not_confirmed,
         mo.beyond_horizon ? "" : mo.leaving,
         mo.beyond_horizon ? "" : (mo.continuing_pct ?? ""),
-        om ? om.avg_booked : "", o ? o.places : "",
-        om && om.utilisation != null ? om.utilisation : "",
+        occHidden ? "" : om.avg_booked, o ? o.places : "",
+        occHidden || om.utilisation == null ? "" : om.utilisation,
         om ? om.days_with_rows : "", om ? om.operating_days : "",
-        q(mo.beyond_horizon ? "beyond this centre's booking horizon"
-          : om && om.beyond_horizon ? "occupancy beyond this centre's booking horizon — not a real figure"
-          : om && om.partial_horizon ? "month runs past the last booked day (" + om.horizon + ") — occupancy understated"
-          : om && om.thin ? "thin coverage — do not quote" : ""),
+        q(notes.join("; ")),
       ].join(","));
     }
   }

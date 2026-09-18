@@ -159,7 +159,9 @@
               <% if (!x || x.beyond_horizon) { %>
                 <td style="text-align:right;" class="muted" title="Past <%= o.horizon || 'the last booked day' %> — nobody has booked this far ahead yet, so there is nothing to count.">·</td>
               <% } else if (x.partial_horizon) { %>
-                <td style="text-align:right;" class="muted" title="This month runs past the last booked day (<%= x.horizon %>), so the average is dragged down by days nobody has booked yet."><%= pct(x.utilisation) %><span class="thin-mark">†</span></td>
+                <%# Heath Rd's April holds two of twenty-two days AND runs past its last booked day. Both
+                    marks show, or the thinner of the two reasons disappears behind the other. %>
+                <td style="text-align:right;" class="muted" title="This month runs past the last booked day (<%= x.horizon %>), so the average is dragged down by days nobody has booked yet.<%= x.thin ? ' Only ' + x.days_with_rows + ' of ' + x.operating_days + ' operating days are held, too.' : '' %>"><%= pct(x.utilisation) %><span class="thin-mark">†<%= x.thin ? '*' : '' %></span></td>
               <% } else if (x.thin) { %>
                 <td style="text-align:right;" class="muted" title="Only <%= x.days_with_rows %> of <%= x.operating_days %> operating days held — too thin to quote."><%= pct(x.utilisation) %><span class="thin-mark">*</span></td>
               <% } else { %>
