@@ -35,6 +35,30 @@ CREATE TABLE IF NOT EXISTS centres (
   opening_month INTEGER               -- 1-12 when the month is known (e.g. 11 = November); NULL = year only
 );
 
+-- Weekly enquiry counts, rolled up from LineLeader.
+--
+-- A CACHE, not a source. LineLeader has no aggregate endpoint: a week-by-centre series can only be built
+-- by pulling the family rows and bucketing created_date. Measured on 18 September 2026, a 100-row page
+-- takes 9 to 11 seconds and returns about 780 KB, because /families returns the whole identified record
+-- — guardians, children, contacts, custom values. Twelve months is fifteen pages, so roughly two and a
+-- half minutes. Far too slow to do on a page render, hence this table and an explicit refresh, the same
+-- shape as ai_briefings.
+--
+-- Counts only. The rows that built these numbers carry names, addresses and phone numbers; none of that
+-- is written here, and none of it needs to be for a weekly count.
+CREATE TABLE IF NOT EXISTS enquiry_weekly (
+  week_start  TEXT NOT NULL,            -- YYYY-MM-DD, the Monday
+  owna_id     TEXT,                     -- NULL where LineLeader names a centre this dashboard does not map
+  ll_centre   TEXT,                     -- LineLeader spelling, kept so an unmapped centre is nameable
+  leads       INTEGER NOT NULL DEFAULT 0,
+  reached_waitlist INTEGER DEFAULT 0,   -- of those leads, how many got a child to waitlist or past it
+  reached_offer    INTEGER DEFAULT 0,
+  enrolled         INTEGER DEFAULT 0,
+  refreshed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (week_start, ll_centre)
+);
+CREATE INDEX IF NOT EXISTS idx_enqweek ON enquiry_weekly(week_start);
+
 -- Marketing initiatives, entered by hand.
 --
 -- LineLeader can attribute a lead to a campaign and almost nobody does: 13 of 1,039 families created in
