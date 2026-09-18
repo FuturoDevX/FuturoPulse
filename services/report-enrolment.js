@@ -13,6 +13,7 @@ const cal = require("./calendar");
 const enquiries = require("./enquiries");
 const marketing = require("./marketing");
 const db = require("../db/db");
+const { sourceSyncFor, lastRun } = require("./snapshot");
 
 const SHORT = (n) => String(n || "").replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, "").trim();
 
@@ -151,6 +152,12 @@ function build({ weeks = 26 } = {}) {
     // Every figure on the page is only as current as the pull behind it, and the two pulls are different.
     owna_as_at: m.lastActualDate(),
     owna_lag_days: m.actualsLagDays(),
+    // …and "current" is not the same as "complete". A night that reached OWNA but failed the COE step
+    // leaves this page showing yesterday's continuation under today's date, so both feeds report their
+    // own status and the page says so rather than presenting a partial pull as the whole picture.
+    owna_sync: sourceSyncFor("owna") || null,
+    coe_sync: sourceSyncFor("coe") || null,
+    last_run: lastRun() || null,
     initiatives: marketing.list({ from }),
   };
 }

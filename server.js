@@ -5,7 +5,7 @@ const cron = require("node-cron");
 
 const { requireLogin } = require("./middleware/auth");
 const { sessionMiddleware } = require("./middleware/session");
-const { runSnapshot, errSummary } = require("./services/snapshot");
+const { runSnapshotOnce, errSummary } = require("./services/snapshot");
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -151,7 +151,10 @@ const CRON_TZ = require("./services/calendar").TIME_ZONE;
 if (require.main === module && cron.validate(cronExpr)) {
   cron.schedule(cronExpr, () => {
     console.log("[cron] nightly OWNA snapshot starting");
-    runSnapshot().catch((e) => console.error("[cron] snapshot failed:", errSummary(e)));
+    // Through the same single-flight as the buttons: a manual refresh still running at 2:15am must not
+    // have a second run started on top of it.
+    const { started } = runSnapshotOnce();
+    if (!started) console.log("[cron] a snapshot is already running — not starting a second");
   }, { timezone: CRON_TZ });
   console.log(`[cron] nightly snapshot scheduled: ${cronExpr} (${CRON_TZ})`);
 } else if (require.main === module) {

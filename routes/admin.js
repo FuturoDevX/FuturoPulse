@@ -6,26 +6,23 @@ const { importAuditBuffer } = require("../services/qc-import");
 const { importPcWorkbook } = require("../services/pc-import");
 const fb = require("../services/feedback");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
-const { runSnapshot, lastRun, errSummary, sourceSync, sourceSyncFor } = require("../services/snapshot");
+const { runSnapshotOnce, snapshotRunning, lastRun, errSummary, sourceSync, sourceSyncFor } = require("../services/snapshot");
 const { owna } = require("../services/owna");
 const router = express.Router();
 
-let refreshing = false;
-
-// Manual "Refresh now" — pulls a fresh snapshot from OWNA on demand.
+// Manual "Refresh now" — pulls a fresh snapshot from OWNA on demand. The single-flight guard lives in
+// services/snapshot.js, so this button, the board report's button and the nightly cron all share it.
 router.post("/refresh", requireAdminOrOps, async (req, res) => {
-  if (refreshing) return res.redirect("/?msg=" + encodeURIComponent("A refresh is already running."));
   if (!owna.hasKey()) return res.redirect("/?msg=" + encodeURIComponent("OWNA_API_KEY is not configured."));
-  refreshing = true;
-  // Kick off in the background; the page shows progress via lastRun status.
-  runSnapshot()
-    .catch((e) => console.error("[refresh] failed:", errSummary(e)))
-    .finally(() => { refreshing = false; });
-  res.redirect("/?msg=" + encodeURIComponent("Refresh started — reload in a moment to see updated figures."));
+  const { started, reason } = runSnapshotOnce();
+  res.redirect("/?msg=" + encodeURIComponent(started
+    ? "Refresh started — reload in a moment to see updated figures."
+    : reason === "running" ? "A refresh is already running."
+    : "Refreshing from OWNA is disabled in this environment."));
 });
 
 router.get("/status", requireAdminOrOps, (req, res) => {
-  res.json({ refreshing, lastRun: lastRun(), sources: sourceSync() });
+  res.json({ refreshing: snapshotRunning(), lastRun: lastRun(), sources: sourceSync() });
 });
 
 

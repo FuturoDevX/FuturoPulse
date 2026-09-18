@@ -7,6 +7,8 @@
 const express = require("express");
 const { requireAdmin } = require("../middleware/auth");
 const report = require("../services/report-enrolment");
+const { runSnapshotOnce, snapshotRunning, snapshotStartedAt, lastRefreshError, lastRun } = require("../services/snapshot");
+const { owna } = require("../services/owna");
 const enquiries = require("../services/enquiries");
 const marketing = require("../services/marketing");
 const m = require("../services/metrics");
@@ -26,6 +28,10 @@ router.get("/enrolment", (req, res) => {
     allCentres: m.centres(),
     msg: req.query.msg || null,
     err: req.query.err || null,
+    refreshing: snapshotRunning(),
+    refreshStartedAt: snapshotStartedAt(),
+    refreshError: lastRefreshError(),
+    hasOwnaKey: owna.hasKey(),
   });
 });
 
@@ -38,6 +44,38 @@ router.get("/enrolment.csv", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.set("Content-Disposition", `attachment; filename="futuro-enrolment-${cal.today()}.csv"`);
   res.send(report.csv(model));
+});
+
+// Refresh from OWNA. Every OWNA figure on this page — continuation, occupancy, the horizons — comes from
+// the nightly snapshot, so when it looks wrong the first question is whether it is simply old, and the
+// second is whether the last pull actually completed. This is the button that answers both.
+//
+// The run takes minutes, so it is started and the request returns immediately; the page polls /status.
+// The single-flight guard is in services/snapshot.js and is shared with /admin/refresh and the cron, so
+// pressing this twice, or pressing it at 2:15am, cannot start a second concurrent pull.
+router.post("/enrolment/refresh-owna", (req, res) => {
+  if (!owna.hasKey()) {
+    return res.redirect("/reports/enrolment?err=" + encodeURIComponent("OWNA_API_KEY is not configured on this server."));
+  }
+  const { started, reason } = runSnapshotOnce();
+  if (started) {
+    return res.redirect("/reports/enrolment?msg=" + encodeURIComponent(
+      "OWNA refresh started. It takes a few minutes — this page will reload itself when it finishes."));
+  }
+  if (reason === "running") return res.redirect("/reports/enrolment?msg=" + encodeURIComponent("An OWNA refresh is already running."));
+  res.redirect("/reports/enrolment?err=" + encodeURIComponent("Refreshing from OWNA is disabled in this environment."));
+});
+
+// Counts and statuses only — polled by the page while a refresh is in flight.
+router.get("/enrolment/status", (req, res) => {
+  const run = lastRun();
+  res.set("Cache-Control", "no-store");
+  res.json({
+    refreshing: snapshotRunning(),
+    started_at: snapshotStartedAt(),
+    error: lastRefreshError(),
+    last_run: run ? { status: run.status, finished_at: run.finished_at, rows_written: run.rows_written, note: run.note } : null,
+  });
 });
 
 // The enquiry pull takes minutes — fifteen pages of family records at nine seconds each — so it never

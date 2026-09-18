@@ -120,6 +120,42 @@ const withMeta = (r) => (r ? { ...r, meta: r.meta_json ? JSON.parse(r.meta_json)
 function sourceSync() { return db.prepare(`SELECT * FROM source_sync ORDER BY source`).all().map(withMeta); }
 function sourceSyncFor(source) { return withMeta(db.prepare(`SELECT * FROM source_sync WHERE source = ?`).get(source)); }
 
+// ONE SNAPSHOT AT A TIME, wherever it is started from.
+//
+// The guard used to be a boolean inside routes/admin.js, which only covered the button on that page: the
+// nightly cron, that button, and now the Refresh on the board report could each start a run unaware of the
+// others. Two concurrent runs write the same day-rows and the same coe_* rows for the same snapshot_date
+// from two different pulls, and whichever finishes last wins — so a half-finished run could overwrite a
+// complete one. The flag belongs with the thing it protects.
+//
+// The stored promise never rejects: a caller that starts a run and walks away (every caller does — a
+// snapshot takes minutes and the request returns immediately) must not leave an unhandled rejection
+// behind. The failure is kept in lastRefreshError() instead, so a page can show it.
+let inFlight = null;
+let lastError = null;
+let startedAt = null;
+
+function snapshotRunning() { return !!inFlight; }
+function snapshotStartedAt() { return inFlight ? startedAt : null; }
+function lastRefreshError() { return lastError; }
+
+function runSnapshotOnce(opts = {}) {
+  if (inFlight) return { started: false, reason: "running", promise: inFlight };
+  // Nothing in a test run may reach the live OWNA account. The fixture environment inherits a real
+  // OWNA_API_KEY from .env, so owna.hasKey() is true there and a route guarded only on the key will
+  // happily start a full production pull from `npm test`. Caught by tests/report.test.js doing exactly
+  // that. The refusal belongs here, at the single place a run can start, not in each caller.
+  if (process.env.NODE_ENV === "test") {
+    return { started: false, reason: "test", promise: Promise.resolve({ ok: false, status: "skipped" }) };
+  }
+  lastError = null;
+  startedAt = new Date().toISOString().replace("T", " ").slice(0, 19);
+  inFlight = runSnapshot(opts)
+    .catch((e) => { lastError = errSummary(e); return { ok: false, status: "error", error: lastError }; })
+    .finally(() => { inFlight = null; });
+  return { started: true, reason: null, promise: inFlight };
+}
+
 async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAYS, log = console.log } = {}) {
   const from = daysAgo(windowDays);
   const to = daysAhead(forwardDays); // include future scheduled bookings
@@ -1092,4 +1128,4 @@ function ensureOpeningCentres({ minPipeline = 1, log = console.log } = {}) {
   return { ok: true, n };
 }
 
-module.exports = { upsertCentreRow, runSnapshot, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, runCoeSnapshot, coeWeeksFrom, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor, recentMondays };
+module.exports = { upsertCentreRow, runSnapshot, runSnapshotOnce, snapshotRunning, snapshotStartedAt, lastRefreshError, runLineLeaderSnapshot, runExitReport, runOwnaBackfill, runIncidents, runRoster, runCoeSnapshot, coeWeeksFrom, ensureOpeningCentres, lastRun, errSummary, recordSync, sourceSync, sourceSyncFor, recentMondays };

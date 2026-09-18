@@ -62,6 +62,49 @@ test('board report', async (t) => {
       assert.match(html, /Enrolment — board report/);
     });
 
+    await t.test('the OWNA refresh is admin-only and refuses to start without a key', async () => {
+      const snap = require('../services/snapshot');
+      for (const role of ['viewer', 'centre', 'exec', 'ops_manager']) {
+        const r = await request('/reports/enrolment/refresh-owna', await login(role), {});
+        assert.ok([302, 403].includes(r.status), role + ' got ' + r.status);
+        if (r.status === 302) assert.doesNotMatch(r.headers.get('location') || '', /^\/reports\/enrolment\?msg=/);
+      }
+      // The fixture environment inherits a real OWNA_API_KEY from .env, so the key guard does NOT stop
+      // this — and without the NODE_ENV refusal in runSnapshotOnce, pressing it here starts a full
+      // production pull from `npm test`. That is what this asserts: an admin gets a refusal, and no run
+      // is left in flight.
+      const c = await login('admin');
+      const r = await request('/reports/enrolment/refresh-owna', c, {});
+      assert.equal(r.status, 302);
+      assert.match(r.headers.get('location'), /err=.*disabled/);
+      assert.equal(snap.snapshotRunning(), false, 'no run may be left in flight from a test');
+    });
+
+    await t.test('the status endpoint reports counts and statuses only', async () => {
+      const r = await request('/reports/enrolment/status', await login('admin'));
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('cache-control'), 'no-store');
+      const body = await r.json();
+      assert.deepEqual(Object.keys(body).sort(), ['error', 'last_run', 'refreshing', 'started_at']);
+      assert.equal(body.refreshing, false);
+      // Nothing about children, families or figures may travel down a polled endpoint.
+      const text = JSON.stringify(body);
+      assert.doesNotMatch(text, /continuing|enrolled|waitlist|child/i);
+      assert.equal((await request('/reports/enrolment/status', await login('viewer'))).status === 200, false);
+    });
+
+    await t.test('a failed feed is disclosed on the page, not hidden behind a fresh date', async () => {
+      // owna (day-rows) succeeding while coe fails is the real shape of the bug this card exists for:
+      // the header would read "OWNA actuals to <today>" over continuation figures from an older night.
+      const snap = require('../services/snapshot');
+      snap.recordSync('owna', 'ok', '4 centres, 800 day-rows', { rows: 800 });
+      snap.recordSync('coe', 'error', 'every OWNA children/attendance call failed');
+      const html = await (await request('/reports/enrolment', await login('admin'))).text();
+      assert.match(html, /The last pull did not complete/);
+      assert.match(html, /Continuation of enrolment<\/strong> — error/);
+      assert.match(html, /every OWNA children\/attendance call failed/);
+    });
+
     await t.test('the CSV downloads as a file and names its columns', async () => {
       const r = await request('/reports/enrolment.csv', await login('admin'));
       assert.equal(r.status, 200);

@@ -47,12 +47,69 @@
     </p>
   </div>
   <div class="no-print" style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+    <form method="POST" action="/reports/enrolment/refresh-owna" class="inline">
+      <button type="submit" class="btn secondary" <%= (locals.refreshing || !locals.hasOwnaKey) ? 'disabled' : '' %>>
+        <%= locals.refreshing ? 'Refreshing OWNA…' : 'Refresh from OWNA' %>
+      </button>
+    </form>
     <button type="button" class="btn" onclick="window.print()">Print / PDF</button>
     <a class="btn secondary" href="/reports/enrolment.csv">Download CSV</a>
   </div>
 </div>
 
 <% if (locals.err) { %><div class="flash bad no-print"><%= err %></div><% } %>
+
+<% if (locals.refreshing) { %>
+  <div class="flash no-print" id="refresh-banner">
+    <strong>Pulling from OWNA…</strong> started <%= locals.refreshStartedAt %>. It takes a few minutes —
+    leave this page open and it will reload itself when the pull finishes.
+  </div>
+  <script>
+    // Poll counts and statuses only, and reload once the run is no longer in flight. No figures come
+    // down this endpoint — the page re-renders them from the database like any other request.
+    (function () {
+      var tries = 0;
+      var t = setInterval(function () {
+        tries += 1;
+        if (tries > 120) { clearInterval(t); return; }   // ten minutes, then stop asking
+        fetch('/reports/enrolment/status', { headers: { 'accept': 'application/json' } })
+          .then(function (r) { return r.json(); })
+          .then(function (s) { if (!s.refreshing) { clearInterval(t); location.href = '/reports/enrolment'; } })
+          .catch(function () { /* a dropped poll is not worth a message; the next one will do */ });
+      }, 5000);
+    })();
+  </script>
+<% } %>
+
+<%# The two OWNA feeds behind this page fail independently. Day-rows (occupancy) can succeed on a night
+    the COE step fails, and then every continuation figure here is from an older pull while the header
+    date says today. Say so rather than let the reader assume one date covers both. %>
+<% var oS = M.owna_sync, cS = M.coe_sync;
+   var ownaBad = oS && oS.status !== 'ok', coeBad = cS && cS.status !== 'ok'; %>
+<% if (ownaBad || coeBad || locals.refreshError) { %>
+  <div class="card no-print" style="border-left:3px solid var(--bad);">
+    <h2 style="margin:0 0 8px;font-size:15px;">The last pull did not complete</h2>
+    <p style="margin:0 0 8px;font-size:13px;">
+      These figures are the newest complete ones held, not necessarily the newest that exist in OWNA.
+      Nothing below is estimated to cover the gap.
+    </p>
+    <ul style="margin:0;padding-left:18px;font-size:13px;">
+      <% if (ownaBad) { %>
+        <li><strong>Bookings and occupancy</strong> — <%= oS.status %><% if (oS.detail) { %>: <%= oS.detail %><% } %>.
+          Last complete pull <%= oS.last_success || 'never' %>.</li>
+      <% } %>
+      <% if (coeBad) { %>
+        <li><strong>Continuation of enrolment</strong> — <%= cS.status %><% if (cS.detail) { %>: <%= cS.detail %><% } %>.
+          Last complete pull <%= cS.last_success || 'never' %>. The continuation table below is from that pull,
+          and the booking horizons with it.</li>
+      <% } %>
+      <% if (locals.refreshError) { %><li><strong>Last refresh from this page</strong> failed: <%= refreshError %></li><% } %>
+    </ul>
+    <p class="muted" style="margin:8px 0 0;font-size:12px;">
+      Press <em>Refresh from OWNA</em> above to pull again.
+    </p>
+  </div>
+<% } %>
 
 <% if (M.owna_lag_days > 3) { %>
   <div class="card no-print" style="border-left:3px solid var(--warn);">
