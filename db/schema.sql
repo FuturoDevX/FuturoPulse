@@ -35,6 +35,34 @@ CREATE TABLE IF NOT EXISTS centres (
   opening_month INTEGER               -- 1-12 when the month is known (e.g. 11 = November); NULL = year only
 );
 
+-- Marketing initiatives, entered by hand.
+--
+-- LineLeader can attribute a lead to a campaign and almost nobody does: 13 of 1,039 families created in
+-- 2026 carry one, none carry UTM data, and 872 of them came in as inquiry type "Import". So campaign
+-- effect cannot be read out of LineLeader, and this table exists so the marketing team can mark what they
+-- actually did against the weekly enquiry line and see whether it moved.
+--
+-- It also records things LineLeader could never know — a banner in a display village, an event at a
+-- partner's sales office, a builder posting about us. Those are the ones worth annotating.
+--
+-- Deliberately NOT a spend tracker. One row is one dated thing that happened, so a reader can ask
+-- "did enquiries move after this?" A cost column would invite a return-on-spend figure that the lead
+-- data cannot honestly support.
+CREATE TABLE IF NOT EXISTS marketing_initiatives (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  starts_on   TEXT NOT NULL,            -- YYYY-MM-DD, the day it went live
+  ends_on     TEXT,                     -- NULL for a one-day thing; set for a campaign that ran a while
+  owna_id     TEXT,                     -- the centre it targeted; NULL = group-wide or brand
+  title       TEXT NOT NULL,
+  channel     TEXT,                     -- event | print | social | partner | digital | signage | other
+  detail      TEXT,                     -- free text: what exactly was done, and where
+  source      TEXT,                     -- who told us — an email, a person, Meta API later
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT,
+  FOREIGN KEY (owna_id) REFERENCES centres(owna_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mktg_date ON marketing_initiatives(starts_on);
+
 -- One aggregated row per centre per calendar day.
 CREATE TABLE IF NOT EXISTS daily_metrics (
   owna_id     TEXT NOT NULL,
