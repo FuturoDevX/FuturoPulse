@@ -193,6 +193,73 @@ These limit what the dashboard can honestly show. Each page says so where it app
   on a page render — but it is not yet a sub-step of the nightly snapshot, and until it is the weekly
   figures are only as fresh as the last press.
 
+## The forward attendance pull was losing whole weeks — found and fixed 18 September
+
+The owner said the board report's blank March and April cells for Gledswood Hills and Bardia were wrong,
+"because in OWNA the data is there". He was right, and the cause was worse than the symptom.
+
+**A single OWNA attendance request for a long range does not come back whole.** Walked over the forward
+window, all four operating centres' booked child-days came back missing whole blocks from the MIDDLE of
+the range — 17 gaps, **every one starting on a Monday and ending on a Friday**, several with complete
+weeks on both sides (Austral holds 12–16 April and 26–30 April 2027 and nothing for 19–23 April). No
+pattern of family bookings produces that. `runOwnaBackfill` has chunked by month since it was written,
+with the comment "to keep each request small"; the two paths feeding the board report did not.
+
+**What it cost was the inference, not the rows.** `last_booking_date` was taken as the maximum date the
+pull returned and published as "the centre's booking horizon". So the last date a lossy request happened
+to end on became a claim about family behaviour, and six centre-months were blanked under a footnote
+saying families had not booked that far ahead. Underneath two of those dots sat real measurements:
+**Bardia's March 2027 had 150 of its 195 children continuing with ONE child unresolved.**
+
+- [x] **Attendance is pulled in monthly chunks** (`attendanceChunked` in `services/owna.js`), used by the
+  day-rows path, the COE path and anything else that calls `owna.attendance`.
+- [x] **The walk can tell what it holds from what it was handed.** `getAllWithMeta` deduplicates on a
+  caller-supplied key as it goes and reports `received` / `held` / `duplicates` / `short`. It exits on
+  `skip >= totalCount` advancing by rows RECEIVED, so a repeat inside a walk used to carry it past the
+  total while still missing real rows, and nothing recorded that. A walk that ends holding fewer rows
+  than OWNA declared — or that fills its only page having been given no count at all — is now `short`.
+- [x] **A booking horizon is never inferred from a short pull.** `runCoeSnapshot` records no
+  `last_booking_date` at all for a centre whose pull came back short, stores coverage as NULL (unknown,
+  which is not zero), blanks nothing, and reports the count on the snapshot status line.
+- [x] **The blanking rule is a measurement, not a heuristic.** `coe_continuing.covered_days` is how many
+  of a month's operating days the pull reaches; `beyond_horizon` means only that this is zero. The rule
+  it replaced hid a month when the roll ended inside it leaving "more than a week" uncounted, gated on
+  `stopsTogether` — which evaluated TRUE for all four centres on every stored night, Austral included,
+  whose roll is not short at all. The tail test was an absolute count of operating days, so a cell
+  flipped between a published percentage and a blank on a one-day accident: Bardia's March tail is
+  exactly 6 operating days, one over the threshold, and only because Good Friday and Easter Monday 2027
+  fall inside it.
+- [x] **A month covered by less than one operating week** is reported and marked but kept out of the
+  group figure — under five days a child who books one day a week need not appear at all, so their
+  absence measures the calendar rather than a decision.
+- [x] **The page no longer asserts a cause it cannot know.** A blank says the pull reached none of that
+  month, not that families have not booked. The group row prints how many centres it covers, per month;
+  it was silently averaging one centre in April beside an Enrolled column reading 767.
+- [x] **Occupancy is no longer vetoed by a COE horizon.** A month with its own booked day-rows keeps its
+  figure and is marked understated. Bardia's April occupancy — five days averaging 118.8 children — was
+  being blanked by a date derived from a different pull.
+- [x] **Where the two pulls contradict each other, the page says so** rather than reconciling them, and
+  the CSV carries the same line. Continuation and occupancy are separate requests to the same endpoint;
+  when one finds bookings and the other finds none, that disagreement is the most useful thing on the row.
+
+Still open:
+
+- [ ] **The gaps themselves are still in `daily_metrics`.** Chunking stops new ones; it does not refill
+  the old. A full `npm run backfill`, or a few nightly runs, is needed — and neither can happen from the
+  office network while `api.owna.com.au` is SSL-intercepted. Until then some past months read low.
+- [ ] **`daily_metrics` has no provenance and is never reconciled.** It is upsert-only with no timestamp,
+  so a day whose rows stop coming back keeps its old value for ever and nothing can tell a fresh row
+  from a stale one. A cancelled forward booking stays in the occupancy figures indefinitely.
+- [ ] **Occupancy over 100% may be partly duplicate rows.** The day-rows path counted every row OWNA
+  returned; the COE path over the same endpoint has always deduplicated. Deduplication now happens in the
+  walk for both, so booked child-days should fall slightly where OWNA was repeating rows — which bears on
+  the standing question of why four centres book above their licensed places. Worth re-reading after a
+  clean nightly run.
+- [ ] **`covered_days` assumes everything up to the last booking arrived.** With chunking and short
+  detection in place that is a much safer assumption than it was, but a pull with an interior gap that is
+  NOT reported short would still be treated as fully covered. Checking day-by-day coverage per month
+  would close it.
+
 ## Not possible, by design
 
 - **An accurate 12-month enrolment projection.** Departures are not in any system beyond about a term. Ninety days is shown as trustworthy, twelve months as a ceiling.

@@ -36,8 +36,13 @@ function occupancyByMonth(months, horizon = new Map()) {
     for (const r of rows) {
       const start = r.month + "-01", end = monthEnd(r.month);
       const opDays = cal.operatingDays(start, end);
-      const beyond = hz ? start > hz : false;             // the whole month is past the last booking
-      const partial = hz ? !beyond && end > hz : false;   // the month straddles it
+      // A COE horizon must not veto a month that has its OWN evidence. Bardia's April holds five real
+      // booking days averaging 118.8 children; letting the COE last_booking_date blank it threw away a
+      // measurement in favour of an inference drawn from a different pull. Occupancy is empty when
+      // occupancy has no rows — nothing else decides that. The horizon stays only to explain an average
+      // that is dragged down by days past it.
+      const beyond = r.days_with_rows === 0;
+      const partial = !!hz && !beyond && end > hz;        // the month runs past the last booking we hold
       byMonth[r.month] = {
         booked: r.booked,
         avg_booked: r.avg_booked,
@@ -133,6 +138,7 @@ function build({ weeks = 26 } = {}) {
   const months = coe ? coe.months.map((x) => x.month) : m.coeMonthKeys();
   const from = enquiries.mondayOf(cal.addDays(today, -7 * weeks)) || cal.addDays(today, -7 * weeks);
 
+  const occ = occupancyByMonth(months, horizonMap(coe));
   const series = enquiries.weeks({ from });
   const initiatives = marketing.byWeek({ from });
 
@@ -140,7 +146,7 @@ function build({ weeks = 26 } = {}) {
     as_at: today,
     coe,                                            // null when no snapshot has run
     coe_months: months,
-    occupancy: occupancyByMonth(months, horizonMap(coe)),
+    occupancy: occ,
     waitlist: waitlistByCentre(),
     mix: coe ? coe.centres.map((c) => ({ name: SHORT(c.name), mix: c.mix, avg: c.avg_days_per_child })) : [],
     weeks: series.map((w) => ({ ...w, initiatives: initiatives.get(w.week_start) || [] })),
@@ -159,14 +165,35 @@ function build({ weeks = 26 } = {}) {
     coe_sync: sourceSyncFor("coe") || null,
     last_run: lastRun() || null,
     initiatives: marketing.list({ from }),
+    // Months where the two OWNA pulls contradict each other: continuation says it reached none of the
+    // month, occupancy holds booked days in it. Both read the same endpoint, so one of them is short.
+    // Surfaced rather than reconciled — reconciling them here would hide the fault.
+    pull_conflicts: pullConflicts(coe, occ),
   };
+}
+
+function pullConflicts(coe, occupancy) {
+  if (!coe) return [];
+  const occById = new Map(occupancy.map((o) => [o.owna_id, o]));
+  const out = [];
+  for (const c of coe.centres) {
+    const o = occById.get(c.owna_id);
+    if (!o) continue;
+    for (const mo of c.months) {
+      const om = o.months[mo.month];
+      if (mo.beyond_horizon && om && om.days_with_rows > 0) {
+        out.push({ name: SHORT(c.name), month: mo.month, days: om.days_with_rows, avg_booked: om.avg_booked });
+      }
+    }
+  }
+  return out;
 }
 
 // The CSV a board pack actually needs: one row per centre per month, both measures side by side, with the
 // coverage that produced the occupancy figure so nobody quotes a thin month as a result.
 function csv(model) {
   const head = ["centre", "month", "enrolled", "continuing", "not_confirmed", "leaving",
-    "continuation_pct", "booked_avg_per_day", "approved_places", "occupancy_pct",
+    "continuation_pct", "continuation_days_covered", "booked_avg_per_day", "approved_places", "occupancy_pct",
     "operating_days_held", "operating_days_in_month", "coverage_note"];
   const out = [head.join(",")];
   const occ = new Map(model.occupancy.map((o) => [o.owna_id, o]));
@@ -179,7 +206,20 @@ function csv(model) {
       // anyone sorting this column would quote it. Blank it, and say why in the note.
       const occHidden = !om || om.beyond_horizon;
       const notes = [];
-      if (mo.beyond_horizon) notes.push("continuation beyond this centre's booking horizon");
+      // Say WHICH pull came up short, not "there are no bookings". Continuation and occupancy are two
+      // different requests to the same OWNA endpoint, and on this data they disagree: Bardia's
+      // continuation pull returned nothing after 19 March while its occupancy rows hold five April days
+      // averaging 118.8 children. A note that asserts "no bookings" next to 118.8 booked per day on the
+      // same row is simply wrong, and the disagreement is the most useful thing on the row — it is the
+      // evidence that one of the two pulls is incomplete. Flag it rather than smooth it over.
+      if (mo.beyond_horizon) {
+        notes.push("the forward booking pull behind continuation reached none of this month");
+        if (om && om.days_with_rows > 0) {
+          notes.push("BUT occupancy holds " + om.days_with_rows + " booked day(s) here — the two OWNA pulls disagree about this month");
+        }
+      }
+      else if (mo.thin) notes.push("continuation measured over only " + mo.covered_days + " of " + mo.operating_days + " operating days — do not quote, and not in the group figure");
+      else if (mo.partial_horizon) notes.push("continuation measured over " + mo.covered_days + " of " + mo.operating_days + " operating days");
       if (om && om.beyond_horizon) notes.push("occupancy beyond this centre's booking horizon (" + om.horizon + ")");
       else if (om && om.partial_horizon) notes.push("month runs past the last booked day (" + om.horizon + ") — occupancy understated");
       if (om && om.thin && !om.beyond_horizon) notes.push("thin coverage — do not quote");
@@ -190,6 +230,7 @@ function csv(model) {
         mo.beyond_horizon ? "" : mo.not_confirmed,
         mo.beyond_horizon ? "" : mo.leaving,
         mo.beyond_horizon ? "" : (mo.continuing_pct ?? ""),
+        mo.beyond_horizon ? "" : (mo.covered_days ?? ""),
         occHidden ? "" : om.avg_booked, o ? o.places : "",
         occHidden || om.utilisation == null ? "" : om.utilisation,
         om ? om.days_with_rows : "", om ? om.operating_days : "",

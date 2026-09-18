@@ -220,6 +220,10 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
  const ownaClient=require('../services/owna').owna;
  ownaClient.listChildren=async(id)=>(COE_FIX[id]||{children:[]}).children;
  ownaClient.attendance=async(id,from,to)=>(COE_FIX[id]||{attendance:[]}).attendance.filter(r=>r.attendanceDate.slice(0,10)>=String(from).slice(0,10)&&r.attendanceDate.slice(0,10)<=String(to).slice(0,10));
+ // The real client pulls attendance in monthly chunks and reports whether any chunk came back short, so
+ // that a booking horizon is never inferred from an incomplete pull. The fixture is complete by
+ // construction: no short chunks.
+ ownaClient.attendanceDetailed=async(id,from,to)=>({rows:await ownaClient.attendance(id,from,to),chunks:[],short:[]});
  const MONTHS=['2026-11','2026-12','2027-01','2027-02','2027-03','2027-04'];
  const OPDAYS={'2026-11':21,'2026-12':21,'2027-01':19,'2027-02':20,'2027-03':21,'2027-04':22};
  const monthEnd=(mo)=>{const [y,m2]=mo.split('-').map(Number);return mo+'-'+new Date(Date.UTC(y,m2,0)).getUTCDate();};
@@ -600,10 +604,17 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
    assert.equal(x.beyond_horizon,0,mo);assert.equal(x.continuing,10,mo); // the roll does cover these in full
   }
   const apr=contRow('c','2027-04');
-  assert.equal(apr.beyond_horizon,1,'one booked day is not a measured April');
+  // The protection moved on 18 September 2026 and its guarantee did not. beyond_horizon now means only
+  // "the pull reached NONE of this month" — a fact, not a heuristic — and April is not that: it holds
+  // Thu 1 and Fri 2. What keeps it out of the group is covered_days: two operating days is under a full
+  // week, so a child booked one day a week need not appear at all, and the month is marked unquotable.
+  assert.equal(apr.beyond_horizon,0,'April is partly covered, so it is not "reached none of"');
+  assert.equal(apr.covered_days,2,'1 and 2 April are the operating days the roll reaches');
   assert.equal(apr.leaving,0);                                   // nobody has a finish date: they are NOT leaving
   assert.ok(apr.continuing_days>0,'April does hold that one day of bookings…');
   assert.equal(apr.continuing,6);                                // …and at face value it reads as four of ten gone
+  // March IS fully covered and must stay a published figure — this is the case that was being hidden.
+  assert.equal(contRow('c','2027-03').covered_days,contRow('c','2027-03').operating_days);
 
   // Delta stops together too, but only two operating days short of 30 April, so it stays fully measured.
   const hd=db.prepare('SELECT * FROM coe_forward_horizon WHERE snapshot_date=? AND owna_id=?').get(SYD,'d');
@@ -613,6 +624,10 @@ test('Week 2 batch A — Sydney-aware dates',async(t)=>{
 
   const ms=freeze(FROZEN,()=>m.coeMeasured());
   const gamma=ms.centres.find(x=>x.owna_id==='c'), delta=ms.centres.find(x=>x.owna_id==='d');
+  const gApr=gamma.months.find(x=>x.month==='2027-04');
+  assert.equal(gApr.thin,true,'two covered days is under a week');
+  assert.equal(gApr.in_group,false,'…so it is not in the group figure');
+  assert.equal(gApr.partial_horizon,true);
   assert.equal(gamma.stops_early,true);assert.equal(gamma.stops_together,true);
   assert.equal(delta.stops_early,false);
   assert.deepEqual(ms.stops.map(x=>x.owna_id).sort(),['b','c']);

@@ -148,20 +148,101 @@ test('the CSV never carries a figure the page refuses to show', () => {
     ] }] },
     occupancy: [{ owna_id: 'a', places: 100, months: {
       '2026-11': { avg_booked: 80, utilisation: 80, days_with_rows: 20, operating_days: 21, thin: false, beyond_horizon: false, partial_horizon: false, horizon: '2026-11-20' },
-      '2026-12': { avg_booked: 97, utilisation: 97, days_with_rows: 3, operating_days: 22, thin: true, beyond_horizon: true, partial_horizon: false, horizon: '2026-11-20' },
+      // No occupancy rows at all — the only thing that now empties an occupancy cell. A COE horizon
+      // must not do it: a month with real booked days keeps its figure and is marked instead.
+      '2026-12': { avg_booked: 0, utilisation: null, days_with_rows: 0, operating_days: 22, thin: true, beyond_horizon: true, partial_horizon: false, horizon: '2026-11-20' },
     } }],
   };
+  const head = report.csv(model).trim().split('\n')[0].split(',');
+  const col = (row, name) => row[head.indexOf(name)];
   const rows = report.csv(model).trim().split('\n');
   const nov = rows[1].split(','), dec = rows[2].split(',');
-  assert.equal(nov[9], '80', 'a real month keeps its occupancy');
-  assert.equal(dec[9], '', 'a beyond-horizon month carries no occupancy percentage');
-  assert.equal(dec[7], '', 'nor an average');
-  assert.equal(dec[2], '', 'nor a continuation count');
-  assert.match(rows[2], /continuation beyond this centre's booking horizon/);
-  assert.match(rows[2], /occupancy beyond this centre's booking horizon \(2026-11-20\)/);
+  assert.equal(col(nov, 'occupancy_pct'), '80', 'a real month keeps its occupancy');
+  assert.equal(col(dec, 'occupancy_pct'), '', 'a month with no occupancy rows carries no percentage');
+  assert.equal(col(dec, 'booked_avg_per_day'), '', 'nor an average');
+  assert.equal(col(dec, 'continuing'), '', 'nor a continuation count');
+  assert.match(rows[2], /the forward booking pull behind continuation reached none of this month/);
   // The held-days columns stay, because they are what proves the blank is a blank and not a zero.
-  assert.equal(dec[10], '3');
-  assert.equal(dec[11], '22');
+  assert.equal(col(dec, 'operating_days_held'), '0');
+  assert.equal(col(dec, 'operating_days_in_month'), '22');
+});
+
+// The regression this exists for. Before 18 September 2026 a month was hidden when the roll ended inside
+// it and left "more than a week" uncounted — and on live data that hid Bardia's March 2027, which had 150
+// of 195 children continuing and ONE child unresolved, behind a dot saying nobody had booked that far
+// ahead. A fully-measured month must never be blanked on the strength of where the roll happens to end.
+test('a month the pull only partly covers is measured, not blanked', () => {
+  const m = require('../services/metrics');
+  const SNAP = '2026-09-18';
+  db.prepare('DELETE FROM coe_continuing').run();
+  db.prepare('DELETE FROM coe_forward_horizon').run();
+  // Centre 'a' is booked to 19 March 2027 — inside March, nowhere near April.
+  db.prepare(`INSERT INTO coe_forward_horizon (snapshot_date, owna_id, enrolled, last_booking_date, horizon_children, week_from, week_to)
+              VALUES (?,?,?,?,?,?,?)`).run(SNAP, 'a', 195, '2027-03-19', 111, '2026-10-12', '2026-10-16');
+  const cal = require('../services/calendar');
+  const monthEnd = (ym) => { const [y, mo] = ym.split('-').map(Number); return ym + '-' + String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0'); };
+  const ins = db.prepare(`INSERT INTO coe_continuing (snapshot_date, owna_id, month, enrolled, continuing, not_confirmed, leaving,
+                            continuing_days, not_confirmed_days, leaving_days, operating_days, covered_days, beyond_horizon)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  for (const [month, continuing, notConfirmed] of [
+    ['2026-11', 192, 2], ['2026-12', 180, 14], ['2027-01', 178, 16],
+    ['2027-02', 150, 1], ['2027-03', 150, 1], ['2027-04', 0, 151],
+  ]) {
+    const opDays = cal.operatingDays(month + '-01', monthEnd(month));
+    const covered = '2027-03-19' >= monthEnd(month) ? opDays
+      : '2027-03-19' < month + '-01' ? 0
+      : cal.operatingDays(month + '-01', '2027-03-19');
+    ins.run(SNAP, 'a', month, 195, continuing, notConfirmed, 44, continuing * 3, notConfirmed * 3, 132, opDays, covered, covered === 0 ? 1 : 0);
+  }
+
+  const byMonth = new Map(m.coeMeasured().centres.find((c) => c.owna_id === 'a').months.map((x) => [x.month, x]));
+
+  const feb = byMonth.get('2027-02');
+  assert.equal(feb.beyond_horizon, false);
+  assert.equal(feb.partial_horizon, false, 'February is covered end to end');
+  assert.equal(feb.in_group, true);
+
+  // THE FIX. March is covered to the 19th — 15 of its 21 operating days — and 150 of 195 children are
+  // accounted for with one unresolved. It is a measurement and it must be published, marked.
+  const mar = byMonth.get('2027-03');
+  assert.equal(mar.beyond_horizon, false, 'March must not be blanked: the pull reaches most of it');
+  assert.equal(mar.partial_horizon, true, 'but it is only part of the month, and says so');
+  assert.equal(mar.covered_days, 15);
+  assert.equal(mar.operating_days, 21);
+  assert.equal(mar.thin, false, '15 days is well over a full operating week');
+  assert.equal(mar.in_group, true, 'so it counts toward the group figure');
+  assert.equal(mar.continuing_pct, 76.9);
+
+  // April is genuinely unreachable — the roll ends eleven days before it starts. This one IS a dot.
+  const apr = byMonth.get('2027-04');
+  assert.equal(apr.covered_days, 0);
+  assert.equal(apr.beyond_horizon, true);
+  assert.equal(apr.in_group, false);
+
+  // And the group figure says how many centres it covers, per month, so April's is not read as the whole.
+  const g = new Map(m.coeMeasured().group.months.map((x) => [x.month, x]));
+  assert.equal(g.get('2027-03').centres_measured, 1);
+  assert.equal(g.get('2027-03').centres_beyond, 0);
+  assert.equal(g.get('2027-04').centres_measured, 0);
+  assert.equal(g.get('2027-04').centres_beyond, 1);
+});
+
+test('a month covered by less than one operating week is reported but kept out of the group', () => {
+  const m = require('../services/metrics');
+  const SNAP = '2026-09-18';
+  const cal = require('../services/calendar');
+  // Two operating days of April: a child booked one day a week need not appear at all in that, so their
+  // absence measures the calendar, not a decision. Reported, marked, and not averaged into the group.
+  db.prepare('UPDATE coe_forward_horizon SET last_booking_date = ? WHERE snapshot_date = ? AND owna_id = ?').run('2027-04-02', SNAP, 'a');
+  const covered = cal.operatingDays('2027-04-01', '2027-04-02');
+  db.prepare('UPDATE coe_continuing SET covered_days = ?, beyond_horizon = 0, continuing = 109, not_confirmed = 37 WHERE snapshot_date = ? AND owna_id = ? AND month = ?')
+    .run(covered, SNAP, 'a', '2027-04');
+  const apr = m.coeMeasured().centres.find((c) => c.owna_id === 'a').months.find((x) => x.month === '2027-04');
+  assert.equal(apr.covered_days, 2);
+  assert.equal(apr.beyond_horizon, false, 'two days is not "reached none of"');
+  assert.equal(apr.thin, true);
+  assert.equal(apr.in_group, false, 'and a two-day average is not a month');
+  assert.ok(apr.continuing_pct > 0, 'the figure is still reported, so the reader can see what it is');
 });
 
 test('occupancy is marked where the booking data stops', () => {
@@ -175,8 +256,13 @@ test('occupancy is marked where the booking data stops', () => {
   assert.equal(nov.beyond_horizon, false);
   assert.equal(nov.horizon, '2026-11-20');
 
+  // December starts after the last COE booking, but it HOLDS eight days of its own booking rows. A
+  // horizon derived from a different OWNA pull must not blank a month that has its own evidence — that
+  // was throwing away real occupancy. It is marked understated, not emptied.
   const dec = a.months['2026-12'];
-  assert.equal(dec.beyond_horizon, true, 'December starts after the last booked day');
+  assert.equal(dec.beyond_horizon, false, 'a month with booked days of its own is not empty');
+  assert.equal(dec.partial_horizon, true, 'it is past the last booked day, so the average is understated');
+  assert.ok(dec.utilisation > 0, 'and it keeps the figure those days produce');
 
   // And with no horizon known, nothing is marked — the flags must not invent a limit.
   const bare = report.occupancyByMonth(months).find((r) => r.owna_id === 'a');

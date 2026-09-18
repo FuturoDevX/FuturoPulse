@@ -326,8 +326,9 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
       rows: r.rows ?? null,
       detail: `${r.rows} centre-months and ${r.mix_rows} mix bands over ${r.attempts - r.failed - r.empty} centres${coverage(r, "centres")}`
         + (r.empty ? `, ${r.empty} with no children` : "")
+        + (r.short_pulls ? `; ${r.short_pulls} centre(s) had an incomplete forward booking pull, so no booking horizon was recorded for them` : "")
         + (r.stops.length ? `; forward bookings stop before the window ends at ${r.stops.map((s) => `${s.name} ${s.last_booking_date}`).join(", ")}` : ""),
-      meta: { snapshot_date: r.snapshot_date, centres: r.attempts - r.failed - r.empty, stops: r.stops.length },
+      meta: { snapshot_date: r.snapshot_date, centres: r.attempts - r.failed - r.empty, stops: r.stops.length, short_pulls: r.short_pulls || 0 },
     }));
 
     // Retention purge: enforce the periods the owner approved on 14 September (services/retention.js).
@@ -683,7 +684,11 @@ async function runExitReport({ log = console.log } = {}) {
 // problem 6) and the page's available child-days are operating days.
 const COE_MIX_MAX = 5;                 // bands are 1..5 days a week; 5 is full-time
 const COE_WEEKS_TO_TRY = 8;            // candidate reference weeks from today
-const COE_TOGETHER_SHARE = 0.5;        // "the centre stopped together": same share metrics.js reports as stops_together
+// Retired 18 September 2026. This was the gate on hiding a part-covered month, and it was found to be
+// TRUE for every centre on every stored snapshot night — Austral included, whose roll is not short at all
+// — because a cohort's last bookings always cluster in the final week whatever the reason the data stops.
+// metrics.js still computes the same share for `stops_together`, but only to DESCRIBE a centre on the COE
+// page; nothing hides a measurement on the strength of it any more. See coveredDays() in runCoeSnapshot.
 
 const coeMonthEnd = (ym) => {
   const [y, mo] = ym.split("-").map(Number);
@@ -709,13 +714,13 @@ function coeWeekOf(date) {
 
 const upsertCoeContinuing = db.prepare(`
   INSERT INTO coe_continuing (snapshot_date, owna_id, month, enrolled, continuing, not_confirmed, leaving,
-    continuing_days, not_confirmed_days, leaving_days, operating_days, beyond_horizon, updated_at)
+    continuing_days, not_confirmed_days, leaving_days, operating_days, covered_days, beyond_horizon, updated_at)
   VALUES (@snapshot_date, @owna_id, @month, @enrolled, @continuing, @not_confirmed, @leaving,
-    @continuing_days, @not_confirmed_days, @leaving_days, @operating_days, @beyond_horizon, datetime('now'))
+    @continuing_days, @not_confirmed_days, @leaving_days, @operating_days, @covered_days, @beyond_horizon, datetime('now'))
   ON CONFLICT(snapshot_date, owna_id, month) DO UPDATE SET
     enrolled=@enrolled, continuing=@continuing, not_confirmed=@not_confirmed, leaving=@leaving,
     continuing_days=@continuing_days, not_confirmed_days=@not_confirmed_days, leaving_days=@leaving_days,
-    operating_days=@operating_days, beyond_horizon=@beyond_horizon, updated_at=datetime('now')
+    operating_days=@operating_days, covered_days=@covered_days, beyond_horizon=@beyond_horizon, updated_at=datetime('now')
 `);
 const upsertCoeMix = db.prepare(`
   INSERT INTO coe_booking_mix (snapshot_date, owna_id, days_per_week, children, child_days, updated_at)
@@ -746,16 +751,33 @@ async function runCoeSnapshot({ log = console.log, weeksToTry = COE_WEEKS_TO_TRY
     `SELECT owna_id, name FROM centres WHERE (opening IS NULL OR opening = 0) AND capacity > 0 ORDER BY name`
   ).all();
 
-  let rows = 0, mixRows = 0, failed = 0, empty = 0, firstError = null;
+  let rows = 0, mixRows = 0, failed = 0, empty = 0, shortPulls = 0, firstError = null;
   const stops = [];
   for (const c of centres) {
-    let kids, att;
+    let kids, att, shortPull = false;
     try {
       kids = await owna.listChildren(c.owna_id);
       // A centre OWNA reports no children for has nothing to measure, and pulling six months of its
       // bookings would only confirm that. Counted and reported rather than passed over silently.
       if (!kids || !kids.length) { empty += 1; log(`[coe] ${c.name}: OWNA returned no children — nothing measured`); continue; }
-      att = await owna.attendance(c.owna_id, today, windowTo);
+      // Detailed, because this path infers a DATE from the result. A pull that lost pages produces a
+      // last-booking date that is simply where the surviving rows ended, and that date was being
+      // published as the centre's booking horizon.
+      //
+      // Falls back to the plain call when attendanceDetailed is not available — a caller that has
+      // replaced the client (every test that exercises this function does) gets UNKNOWN completeness,
+      // which blanks nothing. The alternative is a hard dependency that reaches the live OWNA account
+      // when a stub misses it, which is exactly what it did once.
+      const detail = owna.attendanceDetailed
+        ? await owna.attendanceDetailed(c.owna_id, today, windowTo)
+        : { rows: await owna.attendance(c.owna_id, today, windowTo), chunks: [], short: [], unknown: true };
+      att = detail.rows;
+      shortPull = detail.short.length > 0;
+      if (shortPull) {
+        shortPulls += 1;
+        log(`[coe] ${c.name}: forward booking pull incomplete — ${detail.short.length} of ${detail.chunks.length} month(s) came back short`
+          + ` (${detail.short.map((x) => x.from.slice(0, 7)).join(", ")}); no booking horizon will be recorded for this centre tonight`);
+      }
     } catch (e) {
       failed += 1; firstError = firstError || errSummary(e);
       log(`[coe] ${c.name}: children/bookings pull failed: ${errSummary(e)}`);
@@ -810,33 +832,62 @@ async function runCoeSnapshot({ log = console.log, weeksToTry = COE_WEEKS_TO_TRY
     // them, and with them the evidence that the centre stopped together.
     let lastDate = null;
     for (const d of lastBooking.values()) if (!lastDate || d > lastDate) lastDate = d;
+    if (shortPull) lastDate = null;   // the maximum of an incomplete set is not a horizon
     const horizonWeek = lastDate ? coeWeekOf(lastDate) : null;
     let horizonChildren = 0;
     if (horizonWeek) for (const cid of cohort.keys()) {
       const lb = lastBooking.get(cid);
       if (lb && lb >= horizonWeek.from && lb <= horizonWeek.to) horizonChildren += 1;
     }
-    // "Stops early" means the roll does not cover a campaign month: it either leaves the month empty, or
-    // it stops INSIDE it and leaves more than a week of it uncounted. Heath Rd's roll ends on 2 April, one
-    // day into the final campaign month, so keying this on an empty month read that month as a collapse —
-    // a hard continuing count, folded into the group row, with no note to say the roll simply ends there.
-    // A month the roll misses by only a day or two at the window's edge is still measured, as every
-    // centre's pattern falls a little short of the last date; and the part-month case counts only when
-    // most of the cohort stops in that same week, which is what a roll never rolled forward looks like.
-    const stopsTogether = !!(lastDate && enrolled && horizonChildren / enrolled >= COE_TOGETHER_SHARE);
-    const notCovered = (mo) => !!lastDate && lastDate < mo.end &&
-      (lastDate < mo.start || (stopsTogether && cal.operatingDays(cal.addDays(lastDate, 1), mo.end) > 5));
-    if (monthsMeta.some(notCovered)) {
+    // HOW MUCH OF EACH MONTH THE PULL ACTUALLY REACHES.
+    //
+    // This replaced a date heuristic on 18 September 2026 that was hiding real measurements. That rule
+    // blanked a month when the roll ended inside it and left "more than a week" uncounted, gated on
+    // `stopsTogether` — at least half the cohort's last booking falling in the same week as the centre's
+    // overall last booking. Two things were wrong with it.
+    //
+    // First, stopsTogether had no discriminating power: it is TRUE for all four centres on every stored
+    // snapshot night, Austral included, whose roll reaches the end of the window and is not short at all.
+    // A cohort's last bookings always cluster in the final week, whatever the reason the data stops, so
+    // the test could never say no.
+    //
+    // Second, the tail threshold was an absolute count of operating days, so a cell flipped between a
+    // published percentage and a blank on a one-day accident. Bardia's March tail is exactly 6 operating
+    // days — one over the threshold — and it is 6 only because Good Friday and Easter Monday 2027 fall
+    // inside it. That hid 150 of Bardia's 195 children continuing through March, with one child
+    // unresolved, behind a dot that told the reader nobody had booked.
+    //
+    // What replaces it is not a heuristic. covered_days is how many of the month's operating days the
+    // pull reaches, and a month is unmeasurable only when that is zero. Everything else is measured over
+    // the part we hold, and says which part — the caller decides how to present a thin one.
+    // A horizon is only meaningful if the pull that produced it was complete. When it was not, coverage
+    // is UNKNOWN — stored as NULL, never as zero — and nothing is blanked on the strength of it. Claiming
+    // "families have not booked past here" from a pull that lost whole weeks is how six months of two
+    // centres' continuation came to be hidden behind a footnote that was not true.
+    const coveredDays = (mo) => {
+      if (shortPull) return null;                                      // unknown: do not blank anything
+      if (!lastDate || lastDate >= mo.end) return mo.operating_days;   // the pull covers the whole month
+      if (lastDate < mo.start) return 0;                               // …or none of it
+      return cal.operatingDays(mo.start, lastDate);
+    };
+    // `stops` is the reporting list — the centres whose roll is short enough to cost us a month. A roll
+    // that falls two operating days short of the window end is not that: every centre's own pattern does
+    // something like it at the edge of the pull. The threshold is the reader's, imported rather than
+    // repeated, so the list and the marks on the page can never disagree about what "too little" means.
+    const MIN_COVERED = metrics.COE_MIN_COVERED_DAYS;
+    if (!shortPull && lastDate && monthsMeta.some((mo) => coveredDays(mo) < MIN_COVERED)) {
       stops.push({ owna_id: c.owna_id, name: c.name, last_booking_date: lastDate, horizon_children: horizonChildren, enrolled });
     }
 
     const monthRows = monthsMeta.map((mo) => {
+      const covered = coveredDays(mo);
       const r = {
         snapshot_date: today, owna_id: c.owna_id, month: mo.month, enrolled,
         continuing: 0, not_confirmed: 0, leaving: 0,
         continuing_days: 0, not_confirmed_days: 0, leaving_days: 0,
         operating_days: mo.operating_days,
-        beyond_horizon: notCovered(mo) ? 1 : 0,
+        covered_days: covered,
+        beyond_horizon: covered === 0 ? 1 : 0,   // covered === null (unknown) is not zero
       };
       for (const [cid, days] of cohort) {
         const weekly = Math.min(COE_MIX_MAX, days.size) * (mo.operating_days / 5); // their own pattern, scaled
@@ -878,8 +929,9 @@ async function runCoeSnapshot({ log = console.log, weeksToTry = COE_WEEKS_TO_TRY
   }
 
   log(`[coe] ${rows} centre-months, ${mixRows} mix bands${failed ? `, ${failed} of ${centres.length} centres failed` : ""}${empty ? `, ${empty} with no children` : ""}`);
+  if (shortPulls) log(`[coe] ${shortPulls} of ${centres.length} centres had an incomplete forward booking pull — no horizon recorded for those`);
   return { ok: true, rows, mix_rows: mixRows, snapshot_date: today, window_to: windowTo,
-    attempts: centres.length, failed, empty, firstError, stops };
+    attempts: centres.length, failed, empty, short_pulls: shortPulls, firstError, stops };
 }
 
 // ===== LineLeader pipeline snapshot =====

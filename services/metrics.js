@@ -2447,6 +2447,11 @@ function coeSnapshotDate(meta) {
   return (db.prepare("SELECT MAX(snapshot_date) AS d FROM coe_continuing").get() || {}).d || null;
 }
 
+// One full operating week. Below this a month is reported but not quoted: a child who books a single day
+// a week can be absent from four consecutive days for no reason at all, so a continuing count over fewer
+// days than that measures the calendar as much as the families.
+const COE_MIN_COVERED_DAYS = 5;
+
 function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
   // Read the operating centres first: they decide WHICH night to read, not just which rows to keep.
   const meta = db.prepare(`SELECT owna_id, name, capacity, ${PLACES_SQL} AS places FROM centres WHERE (opening IS NULL OR opening = 0) AND ${PLACES_SQL} > 0 ORDER BY name`).all();
@@ -2463,12 +2468,30 @@ function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
   const centres = meta.filter((c) => contBy[c.owna_id]).map((c) => {
     const h = horizonBy[c.owna_id] || {};
     const rows = keys.map((k) => contBy[c.owna_id].find((r) => r.month === k) || null).filter(Boolean)
-      .map((r) => ({ month: r.month, operating_days: r.operating_days, enrolled: r.enrolled,
-        continuing: r.continuing, not_confirmed: r.not_confirmed, leaving: r.leaving,
-        continuing_days: r.continuing_days, not_confirmed_days: r.not_confirmed_days, leaving_days: r.leaving_days,
-        beyond_horizon: !!r.beyond_horizon,
-        continuing_pct: pct(r.continuing, r.enrolled),
-        available_days: c.places * r.operating_days })); // licensed places × operating days
+      .map((r) => {
+        // covered_days is how many of the month's operating days the forward pull reaches. A month it
+        // reaches none of is not measured (beyond_horizon). A month it reaches part of IS measured — the
+        // headcount percentage only needs each child to appear once — but it says which part.
+        // Under one full operating week is too little to stand on: a child booked one day a week need
+        // not appear at all in four days, so their absence is the calendar's doing, not a decision of
+        // theirs. Those months are measured, marked, and kept out of the group figure.
+        const covered = r.covered_days == null ? r.operating_days : r.covered_days;
+        const beyond = !!r.beyond_horizon || covered === 0;
+        const partial = !beyond && covered < r.operating_days;
+        return { month: r.month, operating_days: r.operating_days, enrolled: r.enrolled,
+          continuing: r.continuing, not_confirmed: r.not_confirmed, leaving: r.leaving,
+          continuing_days: r.continuing_days, not_confirmed_days: r.not_confirmed_days, leaving_days: r.leaving_days,
+          covered_days: covered,
+          beyond_horizon: beyond,
+          partial_horizon: partial,
+          thin: partial && covered < COE_MIN_COVERED_DAYS,
+          // The one flag a view should branch on to decide "can this be quoted as a month?". Keeping the
+          // pair (beyond_horizon, thin) straight is not a view's job, and a view that forgets the second
+          // half prints a two-day average as a month.
+          in_group: !beyond && !(partial && covered < COE_MIN_COVERED_DAYS),
+          continuing_pct: pct(r.continuing, r.enrolled),
+          available_days: c.places * r.operating_days }; // licensed places × operating days
+      });
     const mix = (mixBy[c.owna_id] || []).map((r) => ({ days_per_week: r.days_per_week, children: r.children, child_days: r.child_days }));
     const children = mix.reduce((a, b) => a + b.children, 0);
     const childDays = mix.reduce((a, b) => a + b.child_days, 0);
@@ -2487,7 +2510,7 @@ function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
       // "Stops dead": the roll ends early enough to leave a campaign month it does not cover — empty, or
       // stopped inside it with more than a week of it uncounted (services/snapshot.js sets the flag) —
       // and it ends for most of the centre in the same week. A data problem at source, not families leaving.
-      stops_early: rows.some((r) => r.beyond_horizon),
+      stops_early: rows.some((r) => !r.in_group),
       stops_together: !!(h.last_booking_date && h.enrolled && h.horizon_children / h.enrolled >= 0.5),
     };
   });
@@ -2495,7 +2518,9 @@ function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
 
   const months = keys.map((k, i) => {
     const rows = centres.map((c) => c.months[i]).filter((r) => r && r.month === k);
-    const live = rows.filter((r) => !r.beyond_horizon);
+    // A thin month is kept out of the group figure for the same reason it is marked on the centre row:
+    // it is a few days, not a month, and averaging it in would move the group number without meaning it.
+    const live = rows.filter((r) => r.in_group);
     const sum = (f) => live.reduce((a, r) => a + (r[f] || 0), 0);
     return { month: k, operating_days: rows.length ? rows[0].operating_days : 0,
       enrolled: sum("enrolled"), continuing: sum("continuing"), not_confirmed: sum("not_confirmed"), leaving: sum("leaving"),
@@ -2504,7 +2529,11 @@ function coeMeasured(keys = coeMonthKeys(), targets = occupancyTargets()) {
       leaving_days: Math.round(sum("leaving_days") * 10) / 10,
       continuing_pct: pct(sum("continuing"), sum("enrolled")),
       available_days: live.reduce((a, r) => a + (r.available_days || 0), 0),
-      centres_measured: live.length, centres_beyond: rows.length - live.length };
+      // centres_beyond keeps its meaning for every existing caller: how many centres are NOT in this
+      // figure. centres_partial and centres_thin say why, so a page can print it.
+      centres_measured: live.length, centres_beyond: rows.length - live.length,
+      centres_partial: live.filter((r) => r.partial_horizon).length,
+      centres_thin: rows.filter((r) => r.thin).length };
   });
   const mix = [1, 2, 3, 4, 5].map((d) => ({ days_per_week: d,
     children: centres.reduce((a, c) => a + ((c.mix.find((x) => x.days_per_week === d) || {}).children || 0), 0),
@@ -2781,3 +2810,7 @@ module.exports = {
   talentReport, talentLatestMonth, talentTurnoverPct, talentPayScales,
   TALENT_WINDOW, PAY_CATEGORIES,
 };
+
+// Shared with services/snapshot.js so the threshold behind a mark and the threshold behind the
+// "forward bookings stop" report are one number, not two that can drift apart.
+module.exports.COE_MIN_COVERED_DAYS = COE_MIN_COVERED_DAYS;

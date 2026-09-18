@@ -54,6 +54,17 @@ function initSchema(db) {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
     if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
   };
+  // covered_days: how much of each month the forward booking pull actually reached. Added 18 September
+  // 2026 when beyond_horizon was found to be hiding fully-measured months (see docs/outstanding.md).
+  // Rows written before this release carry 0 and are rewritten by the next COE snapshot.
+  // covered_days must be NULLABLE: NULL means "written before coverage was measured", which is not the
+  // same fact as zero (zero means the pull genuinely reached none of that month). A pre-release build
+  // added it NOT NULL DEFAULT 0, which cannot express the difference — rebuild it if we find that shape.
+  // Nothing is lost: in that shape every value is the default and carries no information.
+  const coveredCol = db.prepare("PRAGMA table_info(coe_continuing)").all().find((c) => c.name === "covered_days");
+  if (coveredCol && coveredCol.notnull) db.exec("ALTER TABLE coe_continuing DROP COLUMN covered_days");
+  addColumnIfMissing("coe_continuing", "covered_days", "INTEGER");
+  backfillCoeCoverage(db);
   addColumnIfMissing("centres", "ll_id", "INTEGER");
   addColumnIfMissing("centres", "opening", "INTEGER DEFAULT 0");
   addColumnIfMissing("centres", "opening_year", "INTEGER");
@@ -310,3 +321,47 @@ function initSchema(db) {
 }
 
 module.exports = { initSchema, leaveTotals };
+
+
+// Recompute coe_continuing.covered_days and beyond_horizon for rows written before 18 September 2026.
+//
+// Until that date a month was hidden by a date heuristic that asked whether the centre's roll ended
+// "more than a week" before the month's end, gated on a share that turned out to be true for every
+// centre every night. It was hiding fully-measured months: Bardia's March 2027 had 150 of 195 children
+// continuing with ONE unresolved, and the page showed a dot saying nobody had booked that far ahead.
+//
+// Nothing here is re-fetched or estimated. covered_days is recomputed from two things already stored —
+// the centre's last booking date in coe_forward_horizon and the NSW operating-day calendar — so this is
+// the same arithmetic the snapshot now does, applied to rows that predate it. Only rows that have never
+// had a coverage figure are touched, so it runs once and is a no-op on every later boot.
+function backfillCoeCoverage(db) {
+  const pending = db.prepare("SELECT COUNT(*) AS n FROM coe_continuing WHERE covered_days IS NULL").get();
+  if (!pending || !pending.n) return;
+  const cal = require("../services/calendar");
+  const monthEnd = (ym) => {
+    const [y, m] = ym.split("-").map(Number);
+    return ym + "-" + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0");
+  };
+  const rows = db.prepare(`
+    SELECT c.snapshot_date, c.owna_id, c.month, c.operating_days, h.last_booking_date
+    FROM coe_continuing c
+    LEFT JOIN coe_forward_horizon h
+      ON h.snapshot_date = c.snapshot_date AND h.owna_id = c.owna_id
+    WHERE c.covered_days IS NULL
+  `).all();
+  const upd = db.prepare("UPDATE coe_continuing SET covered_days = ?, beyond_horizon = ? WHERE snapshot_date = ? AND owna_id = ? AND month = ?");
+  let changed = 0;
+  db.transaction(() => {
+    for (const r of rows) {
+      const start = r.month + "-01", end = monthEnd(r.month);
+      const last = r.last_booking_date;
+      // No horizon recorded for that night means the pull was never short: the month is fully covered.
+      const covered = !last || last >= end ? r.operating_days
+        : last < start ? 0
+        : cal.operatingDays(start, last);
+      upd.run(covered, covered === 0 ? 1 : 0, r.snapshot_date, r.owna_id, r.month);
+      changed += 1;
+    }
+  })();
+  if (changed) console.log(`[schema] COE coverage backfilled for ${changed} centre-month row(s)`);
+}

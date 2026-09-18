@@ -454,7 +454,8 @@ CREATE TABLE IF NOT EXISTS coe_continuing (
   not_confirmed_days REAL NOT NULL DEFAULT 0,     -- what those children would be worth at their own pattern
   leaving_days       REAL NOT NULL DEFAULT 0,     -- what the leavers take with them, at their own pattern
   operating_days     INTEGER NOT NULL DEFAULT 0,  -- NSW operating days in the month, for the reader
-  beyond_horizon     INTEGER NOT NULL DEFAULT 0,  -- 1 = the centre's bookings do not reach this month at all
+  covered_days       INTEGER,                     -- operating days of the month the forward pull reaches; NULL = written before this was measured
+  beyond_horizon     INTEGER NOT NULL DEFAULT 0,  -- 1 = the pull reaches NONE of this month, so nothing was measured
   updated_at         TEXT,
   PRIMARY KEY (snapshot_date, owna_id, month)
 );

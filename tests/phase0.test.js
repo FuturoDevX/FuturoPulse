@@ -45,7 +45,7 @@ test('Phase 0 regression suite',async(t)=>{
   lineleader.hasCreds=()=>false;
   owna.listCentres=async()=>[{id:'a',name:'Centre Alpha',children:1,closed:false}];
   owna.listRooms=async()=>[{id:'r1',name:'Room 1',capacity:20}];
-  owna.attendance=async()=>[{attendanceDate:'2026-09-07T00:00:00Z',attending:true,casualBooking:false,fee:120}];
+  owna.attendance=async()=>[{attendanceDate:'2026-09-07T00:00:00Z',attending:true,casualBooking:false,fee:120}];owna.attendanceDetailed=async(...a)=>({rows:await owna.attendance(...a),chunks:[],short:[]});
   owna.ccsPayments=async()=>[];
   owna.listChildren=async()=>[];owna.weeklyRoster=async()=>null;owna.childIncidents=async()=>[];
   eh.hasCreds=()=>true;eh.allEmployees=async()=>[];eh.payRuns=async()=>{throw new Error('EH 502 /api/v2/business/1/payrun');};
@@ -81,7 +81,7 @@ test('Phase 0 regression suite',async(t)=>{
   html=await (await request('/wages',c)).text();assert.match(html,/Payroll import failed/);assert.match(html,/last successful import/);assert.match(html,/pay periods to 6 Sept? 2026/);
   const st=await request('/admin/status',c);assert.equal(st.status,200);const js=await st.json();assert.ok(js.sources.some(s=>s.source==='eh_labour'&&s.status==='error'));
   // Per-centre loops: a total OWNA outage on roster/incidents is an error, a partial one is noted, exits stay ok.
-  owna.listCentres=async()=>[{id:'a',name:'Centre Alpha'},{id:'b',name:'Centre Beta'}];owna.listRooms=async()=>[];owna.attendance=async()=>[];owna.ccsPayments=async()=>[];
+  owna.listCentres=async()=>[{id:'a',name:'Centre Alpha'},{id:'b',name:'Centre Beta'}];owna.listRooms=async()=>[];owna.attendance=async()=>[];owna.attendanceDetailed=async()=>({rows:[],chunks:[],short:[]});owna.ccsPayments=async()=>[];
   owna.weeklyRoster=async()=>{throw new Error('OWNA 403 /api/roster');};owna.childIncidents=async(id)=>{if(id==='a')throw new Error('OWNA 500 /api/children/incident');return [];};
   eh.hasCreds=()=>false;
   const r4=await runSnapshot({log:()=>{}});assert.equal(r4.status,'partial');

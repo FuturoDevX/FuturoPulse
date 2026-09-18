@@ -161,7 +161,7 @@
           <td><a class="row-link" href="/centre/<%= c.owna_id %>"><%= shortName(c.name) %></a><br><span class="muted" style="font-size:11.5px;"><%= c.avg_days_per_child.toFixed(1) %> days per child per week</span></td>
           <td class="num"><%= fmt(c.enrolled) %></td>
           <% c.months.forEach(function(x){ %>
-            <% if (x.beyond_horizon) { %>
+            <% if (!x.in_group) { %>
               <td class="num muted" title="This centre has no bookings after <%= dLong(c.last_booking_date) %> — not measurable, and not a collapse">—</td>
             <% } else { %>
               <td class="num" title="<%= x.continuing %> continuing · <%= x.not_confirmed %> not yet confirmed · <%= x.leaving %> leaving · <%= fmt(x.continuing_days) %> child-days booked"><strong><%= fmt(x.continuing) %></strong><br><span class="muted" style="font-size:11.5px;"><%= x.continuing_pct %>%</span></td>
