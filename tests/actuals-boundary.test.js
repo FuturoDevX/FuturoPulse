@@ -130,6 +130,8 @@ test('the per-source record wins over the run row, and a run that wrote nothing 
 // as "no rows". Every pull returned zero, the nightly run recorded itself as ok, and the feed was dead
 // for eight days before anyone noticed.
 test('a non-JSON 200 is rejected, and names the filter when it is one', async () => {
+  process.env.OWNA_RETRIES = '0';
+  delete require.cache[require.resolve('../services/owna')];
   const { apiGet } = require('../services/owna');
   const real = global.fetch;
   const BLOCK = '<!DOCTYPE html><html><head><title>Website Filtered</title>' +

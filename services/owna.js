@@ -14,7 +14,40 @@ if (!KEY) {
   console.warn("[owna] OWNA_API_KEY is not set — API calls will fail. Fill it into .env.");
 }
 
-async function apiGet(path, { query } = {}) {
+// Futuro runs a DNS-filtering agent on the machine itself (the resolver is 127.0.0.1), and it decides
+// per lookup. Even with api.owna.com.au allow-listed the verdict flaps: a single probe succeeds five
+// times out of five, then the next minute the same call is intercepted. A nightly snapshot makes several
+// hundred calls, so it will meet a blocked moment almost every run — and one was enough to kill it.
+//
+// Two shapes to survive, both transient and both worth retrying:
+//   · the interception itself, which fails the TLS handshake (UNABLE_TO_VERIFY_LEAF_SIGNATURE) because
+//     the agent presents its own certificate and Node ships its own CA list
+//   · the block page, HTTP 200 with a "Website Filtered" body
+// A 4xx from OWNA is NOT retried — that is OWNA answering, and asking again will not change its mind.
+const RETRIES = Number(process.env.OWNA_RETRIES || 4);
+const RETRY_BASE_MS = Number(process.env.OWNA_RETRY_MS || 1500);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function transient(e) {
+  if (e && e.notJson && e.filtered) return true;
+  const code = (e && e.cause && e.cause.code) || (e && e.code) || "";
+  return /UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED|CERT_|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ECONNREFUSED/.test(String(code))
+    || /fetch failed/i.test(String(e && e.message));
+}
+
+async function apiGet(path, opts = {}) {
+  let last;
+  for (let attempt = 0; attempt <= RETRIES; attempt++) {
+    try { return await apiGetOnce(path, opts); }
+    catch (e) {
+      last = e;
+      if (!transient(e) || attempt === RETRIES) throw e;
+      await sleep(RETRY_BASE_MS * Math.pow(2, attempt));   // 1.5s, 3s, 6s, 12s
+    }
+  }
+  throw last;
+}
+
+async function apiGetOnce(path, { query } = {}) {
   const url = new URL(BASE + path);
   if (query) for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== null) url.searchParams.set(k, v);
@@ -43,6 +76,7 @@ async function apiGet(path, { query } = {}) {
     );
     err.status = res.status;
     err.notJson = true;
+    err.filtered = filtered;
     throw err;
   }
   return body;
