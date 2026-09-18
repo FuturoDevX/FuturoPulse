@@ -38,7 +38,7 @@
   <div>
     <h1>Enrolment — board report</h1>
     <p class="muted" style="margin:4px 0 0;font-size:13px;">
-      Continuation, occupancy, waitlist and enquiry flow across every centre.
+      Booked occupancy, waitlist and enquiry flow across every centre.
       <br>
       OWNA actuals to <strong><%= M.owna_as_at %></strong><% if (M.owna_lag_days > 1) { %>
         <span class="badge warn" style="margin-left:6px;"><%= M.owna_lag_days %> days behind</span><% } %>
@@ -100,7 +100,7 @@
       <% } %>
       <% if (coeBad) { %>
         <li><strong>Continuation of enrolment</strong> — <%= cS.status %><% if (cS.detail) { %>: <%= cS.detail %><% } %>.
-          Last complete pull <%= cS.last_success || 'never' %>. The continuation table below is from that pull,
+          Last complete pull <%= cS.last_success || 'never' %>. The continuation feed is from that pull,
           and the booking horizons with it.</li>
       <% } %>
       <% if (locals.refreshError) { %><li><strong>Last refresh from this page</strong> failed: <%= refreshError %></li><% } %>
@@ -141,105 +141,15 @@
   </div>
 <% } %>
 
-<%# ---------------------------------------------------------------- 1. Continuation ------------- %>
-<section class="rep-sec">
-  <div class="card">
-    <div class="card-head">
-      <h2>Continuation of enrolment</h2>
-      <span class="muted" style="font-size:13px;">
-        <%= M.coe ? M.coe.group.places : '—' %> approved places ·
-        <%= M.coe && M.coe.group.months[0] ? num(M.coe.group.months[0].enrolled) : '—' %> children enrolled today
-      </span>
-    </div>
-    <p class="muted" style="margin:-4px 0 14px;font-size:13px;max-width:70ch;">
-      Of the children enrolled today, the share still holding a booking in each month ahead. It measures
-      retention only — a child who starts next month is not in it.
-    </p>
-
-    <% if (!M.coe) { %>
-      <p class="muted">No OWNA snapshot has completed, so there is nothing to measure.</p>
-    <% } else { %>
-      <%- include('partials/linechart', { lc: {
-        labels: M.coe.group.months.map((m) => mlabel(m.month)),
-        series: [{ name: 'Group continuation', points: M.coe.group.months.map((m) => m.continuing_pct) }],
-        height: 170, suf: '%'
-      } }) %>
-
-      <div class="table-scroll"><table style="margin-top:18px;">
-        <thead>
-          <tr>
-            <th style="text-align:left;">Centre</th>
-            <th style="text-align:right;">Enrolled</th>
-            <% months.forEach(function (ym) { %><th style="text-align:right;"><%= mlabel(ym) %></th><% }); %>
-          </tr>
-        </thead>
-        <tbody>
-          <% M.coe.centres.forEach(function (c) {
-               const byM = new Map(c.months.map((x) => [x.month, x])); %>
-            <tr>
-              <td><%= c.name.replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, '') %></td>
-              <td style="text-align:right;"><%= num(c.enrolled) %></td>
-              <% months.forEach(function (ym) { const x = byM.get(ym); %>
-                <% if (!x || x.beyond_horizon) { %>
-                  <td style="text-align:right;" class="muted" title="The forward booking pull reaches none of this month for this centre, so nothing was measured. That is a limit of the data held, not a count of zero.">·</td>
-                <% } else if (x.thin) { %>
-                  <td style="text-align:right;" class="muted" title="Measured over only <%= x.covered_days %> of <%= x.operating_days %> operating days — under one full week, so a child who books one day a week need not appear at all. Not counted in the group figure."><%= pct(x.continuing_pct) %><span class="thin-mark">†*</span></td>
-                <% } else if (x.partial_horizon) { %>
-                  <td style="text-align:right;" title="Measured over <%= x.covered_days %> of <%= x.operating_days %> operating days — the forward bookings held for this centre stop partway through the month."><span class="rep-pct <%= coeRag(x.continuing_pct) %>"><%= pct(x.continuing_pct) %></span><span class="thin-mark">†</span></td>
-                <% } else { %>
-                  <td style="text-align:right;"><span class="rep-pct <%= coeRag(x.continuing_pct) %>"><%= pct(x.continuing_pct) %></span></td>
-                <% } %>
-              <% }); %>
-            </tr>
-          <% }); %>
-          <tr class="total-row">
-            <td><strong>Group</strong></td>
-            <td style="text-align:right;"><strong><%= num(M.coe.group.months[0] ? M.coe.group.months[0].enrolled : null) %></strong></td>
-            <% const gByM = new Map(M.coe.group.months.map((x) => [x.month, x])); %>
-            <%# The group figure silently changed denominator from column to column: April averaged one
-                centre while the Enrolled beside it still read 767. Say what each column covers. %>
-            <% months.forEach(function (ym) { const x = gByM.get(ym); %>
-              <td style="text-align:right;">
-                <strong><%= x ? pct(x.continuing_pct) : '—' %></strong><% if (x && x.centres_beyond) { %><span class="thin-mark" title="<%= x.centres_measured %> of <%= x.centres_measured + x.centres_beyond %> centres, covering <%= num(x.enrolled) %> of the <%= num(M.coe.group.months[0].enrolled) %> children enrolled">‡</span><% } %>
-              </td>
-            <% }); %>
-          </tr>
-          <tr>
-            <td class="muted" style="font-size:12px;">Centres in the figure</td>
-            <td></td>
-            <% months.forEach(function (ym) { const x = gByM.get(ym); %>
-              <td style="text-align:right;" class="muted"><span style="font-size:12px;"><%= x ? x.centres_measured + ' of ' + (x.centres_measured + x.centres_beyond) : '—' %></span></td>
-            <% }); %>
-          </tr>
-        </tbody>
-      </table></div>
-      <p class="muted" style="margin:10px 0 0;font-size:12px;">
-        <strong>·</strong> the forward booking pull reaches none of that month for that centre, so nothing
-        was measured. It is a limit of the data held, not a count of zero, and it is not evidence that
-        families have not booked — only that we hold no bookings there.
-        <strong>†</strong> measured over part of the month, because the forward bookings held for that
-        centre stop partway through it; the percentage counts every child who appears at least once, so it
-        holds up, but the child-day totals behind it are understated.
-        <strong>†*</strong> under one full operating week held — reported, but kept out of the group figure
-        and not to be quoted.
-        <strong>‡</strong> the group figure for that month covers fewer than all four centres.
-        <br>
-        Forward bookings held today reach:
-        <%= M.coe.centres.map((c) => c.name.replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, '') + ' ' + (c.last_booking_date || '—')).join(' · ') %>
-      </p>
-    <% } %>
-  </div>
-</section>
-
 <%# ---------------------------------------------------------------- 2. Occupancy ---------------- %>
 <section class="rep-sec">
   <div class="card">
-    <div class="card-head"><h2>Booked occupancy, same months</h2></div>
+    <div class="card-head"><h2>Booked occupancy by month</h2></div>
     <p class="muted" style="margin:-4px 0 14px;font-size:13px;max-width:70ch;">
-      Average children booked per operating day against approved places — everyone booked, including
-      children who have not started yet. A centre can show continuation well below 100% and occupancy at
-      or above it in the same month: those children finish, and their places are already re-booked.
-      Read the two tables together.
+      Booked child-days divided by approved places × operating days with records held.
+      Includes future starters and bookings for absent children; this is not physical attendance.
+      Coverage is shown beneath every percentage. Partial coverage is not a full-month forecast,
+      and missing records do not establish that places are unbooked.
     </p>
     <div class="table-scroll"><table>
       <thead>
@@ -256,15 +166,12 @@
             <td style="text-align:right;"><%= o.places %></td>
             <% months.forEach(function (ym) { const x = o.months[ym]; %>
               <% if (!x || x.beyond_horizon) { %>
-                <td style="text-align:right;" class="muted" title="Past <%= o.horizon || 'the last booked day' %> — nobody has booked this far ahead yet, so there is nothing to count.">·</td>
-              <% } else if (x.partial_horizon) { %>
-                <%# Heath Rd's April holds two of twenty-two days AND runs past its last booked day. Both
-                    marks show, or the thinner of the two reasons disappears behind the other. %>
-                <td style="text-align:right;" class="muted" title="This month runs past the last booked day (<%= x.horizon %>), so the average is dragged down by days nobody has booked yet.<%= x.thin ? ' Only ' + x.days_with_rows + ' of ' + x.operating_days + ' operating days are held, too.' : '' %>"><%= pct(x.utilisation) %><span class="thin-mark">†<%= x.thin ? '*' : '' %></span></td>
-              <% } else if (x.thin) { %>
-                <td style="text-align:right;" class="muted" title="Only <%= x.days_with_rows %> of <%= x.operating_days %> operating days held — too thin to quote."><%= pct(x.utilisation) %><span class="thin-mark">*</span></td>
-              <% } else { %>
-                <td style="text-align:right;" title="<%= x.avg_booked %> children/day over <%= x.days_with_rows %> of <%= x.operating_days %> operating days"><span class="rep-pct <%= occRag(x.utilisation) %>"><%= pct(x.utilisation) %></span></td>
+                <td style="text-align:right;" class="muted" title="No booking records held for this month. This does not establish zero occupancy or no future bookings.">—<small style="display:block;">No data held</small></td>
+              <% } else { const partial = x.days_with_rows < x.operating_days; %>
+                <td style="text-align:right;" title="<%= x.avg_booked %> booked children per recorded operating day. Missing days are not treated as zero; completeness of each day's records is not established by this count.">
+                  <span class="<%= partial ? 'muted' : 'rep-pct ' + occRag(x.utilisation) %>"><%= pct(x.utilisation) %></span>
+                  <small style="display:block;"><%= x.days_with_rows %> / <%= x.operating_days %> days<%= partial ? ' · Partial month' : ' with records' %></small>
+                </td>
               <% } %>
             <% }); %>
           </tr>
@@ -272,11 +179,12 @@
       </tbody>
     </table></div>
     <p class="muted" style="margin:10px 0 0;font-size:12px;">
-      <strong>·</strong> past that centre's last booked day — nobody has booked that far ahead yet, so
-      there is nothing to count. <strong>†</strong> the month runs past it, so the average is dragged down
-      by days nobody has booked. <strong>*</strong> fewer than two thirds of that month's operating days
-      are held in the snapshot: the percentage is real for the days we have, but it is not a month.
-      Every percentage divides by the operating days actually held, never by the days in the month.
+      <strong>Partial month</strong> means records are held for fewer than the month's operating days.
+      The percentage describes only the days held, not the whole month. Missing days are excluded from
+      the calculation, not counted as zero. Missing records may reflect bookings not yet generated or an
+      incomplete data pull; this report cannot determine the cause. Even full day coverage does not
+      independently verify that every booking was returned. Capacity uses approved places; OWNA reports
+      configured to use room capacity may use a different denominator.
     </p>
   </div>
 </section>

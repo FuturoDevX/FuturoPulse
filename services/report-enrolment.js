@@ -220,9 +220,9 @@ function csv(model) {
       }
       else if (mo.thin) notes.push("continuation measured over only " + mo.covered_days + " of " + mo.operating_days + " operating days — do not quote, and not in the group figure");
       else if (mo.partial_horizon) notes.push("continuation measured over " + mo.covered_days + " of " + mo.operating_days + " operating days");
-      if (om && om.beyond_horizon) notes.push("occupancy beyond this centre's booking horizon (" + om.horizon + ")");
-      else if (om && om.partial_horizon) notes.push("month runs past the last booked day (" + om.horizon + ") — occupancy understated");
-      if (om && om.thin && !om.beyond_horizon) notes.push("thin coverage — do not quote");
+      if (om && om.beyond_horizon) notes.push("no occupancy records held — not evidence of zero occupancy or no bookings");
+      else if (om && om.partial_horizon) notes.push("month extends beyond the latest booking date held by the continuation feed; missing records do not establish unbooked places");
+      if (om && !om.beyond_horizon && om.days_with_rows < om.operating_days) notes.push("partial month: " + om.days_with_rows + " of " + om.operating_days + " operating days with records; percentage covers held days only, not a full-month forecast");
       out.push([
         q(SHORT(c.name)), mo.month,
         mo.beyond_horizon ? "" : mo.enrolled,

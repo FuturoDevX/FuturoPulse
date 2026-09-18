@@ -58,7 +58,10 @@ test('board report', async (t) => {
       // The whole COE half is null until a snapshot completes. The page must still be readable rather
       // than 500 — this is the state a new environment is in.
       const html = await (await request('/reports/enrolment', await login('admin'))).text();
-      assert.match(html, /No OWNA snapshot has completed/);
+      assert.doesNotMatch(html, /<h2>Continuation of enrolment<\/h2>/);
+      assert.match(html, /Booked occupancy by month/);
+      assert.match(html, /Partial month/);
+      assert.doesNotMatch(html, /nobody has booked|occupancy understated|average is dragged down/);
       assert.match(html, /Enrolment — board report/);
     });
 
