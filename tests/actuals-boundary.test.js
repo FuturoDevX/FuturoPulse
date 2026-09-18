@@ -122,3 +122,39 @@ test('the per-source record wins over the run row, and a run that wrote nothing 
   freeze(NOW, () => assert.equal(m.lastActualDate(), '2026-09-15',
     'the feed’s own record is the narrower, truer answer'));
 });
+
+// ===== A filtered response is a failure, not an empty answer =====
+// Futuro's network runs a DNS filter that intercepts api.owna.com.au and answers with its own block
+// page: HTTP 200, content-type text/html, a 515-byte "Website Filtered" document. The client parsed
+// that with JSON.parse, caught the throw, and handed the HTML back as a STRING — which getAll() read
+// as "no rows". Every pull returned zero, the nightly run recorded itself as ok, and the feed was dead
+// for eight days before anyone noticed.
+test('a non-JSON 200 is rejected, and names the filter when it is one', async () => {
+  const { apiGet } = require('../services/owna');
+  const real = global.fetch;
+  const BLOCK = '<!DOCTYPE html><html><head><title>Website Filtered</title>' +
+    '<link href="https://blocked.dnsfilter.com/main.css" rel="stylesheet"></head><body></body></html>';
+  try {
+    global.fetch = async () => new Response(BLOCK, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    await assert.rejects(() => apiGet('/api/centre/list'), (e) => {
+      assert.equal(e.notJson, true, 'flagged as a non-JSON response');
+      assert.match(e.message, /expected JSON, got text\/html/);
+      assert.match(e.message, /block page/, 'and says a filter did it, so nobody hunts the wrong bug');
+      return true;
+    });
+
+    // A plain non-JSON body still fails, just without the filter wording.
+    global.fetch = async () => new Response('not json', { status: 200, headers: { 'content-type': 'text/plain' } });
+    await assert.rejects(() => apiGet('/api/centre/list'), (e) => {
+      assert.equal(e.notJson, true);
+      assert.doesNotMatch(e.message, /block page/);
+      return true;
+    });
+
+    // And real JSON still comes back untouched.
+    global.fetch = async () => new Response(JSON.stringify({ data: [{ id: 'a' }], totalCount: 1 }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    const ok = await apiGet('/api/centre/list');
+    assert.equal(ok.data.length, 1);
+  } finally { global.fetch = real; }
+});

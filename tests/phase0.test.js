@@ -42,7 +42,12 @@ test('Phase 0 regression suite',async(t)=>{
   assert.doesNotMatch(errSummary(new TypeError('Headers.append: "zzz-unknown-value" is an invalid header value.')),/zzz-unknown/);
   assert.equal(errSummary(new Error('OWNA 500 /api/centres')),'OWNA 500 /api/centres');
   // No network: every upstream the snapshot touches is stubbed (the repo .env may hold real credentials).
-  lineleader.hasCreds=()=>false;owna.listCentres=async()=>[];owna.listChildren=async()=>[];owna.weeklyRoster=async()=>null;owna.childIncidents=async()=>[];
+  lineleader.hasCreds=()=>false;
+  owna.listCentres=async()=>[{id:'a',name:'Centre Alpha',children:1,closed:false}];
+  owna.listRooms=async()=>[{id:'r1',name:'Room 1',capacity:20}];
+  owna.attendance=async()=>[{attendanceDate:'2026-09-07T00:00:00Z',attending:true,casualBooking:false,fee:120}];
+  owna.ccsPayments=async()=>[];
+  owna.listChildren=async()=>[];owna.weeklyRoster=async()=>null;owna.childIncidents=async()=>[];
   eh.hasCreds=()=>true;eh.allEmployees=async()=>[];eh.payRuns=async()=>{throw new Error('EH 502 /api/v2/business/1/payrun');};
   const logs=[];const r1=await runSnapshot({log:(m)=>logs.push(m)});
   assert.equal(r1.status,'partial');

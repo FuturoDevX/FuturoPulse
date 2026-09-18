@@ -22,11 +22,27 @@ async function apiGet(path, { query } = {}) {
   const res = await fetch(url, { headers: { "x-api-key": KEY, Accept: "application/json" } });
   const text = await res.text();
   let body;
-  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  try { body = text ? JSON.parse(text) : null; } catch { body = undefined; }
   if (!res.ok) {
     // Status + path only. Never include the response body — it may contain children's or staff records.
     const err = new Error(`OWNA ${res.status} ${path}`);
     err.status = res.status;
+    throw err;
+  }
+  // A 200 is not the same as an answer. Futuro's network runs a DNS filter that intercepts this host and
+  // serves its own block page — HTTP 200, content-type text/html, a 515-byte "Website Filtered" document.
+  // This used to be caught by JSON.parse and then handed back as a STRING, which getAll() read as "no
+  // rows": every pull returned zero, the nightly run recorded itself as ok, and the feed was dead for
+  // eight days before anyone noticed. A response that is not JSON is a failure, and says which host did it.
+  if (body === undefined) {
+    const ct = res.headers.get("content-type") || "no content-type";
+    const filtered = /dnsfilter|website filtered|blocked/i.test(text);
+    const err = new Error(
+      `OWNA ${path}: expected JSON, got ${ct}` +
+      (filtered ? " — this looks like a network filter's block page, not OWNA. The host is being intercepted." : "")
+    );
+    err.status = res.status;
+    err.notJson = true;
     throw err;
   }
   return body;

@@ -132,6 +132,14 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
   try {
     const centres = await owna.listCentres();
     log(`[snapshot] ${centres.length} centres, window ${from} → ${to}`);
+    // Zero centres is never a real answer — Futuro has four operating services and OWNA has always
+    // returned them. It means the call did not reach OWNA, and the run must fail loudly rather than
+    // walk an empty loop and record itself as a success with nothing written. That is precisely what
+    // happened on 18 September 2026: a DNS filter answered with its own block page, every pull came
+    // back empty, and the run reported ok.
+    if (!centres.length) {
+      throw new Error("OWNA returned no centres — the pull did not reach OWNA. Nothing was written.");
+    }
 
     for (const c of centres) {
       const capacity = await centreCapacity(c.id);
@@ -297,6 +305,9 @@ async function runSnapshot({ windowDays = WINDOW_DAYS, forwardDays = FORWARD_DAY
       meta: { at: r.at, removed: r.removed, cutoffs: r.cutoffs },
     }));
 
+    // A run that wrote no day-rows did not observe anything, whatever its steps reported. Calling that
+    // "ok" is what let lastActualDate() believe the feed was current when it had fetched nothing.
+    if (!rowsWritten) problems.push("no day-rows written — OWNA returned nothing for any centre");
     const status = problems.length ? "partial" : "ok";
     db.prepare(
       `UPDATE snapshot_runs SET finished_at=datetime('now'), status=?, rows_written=?, note=? WHERE id=?`
