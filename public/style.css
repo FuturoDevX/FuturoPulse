@@ -784,6 +784,24 @@ tbody .total-row td { font-weight: 700; border-top: 2px solid var(--border); bac
   h1 { font-size: 21px; }
   h2 { font-size: 15px; }
   table { font-size: 11px; }
+  /* Board report: print has no horizontal scrolling. Keep chart endpoints and
+     the fanned marketing pins inside the printable width, and show whole dates. */
+  .rep-sec .table-scroll { overflow: visible; }
+  .rep-sec table { width: 100%; }
+  .rep-sec th, .rep-sec td { white-space: normal; overflow-wrap: normal; }
+  .rep-sec .lc { box-sizing: border-box; padding-right: 38px; break-inside: avoid; }
+  .rep-sec .lc svg { overflow: visible; }
+  .rep-sec .lc-xaxis span:empty { display: none; }
+  .rep-sec .lc-xaxis span { flex: 0 0 auto; overflow: visible; }
+  .rep-sec .mk-strip { margin-right: 38px; }
+  /* Split the collection between centres, keeping each centre's chart intact. */
+  .rep-sec:has(.open-block), .rep-sec:has(.open-block) > .card {
+    break-inside: auto; page-break-inside: auto;
+  }
+  .rep-sec .open-block { break-inside: avoid; page-break-inside: avoid; }
+  .rep-sec h2, .rep-sec h3 { break-after: avoid; }
+  .rep-sec thead { display: table-header-group; }
+  .rep-sec tr { break-inside: avoid; }
   .print-foot { display: block; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
