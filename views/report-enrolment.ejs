@@ -1,0 +1,443 @@
+<%- include('partials/header', { title: 'Board report' }) %>
+<%
+  // The board report. Three measures that answer different halves of one question, on one page:
+  //   COE       — of the children enrolled today, how many hold a booking into each month
+  //   Occupancy — how many children are booked in each month at all, new starters included
+  //   Enquiries — what is arriving weekly, and how far it gets
+  // The first two are printed together deliberately. Read alone, continuation under 100% looks like a
+  // centre emptying; occupancy alone hides the churn underneath it.
+  const M = model;
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mlabel = (ym) => { const p = String(ym).split('-'); return MON[+p[1]-1] + ' ' + p[0].slice(2); };
+  const wlabel = (d) => { const p = String(d).split('-'); return (+p[2]) + ' ' + MON[+p[1]-1]; };
+  const pct = (v) => v == null ? '—' : (Math.round(v * 10) / 10) + '%';
+  const num = (v) => v == null ? '—' : Number(v).toLocaleString('en-AU');
+  // Continuation bands. 95 and 88 are read off this group's own spread, not a sector standard — they
+  // separate the months that need no comment from the ones that do.
+  const coeRag = (v) => v == null ? '' : v >= 95 ? 'good' : v >= 88 ? 'warn' : 'bad';
+  const occRag = (v) => v == null ? '' : v >= 95 ? 'good' : v >= 85 ? 'warn' : 'bad';
+  const months = M.coe_months || [];
+  const occById = new Map(M.occupancy.map((o) => [o.owna_id, o]));
+  const chanLabel = { event:'Event', print:'Print', signage:'Signage', social:'Social', partner:'Partner', digital:'Digital', other:'Other' };
+  // The same colours the pins and the key use, as CSS variables the chart can put in a stroke.
+  const chanColor = { event:'var(--plum)', print:'var(--warn)', signage:'var(--sage)', social:'var(--brand-mid)',
+                      partner:'var(--bad)', digital:'var(--brand-ink)', other:'var(--fill-muted)' };
+  // A vertical rule per initiative, standing on the week it started.
+  const marksFor = (ws) => {
+    const out = [];
+    ws.forEach(function (w, i) {
+      (w.initiatives || []).forEach(function (ini) {
+        out.push({ at: i, color: chanColor[ini.channel] || chanColor.other, title: ini.starts_on + ' — ' + ini.title });
+      });
+    });
+    return out;
+  };
+%>
+
+<div class="page-head">
+  <div>
+    <h1>Enrolment — board report</h1>
+    <p class="muted" style="margin:4px 0 0;font-size:13px;">
+      Continuation, occupancy, waitlist and enquiry flow across every centre.
+      <br>
+      OWNA actuals to <strong><%= M.owna_as_at %></strong><% if (M.owna_lag_days > 1) { %>
+        <span class="badge warn" style="margin-left:6px;"><%= M.owna_lag_days %> days behind</span><% } %>
+      · LineLeader enquiries pulled <%= M.enquiries_refreshed ? M.enquiries_refreshed.at : 'never' %>
+      · page built <%= M.as_at %>
+    </p>
+  </div>
+  <div class="no-print" style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+    <button type="button" class="btn" onclick="window.print()">Print / PDF</button>
+    <a class="btn secondary" href="/reports/enrolment.csv">Download CSV</a>
+  </div>
+</div>
+
+<% if (locals.err) { %><div class="flash bad no-print"><%= err %></div><% } %>
+
+<% if (M.owna_lag_days > 3) { %>
+  <div class="card no-print" style="border-left:3px solid var(--warn);">
+    <p style="margin:0;font-size:13px;">
+      <strong>The OWNA figures on this page are <%= M.owna_lag_days %> days old.</strong>
+      Continuation and occupancy both come from the nightly OWNA pull, and it has not completed since
+      <%= M.owna_as_at %>. The LineLeader half of the report (waitlist, enquiries, the opening centres)
+      is current. Nothing here is estimated to fill the gap.
+    </p>
+  </div>
+<% } %>
+
+<%# ---------------------------------------------------------------- 1. Continuation ------------- %>
+<section class="rep-sec">
+  <div class="card">
+    <div class="card-head">
+      <h2>Continuation of enrolment</h2>
+      <span class="muted" style="font-size:13px;">
+        <%= M.coe ? M.coe.group.places : '—' %> approved places ·
+        <%= M.coe && M.coe.group.months[0] ? num(M.coe.group.months[0].enrolled) : '—' %> children enrolled today
+      </span>
+    </div>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13px;max-width:70ch;">
+      Of the children enrolled today, the share still holding a booking in each month ahead. It measures
+      retention only — a child who starts next month is not in it.
+    </p>
+
+    <% if (!M.coe) { %>
+      <p class="muted">No OWNA snapshot has completed, so there is nothing to measure.</p>
+    <% } else { %>
+      <%- include('partials/linechart', { lc: {
+        labels: M.coe.group.months.map((m) => mlabel(m.month)),
+        series: [{ name: 'Group continuation', points: M.coe.group.months.map((m) => m.continuing_pct) }],
+        height: 170, suf: '%'
+      } }) %>
+
+      <div class="table-scroll"><table style="margin-top:18px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Centre</th>
+            <th style="text-align:right;">Enrolled</th>
+            <% months.forEach(function (ym) { %><th style="text-align:right;"><%= mlabel(ym) %></th><% }); %>
+          </tr>
+        </thead>
+        <tbody>
+          <% M.coe.centres.forEach(function (c) {
+               const byM = new Map(c.months.map((x) => [x.month, x])); %>
+            <tr>
+              <td><%= c.name.replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, '') %></td>
+              <td style="text-align:right;"><%= num(c.enrolled) %></td>
+              <% months.forEach(function (ym) { const x = byM.get(ym); %>
+                <% if (!x || x.beyond_horizon) { %>
+                  <td style="text-align:right;" class="muted" title="Beyond this centre's booking horizon — no bookings are recorded this far out, so there is nothing to measure.">·</td>
+                <% } else { %>
+                  <td style="text-align:right;"><span class="rep-pct <%= coeRag(x.continuing_pct) %>"><%= pct(x.continuing_pct) %></span></td>
+                <% } %>
+              <% }); %>
+            </tr>
+          <% }); %>
+          <tr class="total-row">
+            <td><strong>Group</strong></td>
+            <td style="text-align:right;"><strong><%= num(M.coe.group.months[0] ? M.coe.group.months[0].enrolled : null) %></strong></td>
+            <% const gByM = new Map(M.coe.group.months.map((x) => [x.month, x])); %>
+            <% months.forEach(function (ym) { const x = gByM.get(ym); %>
+              <td style="text-align:right;"><strong><%= x ? pct(x.continuing_pct) : '—' %></strong></td>
+            <% }); %>
+          </tr>
+        </tbody>
+      </table></div>
+      <p class="muted" style="margin:10px 0 0;font-size:12px;">
+        <strong>·</strong> means beyond that centre's booking horizon — families have not booked that far
+        ahead yet, so there is nothing to measure. It is not a fall to zero.
+        Horizons today:
+        <%= M.coe.centres.map((c) => c.name.replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, '') + ' to ' + (c.last_booking_date || '—')).join(' · ') %>
+      </p>
+    <% } %>
+  </div>
+</section>
+
+<%# ---------------------------------------------------------------- 2. Occupancy ---------------- %>
+<section class="rep-sec">
+  <div class="card">
+    <div class="card-head"><h2>Booked occupancy, same months</h2></div>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13px;max-width:70ch;">
+      Average children booked per operating day against approved places — everyone booked, including
+      children who have not started yet. A centre can show continuation well below 100% and occupancy at
+      or above it in the same month: those children finish, and their places are already re-booked.
+      Read the two tables together.
+    </p>
+    <div class="table-scroll"><table>
+      <thead>
+        <tr>
+          <th style="text-align:left;">Centre</th>
+          <th style="text-align:right;">Places</th>
+          <% months.forEach(function (ym) { %><th style="text-align:right;"><%= mlabel(ym) %></th><% }); %>
+        </tr>
+      </thead>
+      <tbody>
+        <% M.occupancy.forEach(function (o) { %>
+          <tr>
+            <td><%= o.name %></td>
+            <td style="text-align:right;"><%= o.places %></td>
+            <% months.forEach(function (ym) { const x = o.months[ym]; %>
+              <% if (!x || x.beyond_horizon) { %>
+                <td style="text-align:right;" class="muted" title="Past <%= o.horizon || 'the last booked day' %> — nobody has booked this far ahead yet, so there is nothing to count.">·</td>
+              <% } else if (x.partial_horizon) { %>
+                <td style="text-align:right;" class="muted" title="This month runs past the last booked day (<%= x.horizon %>), so the average is dragged down by days nobody has booked yet."><%= pct(x.utilisation) %><span class="thin-mark">†</span></td>
+              <% } else if (x.thin) { %>
+                <td style="text-align:right;" class="muted" title="Only <%= x.days_with_rows %> of <%= x.operating_days %> operating days held — too thin to quote."><%= pct(x.utilisation) %><span class="thin-mark">*</span></td>
+              <% } else { %>
+                <td style="text-align:right;" title="<%= x.avg_booked %> children/day over <%= x.days_with_rows %> of <%= x.operating_days %> operating days"><span class="rep-pct <%= occRag(x.utilisation) %>"><%= pct(x.utilisation) %></span></td>
+              <% } %>
+            <% }); %>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <p class="muted" style="margin:10px 0 0;font-size:12px;">
+      <strong>·</strong> past that centre's last booked day — nobody has booked that far ahead yet, so
+      there is nothing to count. <strong>†</strong> the month runs past it, so the average is dragged down
+      by days nobody has booked. <strong>*</strong> fewer than two thirds of that month's operating days
+      are held in the snapshot: the percentage is real for the days we have, but it is not a month.
+      Every percentage divides by the operating days actually held, never by the days in the month.
+    </p>
+  </div>
+</section>
+
+<%# ---------------------------------------------------------------- 3. Waitlist ------------------ %>
+<section class="rep-sec">
+  <div class="card">
+    <div class="card-head">
+      <h2>Waitlist and offers</h2>
+      <span class="muted" style="font-size:13px;">LineLeader, children not records</span>
+    </div>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13px;max-width:70ch;">
+      Distinct children at each stage today. These are the counts LineLeader's own Child Counts bar shows —
+      a family with two children appears twice, because two places are being asked for.
+    </p>
+    <div class="table-scroll"><table>
+      <thead>
+        <tr>
+          <th style="text-align:left;">Centre</th>
+          <th style="text-align:right;">Enquiry / tour</th>
+          <th style="text-align:right;">Waitlist</th>
+          <% const anyPreOpen = M.waitlist.some((w) => w.pre_open > 0); %>
+          <% if (anyPreOpen) { %><th style="text-align:right;">Pre open</th><% } %>
+          <th style="text-align:right;">Offer accepted</th>
+          <th style="text-align:right;">Total pipeline</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% let tE = 0, tW = 0, tP = 0, tO = 0; %>
+        <% M.waitlist.forEach(function (w) { tE += w.early; tW += w.waiting; tP += w.pre_open; tO += w.offered; %>
+          <tr>
+            <td><%= w.name %></td>
+            <td style="text-align:right;"><%= num(w.early) %></td>
+            <td style="text-align:right;"><strong><%= num(w.waiting) %></strong></td>
+            <% if (anyPreOpen) { %><td style="text-align:right;"><%= num(w.pre_open) %></td><% } %>
+            <td style="text-align:right;"><%= num(w.offered) %></td>
+            <td style="text-align:right;"><%= num(w.early + w.waiting + w.pre_open + w.offered) %></td>
+          </tr>
+        <% }); %>
+        <tr class="total-row">
+          <td><strong>Group</strong></td>
+          <td style="text-align:right;"><strong><%= num(tE) %></strong></td>
+          <td style="text-align:right;"><strong><%= num(tW) %></strong></td>
+          <% if (anyPreOpen) { %><td style="text-align:right;"><strong><%= num(tP) %></strong></td><% } %>
+          <td style="text-align:right;"><strong><%= num(tO) %></strong></td>
+          <td style="text-align:right;"><strong><%= num(tE + tW + tP + tO) %></strong></td>
+        </tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<%# ---------------------------------------------------------------- 4. Weekly enquiries ---------- %>
+<section class="rep-sec">
+  <div class="card">
+    <div class="card-head">
+      <h2>New families per week</h2>
+      <form method="POST" action="/reports/enrolment/refresh" class="inline no-print">
+        <button type="submit" class="btn secondary small">Refresh from LineLeader</button>
+      </form>
+    </div>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13px;max-width:70ch;">
+      Families created in LineLeader each week, and how far their children have since reached. A lead's
+      outcome is the furthest stage any of that family's children reached — family status itself is not
+      maintained in LineLeader and reports near-zero conversion if you trust it.
+      Marketing initiatives are pinned to the week they started.
+    </p>
+
+    <% if (!M.weeks.length) { %>
+      <p class="muted">No enquiry weeks cached yet — press <em>Refresh from LineLeader</em>.</p>
+    <% } else { %>
+      <%- include('partials/linechart', { lc: {
+        labels: M.weeks.map((w) => wlabel(w.week_start)),
+        series: [
+          { name: 'New families', points: M.weeks.map((w) => w.leads) },
+          { name: 'Reached waitlist', points: M.weeks.map((w) => w.reached_waitlist) },
+          { name: 'Offer accepted', points: M.weeks.map((w) => w.reached_offer) }
+        ],
+        marks: marksFor(M.weeks),
+        height: 190
+      } }) %>
+
+      <%# Marketing pins, aligned to the chart's own geometry: the plot starts 46px in (the y-axis
+          gutter) and spans the rest, with point i at i/(n-1) of that width. %>
+      <%# Several initiatives land in the same week — three did, in the week of 14 September — so pins
+          that share a week are fanned around it rather than stacked invisibly on one point. %>
+      <% const N = M.weeks.length; let pin = 0; %>
+      <div class="mk-strip">
+        <% M.weeks.forEach(function (w, i) { const k = w.initiatives.length; %>
+          <% w.initiatives.forEach(function (ini, j) { pin += 1;
+               const nudge = (j - (k - 1) / 2) * 20; %>
+            <span class="mk-pin ch-<%= ini.channel || 'other' %>"
+                  style="left:<%= N <= 1 ? 50 : (i / (N - 1) * 100).toFixed(2) %>%;margin-left:<%= nudge.toFixed(0) %>px;"
+                  title="<%= ini.starts_on %> — <%= ini.title %>"><%= pin %></span>
+          <% }); %>
+        <% }); %>
+      </div>
+
+      <% if (pin) { %>
+        <ol class="mk-key">
+          <% let k = 0; %>
+          <% M.weeks.forEach(function (w) { w.initiatives.forEach(function (ini) { k += 1; %>
+            <li><span class="mk-num ch-<%= ini.channel || 'other' %>"><%= k %></span>
+              <strong><%= ini.title %></strong>
+              <span class="muted">· <%= ini.starts_on %>
+                · <%= ini.centre_name ? ini.centre_name.replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, '') : 'all centres' %>
+                <% if (ini.channel) { %>· <%= chanLabel[ini.channel] || ini.channel %><% } %></span>
+            </li>
+          <% }); }); %>
+        </ol>
+      <% } else { %>
+        <p class="muted" style="font-size:12px;margin:8px 0 0;">No marketing initiatives recorded in this window.</p>
+      <% } %>
+
+      <p class="muted" style="margin:14px 0 0;font-size:12px;">
+        The most recent week is still filling, and conversion needs time — a family created last week has
+        had one week to reach a waitlist. Read the trend, not the last point.
+      </p>
+    <% } %>
+  </div>
+</section>
+
+<%# ---------------------------------------------------------------- 5. Opening centres ----------- %>
+<% if (M.opening.length) { %>
+<section class="rep-sec">
+  <div class="card">
+    <div class="card-head"><h2>Centres opening</h2></div>
+    <p class="muted" style="margin:-4px 0 16px;font-size:13px;max-width:70ch;">
+      There is no occupancy or continuation to measure at a centre that has not opened. What there is:
+      families arriving, and how far along they are today.
+    </p>
+    <% M.opening.forEach(function (c) { const peak = Math.max(1, ...c.stages.map((s) => s.n)); %>
+      <div class="open-block">
+        <h3><%= c.name %> <span class="muted" style="font-weight:400;font-size:13px;">·
+          opens <%= c.opening_month ? MON[c.opening_month - 1] + ' ' + c.opening_year : (c.opening_year || 'date not set') %>
+          · <%= num(c.pipeline) %> children in the pipeline · <%= num(c.leads) %> new families in this window</span></h3>
+        <div class="stagebars">
+          <% c.stages.forEach(function (s) { %>
+            <div class="stage-row">
+              <span class="stage-lbl"><%= s.label %></span>
+              <span class="stage-bar"><i style="width:<%= (s.n / peak * 100).toFixed(1) %>%;"></i></span>
+              <span class="stage-n"><%= num(s.n) %></span>
+            </div>
+          <% }); %>
+        </div>
+        <% if (c.weeks.length) { %>
+          <%- include('partials/linechart', { lc: {
+            labels: c.weeks.map((w) => wlabel(w.week_start)),
+            series: [{ name: c.name + ' — new families', points: c.weeks.map((w) => w.leads) }],
+            marks: marksFor(c.weeks),
+            height: 130
+          } }) %>
+        <% } %>
+      </div>
+    <% }); %>
+  </div>
+</section>
+<% } %>
+
+<%# ---------------------------------------------------------------- 6. By centre ----------------- %>
+<section class="rep-sec">
+  <div class="card">
+    <div class="card-head">
+      <h2>Enquiry flow by centre</h2>
+      <span class="muted" style="font-size:13px;">last <%= weeks %> weeks</span>
+    </div>
+    <div class="table-scroll"><table>
+      <thead>
+        <tr>
+          <th style="text-align:left;">Centre</th>
+          <th style="text-align:right;">New families</th>
+          <th style="text-align:right;">Reached waitlist</th>
+          <th style="text-align:right;">Offer accepted</th>
+          <th style="text-align:right;">Enrolled</th>
+          <th style="text-align:right;">To waitlist</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% M.enquiries_by_centre.forEach(function (r) { %>
+          <tr>
+            <td><%= r.name %><% if (r.unmapped) { %> <span class="badge warn">unmapped</span><% } %></td>
+            <td style="text-align:right;"><%= num(r.leads) %></td>
+            <td style="text-align:right;"><%= num(r.reached_waitlist) %></td>
+            <td style="text-align:right;"><%= num(r.reached_offer) %></td>
+            <td style="text-align:right;"><%= num(r.enrolled) %></td>
+            <td style="text-align:right;"><%= r.leads ? pct(r.reached_waitlist / r.leads * 100) : '—' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <p class="muted" style="margin:10px 0 0;font-size:12px;">
+      A family counts against the centre its enquiry named. Conversion is measured on the whole window,
+      so the newest weeks drag it down — they have had the least time.
+    </p>
+  </div>
+</section>
+
+<%# ---------------------------------------------------------------- 7. Initiatives (entry) ------- %>
+<section class="no-print">
+  <div class="card">
+    <div class="card-head"><h2>Marketing initiatives</h2></div>
+    <p class="muted" style="margin:-4px 0 14px;font-size:13px;max-width:70ch;">
+      What was actually done, and when. LineLeader's own campaign field carries an attribution on 13 of
+      1,039 families this year, so it cannot carry this — these are entered by hand and pinned to the week
+      each one started. Leave the centre blank for something group-wide.
+    </p>
+
+    <form method="POST" action="/reports/enrolment/initiative">
+      <div class="user-form">
+        <div><label>Started</label><input type="date" name="starts_on" required></div>
+        <div><label>Ended <span class="muted">(optional)</span></label><input type="date" name="ends_on"></div>
+        <div><label>Centre</label>
+          <select name="owna_id">
+            <option value="">All centres</option>
+            <% allCentres.forEach(function (c) { %>
+              <option value="<%= c.owna_id %>"><%= c.name.replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, '') %></option>
+            <% }); %>
+          </select>
+        </div>
+        <div><label>Channel</label>
+          <select name="channel">
+            <option value="">—</option>
+            <% channels.forEach(function (ch) { %><option value="<%= ch %>"><%= chanLabel[ch] || ch %></option><% }); %>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:10px;"><label>What it was</label>
+        <input type="text" name="title" required maxlength="120" style="width:100%;" placeholder="Oran Park banner and flyer drop"></div>
+      <div style="margin-top:10px;"><label>Detail <span class="muted">(optional)</span></label>
+        <textarea name="detail" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;"></textarea></div>
+      <div style="margin-top:10px;"><label>Who reported it <span class="muted">(optional)</span></label>
+        <input type="text" name="source" maxlength="120" style="width:100%;"></div>
+      <div style="margin-top:12px;"><button type="submit" class="btn">Add initiative</button></div>
+    </form>
+
+    <% if (M.initiatives.length) { %>
+      <div class="table-scroll"><table style="margin-top:20px;">
+        <thead><tr><th style="text-align:left;">Started</th><th style="text-align:left;">Centre</th><th style="text-align:left;">Channel</th><th style="text-align:left;">What</th><th></th></tr></thead>
+        <tbody>
+          <% M.initiatives.forEach(function (i) { %>
+            <tr>
+              <td><%= i.starts_on %><% if (i.ends_on) { %> <span class="muted">→ <%= i.ends_on %></span><% } %></td>
+              <td><%= i.centre_name ? i.centre_name.replace(/Futuro Childcare\s*(and|&)\s*Education\s*-?\s*/i, '') : 'All centres' %></td>
+              <td><%= i.channel ? (chanLabel[i.channel] || i.channel) : '—' %></td>
+              <td><%= i.title %><% if (i.detail) { %><br><span class="muted" style="font-size:12px;"><%= i.detail %></span><% } %></td>
+              <td style="text-align:right;">
+                <form method="POST" action="/reports/enrolment/initiative/<%= i.id %>/delete" class="inline">
+                  <button type="submit" class="link-btn">Remove</button>
+                </form>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+    <% } %>
+  </div>
+</section>
+
+<p class="muted print-foot" style="font-size:11px;">
+  Futuro Pulse · enrolment board report · OWNA actuals to <%= M.owna_as_at %> ·
+  LineLeader pulled <%= M.enquiries_refreshed ? M.enquiries_refreshed.at : 'never' %> ·
+  generated <%= M.as_at %>
+</p>
+
+<%- include('partials/footer') %>

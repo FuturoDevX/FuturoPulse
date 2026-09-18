@@ -82,7 +82,10 @@
       <% } %>
       <% if (['admin','ops_manager'].includes(user.role)) { %>
         <div class="side-nav-divider">Admin</div>
+        <%# The board report is admin-only — it is the pack the owner presents, and it reads across every
+            centre at once, so it does not sit behind the scoped views. %>
         <% if (user.role === 'admin') { %>
+          <a href="/reports/enrolment" class="<%= currentPath.indexOf('/reports')===0 ? 'active' : '' %>"><%- ico('projection') %><span class="nav-lbl">Board report</span></a>
           <a href="/admin/users" class="<%= currentPath === '/admin/users' ? 'active' : '' %>"><%- ico('users') %><span class="nav-lbl">Users &amp; access</span></a>
         <% } %>
         <%# /admin/pc is requireAdminOrOps since the owner's turnover numbers are entered there. %>

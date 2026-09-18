@@ -709,3 +709,81 @@ details.working > *:last-child { padding-bottom: 16px; }
 /* A completed audit action, struck through. The tags used to be concatenated into an escaped
    EJS expression, which printed them literally. */
 .struck { text-decoration: line-through; color: var(--muted); }
+
+/* ==========================================================================
+   Board report (/reports/enrolment)
+   A page built to be read on screen and then printed. Everything here is
+   either the report's own furniture or the print rules that strip the app
+   chrome away from it.
+   ========================================================================== */
+
+.rep-sec { break-inside: avoid; }
+
+/* A percentage that carries a judgement. The band colours are the app's, but
+   the text stays ink — a wash of red numbers reads as alarm, and most of these
+   are ordinary. */
+.rep-pct { display: inline-block; padding: 1px 7px; border-radius: var(--radius-pill); font-variant-numeric: tabular-nums; }
+.rep-pct.good { background: var(--good-bg); color: var(--good-ink); }
+.rep-pct.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.rep-pct.bad  { background: var(--bad-bg);  color: var(--bad-ink); }
+.thin-mark { color: var(--warn-ink); font-weight: 700; margin-left: 2px; }
+tbody .total-row td { font-weight: 700; border-top: 2px solid var(--border); background: var(--row-total); }
+
+/* Marketing pins under the weekly chart. The strip is inset by the chart's own
+   y-axis gutter (46px, set in partials/linechart.ejs) so a pin sits over the
+   week it belongs to rather than near it. */
+.mk-strip { position: relative; height: 26px; margin: 2px 0 0 46px; }
+.mk-pin { position: absolute; top: 4px; transform: translateX(-50%); width: 18px; height: 18px; border-radius: 50%;
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; color: var(--on-brand-strong);
+  background: var(--brand); cursor: default; }
+.mk-key { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12.5px; }
+.mk-key li { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; }
+.mk-num { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--brand); color: var(--on-brand-strong);
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+/* Channel colours, so a run of social posts is distinguishable from an event at a glance. */
+.ch-event   { background: var(--plum); }
+.ch-print   { background: var(--warn); }
+.ch-signage { background: var(--sage); }
+.ch-social  { background: var(--brand-mid); }
+.ch-partner { background: var(--bad); }
+.ch-digital { background: var(--brand-ink); }
+.ch-other   { background: var(--fill-muted); }
+
+/* Opening centres: a stage bar rather than a chart. Six numbers do not need axes.
+   Named stage- rather than funnel-: .funnel is already a flex component elsewhere in
+   this stylesheet, and inheriting its display collapsed these bars to nothing. */
+.open-block { padding: 14px 0; border-top: 1px solid var(--line); break-inside: avoid; }
+.open-block:first-of-type { border-top: none; padding-top: 0; }
+.open-block h3 { margin: 0 0 10px; }
+.stagebars { margin: 0 0 8px; }
+.stage-row { display: grid; grid-template-columns: 116px 1fr 44px; align-items: center; gap: 10px; padding: 2px 0; }
+.stage-lbl { font-size: 13px; color: var(--ink-2); }
+.stage-bar { display: block; height: 14px; background: var(--track); border-radius: var(--radius-pill); overflow: hidden; }
+.stage-bar i { display: block; height: 100%; background: var(--fill-good); border-radius: var(--radius-pill); }
+.stage-n { font-size: 13px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+.btn.secondary { background: var(--card); color: var(--brand-ink); border: 1px solid var(--border); box-shadow: none; text-decoration: none; display: inline-block; }
+.btn.secondary:hover { background: var(--brand-soft); }
+.btn.small { padding: 6px 12px; font-size: 12.5px; }
+.print-foot { display: none; }
+
+/* --- Print --------------------------------------------------------------
+   The app's sidebar, topbar and every control are screen furniture. On paper
+   the report is the page: full width, no shadows, nothing that only works
+   when you can click it. Backgrounds are kept — the RAG bands and the funnel
+   bars carry meaning, and print-color-adjust tells the browser to keep them
+   rather than helpfully saving ink. */
+@media print {
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+  html, body { background: #fff; }
+  .sidebar, .topbar, .no-print, .side-nav, .btn, button, .flash { display: none !important; }
+  .app-shell { display: block; }
+  main { max-width: none; padding: 0; }
+  .card { border: 1px solid var(--rule-soft); box-shadow: none; padding: 0 0 14px; margin: 0 0 18px; break-inside: avoid; border-width: 0 0 1px; border-radius: 0; }
+  .rep-sec { break-inside: avoid; page-break-inside: avoid; }
+  h1 { font-size: 21px; }
+  h2 { font-size: 15px; }
+  table { font-size: 11px; }
+  .print-foot { display: block; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

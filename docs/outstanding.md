@@ -164,6 +164,35 @@ These limit what the dashboard can honestly show. Each page says so where it app
 6. **OWNA keeps booking rows on public holidays.** Seats, utilisation and average occupancy now exclude them; some older figures do not.
 7. **Tours are matched to families by a hash of the family name within a centre**, as LineLeader gives no family id on the tour row. The name itself is no longer stored — both rows carry the same salted hash instead — but the limitation is unchanged: two families with the same name at one centre would be conflated. A family id on the LineLeader tour row would fix it properly.
 
+## Board report — built 18 September
+
+- [x] **`/reports/enrolment`, admin only.** One page carrying continuation, booked occupancy, waitlist depth,
+  weekly enquiry flow with marketing initiatives marked on it, and the two opening centres. `Print / PDF`
+  gives a board pack (the app's first print stylesheet — sidebar, topbar and every control drop away),
+  and `Download CSV` streams one row per centre per month with both measures and the coverage behind them.
+  Nothing is stored; the CSV is built in the request.
+  - **Continuation and occupancy are printed together on purpose.** Austral continues 77.8% into February
+    and is booked to 101% the same month: children finish and their places are already re-booked. Either
+    number alone tells the wrong story.
+  - **Three marks stop a figure being quoted as something it is not.** `·` past a centre's last booked day
+    (Bardia is booked to 19 March — April is not a collapse, it is the edge of the data); `†` a month that
+    runs past it, so its average is dragged down by days nobody has booked; `*` fewer than two thirds of a
+    month's operating days held in the snapshot. Occupancy now takes the same horizon COE uses, from the
+    same `last_booking_date`, so the two tables cannot disagree about where the data stops.
+  - **Marketing initiatives are entered by hand on the page** and drawn as a dashed vertical rule through
+    the enquiry chart on the week each one started, coloured by channel, numbered to a key below it.
+    LineLeader's own campaign field carries an attribution on 13 of 1,039 families this year, so it cannot
+    carry this. A Meta API feed is the intended replacement for the social half.
+- [x] **Pre Open (status 13) was missing from every pipeline count** — fixed 18 September. `PIPELINE_STATUSES`
+  and `PIPELINE_MEMBER_STATUSES` in `services/snapshot.js` listed the seven other convertible statuses but
+  not 13, the stage a child sits at while the centre they are booked into has not opened. It only ever
+  occurs at the pre-opening centres, which is why it went unnoticed: the four operating centres have none.
+  It cost **Cobbitty 11 children and Oran Park 1** in every per-centre count.
+- [ ] **The enquiry cache is filled by hand.** `Refresh from LineLeader` on the report, or
+  `enquiries.refresh()`. It is a ~2½ minute pull (fifteen pages at nine seconds each) so it must never run
+  on a page render — but it is not yet a sub-step of the nightly snapshot, and until it is the weekly
+  figures are only as fresh as the last press.
+
 ## Not possible, by design
 
 - **An accurate 12-month enrolment projection.** Departures are not in any system beyond about a term. Ninety days is shown as trustworthy, twelve months as a ceiling.

@@ -134,6 +134,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/admin", require("./routes/admin"));
+app.use("/reports", require("./routes/reports"));
 app.use("/", require("./routes/dashboard"));
 
 app.use((req, res) => res.status(404).render("error", { message: "Page not found." }));
