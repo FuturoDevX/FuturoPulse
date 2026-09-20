@@ -72,6 +72,15 @@ services:
         sync: false
       - key: LINELEADER_PASSWORD
         sync: false
+      # ===== Feed health =====
+      # /healthz is public by default so an external uptime monitor can poll it. Set HEALTHZ_TOKEN in the
+      # dashboard to require ?token=<value>.
+      # NOTE: do NOT set this service's healthCheckPath to /healthz. Render restarts a service that fails
+      # its health check, and a stale data feed is not a reason to restart the web server.
+      - key: HEALTHZ_TOKEN
+        sync: false
+      - key: HEALTH_STALE_HOURS
+        value: 26
       # Employment Hero Payroll (KeyPay)
       - key: EH_PAYROLL_BASE_URL
         value: https://api.yourpayroll.com.au

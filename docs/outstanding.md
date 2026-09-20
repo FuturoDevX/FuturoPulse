@@ -260,6 +260,41 @@ Still open:
   NOT reported short would still be treated as fully covered. Checking day-by-day coverage per month
   would close it.
 
+## A stopped feed now says so — 21 September
+
+A feed could stop and leave no mark anyone saw. The OWNA pull returned nothing for eight days in
+September while recording itself a success; the COE step can fail on a night the day-rows step succeeds.
+`source_sync` always held the truth — nothing went and looked at it, and the only place any of it
+surfaced was a footnote on the Wages page.
+
+- [x] **`services/health.js`** — one assessment, read by both things that report it, so the endpoint and
+  the screen can never tell different stories. Reports statuses, ages and counts; never
+  `source_sync.detail`, which is free text from an upstream error.
+- [x] **`/healthz`** — unauthenticated, 200 healthy / 503 not, for an external uptime monitor. Mounted
+  **before** the session middleware: a monitor polling every five minutes would otherwise mint 288
+  session rows a day that nothing reads. `HEALTHZ_TOKEN` closes it (404, not 403 — an unguessable
+  endpoint should not confirm it exists). The route was already whitelisted in the maintenance guard at
+  `server.js:62` and had never been written.
+- [x] **Topbar chip on every page**, admin and ops only, shown only when something is wrong, with every
+  failing feed named in its tooltip. A centre director cannot fix a stalled payroll import, and a
+  permanent green badge is furniture people stop reading.
+- [x] **The blind spot is covered.** Alerting on failure cannot see a job that never ran: nothing throws,
+  so nothing fails, and silence looks like success. Staleness is assessed on `last_success` age and on
+  the age of the newest finished run, so "it stopped happening" is a fault in its own right.
+- [x] A feed with no credentials reports `skipped` and is **not** a failure. A monitor that pages someone
+  because an optional feed is switched off gets muted, and then it is worth nothing.
+
+Still open:
+
+- [ ] **Nothing pushes from Pulse itself.** By design for now — the monitor does the pushing. If a
+  heartbeat from the app is wanted later ("tell me every morning that it ran"), the Microsoft Graph
+  sender in `services/survey-mail.js` already holds a working app registration and mailbox; it would need
+  a transition rule so a week-long outage sends one message and not seven, and per the owner's standing
+  instruction it goes to him alone.
+- [ ] **Which feeds count as critical is a judgement**, currently `owna, coe, lineleader, eh_labour,
+  talent` (`services/health.js` CRITICAL). `incidents`, `roster`, `exits` and `retention` report but do
+  not by themselves return 503. Worth revisiting once the Exit Report is in regular use.
+
 ## Not possible, by design
 
 - **An accurate 12-month enrolment projection.** Departures are not in any system beyond about a term. Ninety days is shown as trustworthy, twelve months as a ceiling.

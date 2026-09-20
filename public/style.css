@@ -805,3 +805,12 @@ tbody .total-row td { font-weight: 700; border-top: 2px solid var(--border); bac
   .print-foot { display: block; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* Feed health chip in the topbar (server.js -> res.locals.feedHealth, services/health.js).
+   Shown only when something is wrong: a green "all well" badge on every page teaches people to stop
+   reading the corner, which is exactly where the warning has to be noticed. */
+.feed-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600;
+  padding: 5px 12px; border-radius: var(--radius-pill); white-space: nowrap; cursor: default; }
+.feed-chip i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.feed-chip.degraded { background: var(--warn-bg); color: var(--warn-ink); }
+.feed-chip.down { background: var(--bad-bg); color: var(--bad-ink); }

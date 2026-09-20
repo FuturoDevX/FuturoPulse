@@ -113,6 +113,15 @@
   </aside>
   <main>
     <div class="topbar">
+      <%# Feed health, admin and ops only (server.js FEED_STATUS_ROLES). The same assessment /healthz
+          serves an external monitor. It is here rather than on one page because a feed that stopped
+          used to be discoverable only by opening Wages and reading the payroll footnote. %>
+      <% if (locals.feedHealth && feedHealth.status !== 'ok') { %>
+        <span class="feed-chip <%= feedHealth.status %>"
+              title="<%= feedHealth.problems.join('\n') %>">
+          <i aria-hidden="true"></i><%= feedHealth.status === 'down' ? 'Data feeds down' : 'Data feeds behind' %>
+        </span>
+      <% } %>
       <span class="user-chip">
         <span class="user-avatar" aria-hidden="true"><%= chipInitials %></span>
         <span class="user-chip-name"><%= chipName %></span>

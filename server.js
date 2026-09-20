@@ -35,6 +35,35 @@ app.use(express.json({ limit: "256kb" })); // for the "Ask your data" fetch API
 app.use("/fonts", express.static(path.join(__dirname, "public/fonts"), { immutable: true, maxAge: "365d" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// ===== /healthz =====
+// For an external uptime monitor. Pulse states the facts; something outside it does the pushing — which
+// is the point: a monitor polling from elsewhere also catches the case this app can never report on
+// itself, that it is down or its nightly job never ran at all.
+//
+// Deliberately BEFORE the session middleware. A monitor polling every five minutes is 288 requests a
+// day, and each one would otherwise mint and store a session row it will never use again.
+//
+// 200 when the feeds the board's figures rest on are arriving; 503 when they are not. Monitors alert on
+// the status code, so the body is for a human who then opens it — statuses, ages and counts only, never
+// source_sync.detail, which is free text from an upstream error and does not belong on an endpoint
+// anyone can poll. Set HEALTHZ_TOKEN to require ?token= on it; unset, it is open, which is what most
+// monitors need.
+const { feedHealth } = require("./services/health");
+app.get("/healthz", (req, res) => {
+  const want = String(process.env.HEALTHZ_TOKEN || "");
+  if (want && String(req.query.token || "") !== want) return res.status(404).end();   // 404, not 403: an unguessable endpoint should not confirm it exists
+  const h = feedHealth();
+  res.set("Cache-Control", "no-store");
+  res.status(h.healthy ? 200 : 503).json({
+    status: h.status,
+    checked_at: new Date().toISOString(),
+    stale_after_hours: h.stale_after_hours,
+    problems: h.problems,
+    last_run: h.last_run,
+    sources: h.sources,
+  });
+});
+
 if (isProd) app.set("trust proxy", 1);
 // Sessions are kept in the app's own SQLite file, so a deploy or restart no longer signs everyone out.
 // Cookie flags, the expiry and the store's pruning all live in middleware/session.js.
@@ -126,11 +155,19 @@ app.use((req,res,next) => {
 // Centre list for the sidebar, available to every authenticated view.
 const metrics = require("./services/metrics");
 const feedbackSvc = require("./services/feedback");
+// Feed health in the topbar of every page, for the people who can act on it. The same assessment
+// /healthz serves, so the dot and the monitor can never tell different stories. Two small queries.
+//
+// Admin and ops only: a centre director cannot fix a stalled payroll import, and a permanent amber dot
+// they can do nothing about is just furniture they will learn to ignore.
+const FEED_STATUS_ROLES = ["admin", "ops_manager"];
 app.use((req, res, next) => {
   const all = metrics.centres();
   const scoped = res.locals.scopedOwnaId;
   res.locals.navCentres = scoped ? all.filter((c) => c.owna_id === scoped) : all;
   res.locals.fbNewCount = (res.locals.user && res.locals.user.role === "admin") ? feedbackSvc.newCount() : 0;
+  res.locals.feedHealth = (res.locals.user && FEED_STATUS_ROLES.includes(res.locals.user.role))
+    ? feedHealth() : null;
   next();
 });
 app.use("/admin", require("./routes/admin"));
