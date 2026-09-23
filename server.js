@@ -171,6 +171,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/admin", require("./routes/admin"));
+app.use("/timesheets", require("./routes/timesheets"));
 app.use("/reports", require("./routes/reports"));
 app.use("/", require("./routes/dashboard"));
 

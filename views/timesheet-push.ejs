@@ -1,0 +1,156 @@
+<%- include('partials/header', { title: 'Push timesheets — ' + centre.name }) %>
+<%
+  const shortName = (n) => (n || '').replace('Futuro Childcare & Education - ', '').replace('Futuro ', '');
+  const d = data;
+  const canPost = d && !d.blocked && d.lines && d.lines.length > 0;
+  const hrs = (n) => Number(n || 0).toFixed(2);
+%>
+<div class="page-head"><div>
+  <p class="crumb"><a href="/centre/<%= centre.owna_id %>">← <%= shortName(centre.name) %></a></p>
+  <h1>Push timesheets to Employment Hero</h1>
+  <p class="sub">Turns each educator's OWNA clock-in and clock-out into a timesheet in Employment Hero.
+    Nothing is sent until you press <strong>Post</strong> below. Everything posts as a <strong>draft</strong>
+    for a centre director to approve in Employment Hero — this page cannot put hours into a pay run.</p>
+</div></div>
+
+<% if (msg) { %><div class="flash"><%= msg %></div><% } %>
+<% if (err) { %><div class="flash bad"><%= err %></div><% } %>
+<% if (error) { %><div class="flash bad">Could not build the preview — <%= error %></div><% } %>
+
+<div class="card">
+  <form method="GET" action="/timesheets/<%= centre.owna_id %>" class="btn-group" style="align-items:flex-end;gap:12px;flex-wrap:wrap;">
+    <label>Shift date from<br /><input type="date" name="from" value="<%= from %>" max="<%= today %>" /></label>
+    <label>to<br /><input type="date" name="to" value="<%= to %>" max="<%= today %>" /></label>
+    <button class="btn" type="submit">Preview</button>
+    <span class="muted" style="font-size:13px;">Defaults to yesterday. Today's shifts are still open, so many people have not clocked out yet.</span>
+  </form>
+</div>
+
+<% if (d && d.blocked) { %>
+  <div class="flash bad"><strong>Refused.</strong> <%= d.blockedReason %></div>
+<% } else if (d) { %>
+
+  <div class="grid kpis">
+    <div class="card stat"><div class="n <%= d.lines.length ? 'good-text' : '' %>"><%= d.lines.length %></div><div class="l">Ready to post</div></div>
+    <div class="card stat"><div class="n"><%= d.conflicts.length %></div><div class="l">Already in EH — skipped</div></div>
+    <div class="card stat"><div class="n <%= d.unmapped.length ? 'bad-text' : '' %>"><%= d.unmapped.length %></div><div class="l">No employee code</div></div>
+    <div class="card stat"><div class="n <%= d.quarantined.length ? 'bad-text' : '' %>"><%= d.quarantined.length %></div><div class="l">Needs review</div></div>
+  </div>
+
+  <% if (canPost) { %>
+  <div class="card">
+    <div class="card-head"><h2>Post <%= d.lines.length %> timesheet<%= d.lines.length === 1 ? '' : 's' %></h2></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Educator</th><th>Date</th><th>Clocked</th><th class="num">Hours</th><th>Employment Hero</th></tr></thead>
+        <tbody>
+        <% d.lines.forEach(function (l) { %>
+          <tr>
+            <td><%= l.name %></td>
+            <td><%= l.payDate %></td>
+            <td><%= l.startLocal %>–<%= l.endLocal %></td>
+            <td class="num"><%= hrs(l.grossHours) %></td>
+            <td class="muted"><%= l.externalId %> · <%= d.ehLocation ? d.ehLocation.name : '—' %></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <p class="footnote">Actual clocked times are posted with no break deducted — Employment Hero applies unpaid
+      breaks itself from the award rules. Each line carries a unique reference, so pressing Post twice cannot
+      create a duplicate.</p>
+    <form method="POST" action="/timesheets/<%= centre.owna_id %>/push" onsubmit="return confirm('Post <%= d.lines.length %> timesheet(s) to Employment Hero as drafts?');">
+      <input type="hidden" name="from" value="<%= from %>" />
+      <input type="hidden" name="to" value="<%= to %>" />
+      <label style="display:block;margin:10px 0;">
+        <input type="checkbox" name="confirm" value="yes" required />
+        I have checked the list above and want to create these drafts in Employment Hero.
+      </label>
+      <button class="btn" type="submit">Post <%= d.lines.length %> timesheet<%= d.lines.length === 1 ? '' : 's' %></button>
+    </form>
+  </div>
+  <% } else if (!d.blocked) { %>
+    <div class="card"><p>Nothing to post for <%= from %><%= to !== from ? ' to ' + to : '' %>.
+      <% if (d.conflicts.length) { %>Every shift already has a timesheet in Employment Hero.<% } %>
+      <% if (d.unmapped.length && !d.conflicts.length) { %>No one here could be matched to an Employment Hero employee.<% } %></p></div>
+  <% } %>
+
+  <% if (d.conflicts.length) { %>
+  <div class="card">
+    <div class="card-head"><h2>Already in Employment Hero — skipped</h2><p class="card-sub">Posting these would give the same person two timesheets for one shift.</p></div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>Educator</th><th>Date</th><th>OWNA clocked</th><th>Already in EH</th><th>Source</th></tr></thead>
+        <tbody>
+        <% d.conflicts.forEach(function (c) { %>
+          <tr><td><%= c.name %></td><td><%= c.payDate %></td><td><%= c.startLocal %>–<%= c.endLocal %></td>
+              <td><%= c.clash.start %>–<%= c.clash.end %></td>
+              <td class="muted"><%= c.clash.source %> · <%= c.clash.status %></td></tr>
+        <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <% } %>
+
+  <% if (d.unmapped.length) { %>
+  <div class="card">
+    <div class="card-head"><h2>No employee code in OWNA</h2><p class="card-sub">These shifts cannot be posted until someone fills the <code>ftXXXXXX</code> code into the OWNA staff record. That code is the only key used to match a person to Employment Hero.</p></div>
+    <div style="overflow-x:auto;">
+      <table><thead><tr><th>Educator</th><th>Date</th><th>Clocked</th><th>Reason</th></tr></thead><tbody>
+      <% d.unmapped.forEach(function (u) { %>
+        <tr><td><%= u.name %></td><td><%= u.payDate %></td><td><%= u.startLocal %>–<%= u.endLocal %></td><td class="muted"><%= u.reason %></td></tr>
+      <% }); %>
+      </tbody></table>
+    </div>
+  </div>
+  <% } %>
+
+  <% if (d.quarantined.length) { %>
+  <div class="card">
+    <div class="card-head"><h2>Needs a human look</h2><p class="card-sub">Held back on purpose — never posted automatically.</p></div>
+    <div style="overflow-x:auto;">
+      <table><thead><tr><th>Educator</th><th>Date</th><th>Clocked</th><th class="num">Hours</th><th>Why</th></tr></thead><tbody>
+      <% d.quarantined.forEach(function (q) { %>
+        <tr><td><%= q.name %></td><td><%= q.payDate %></td><td><%= q.startLocal %>–<%= q.endLocal %></td>
+            <td class="num"><%= hrs(q.grossHours) %></td><td class="muted"><%= q.reason %></td></tr>
+      <% }); %>
+      </tbody></table>
+    </div>
+  </div>
+  <% } %>
+
+  <% if (d.alreadyPosted.length || d.undoableCount) { %>
+  <div class="card">
+    <div class="card-head"><h2>Posted from here earlier</h2>
+      <p class="card-sub"><%= d.alreadyPosted.length %> shift<%= d.alreadyPosted.length === 1 ? '' : 's' %> in this range
+      <%= d.alreadyPosted.length === 1 ? 'was' : 'were' %> already pushed by this page. Undo removes only those — it never
+      touches a timesheet someone entered another way.</p></div>
+    <form method="POST" action="/timesheets/<%= centre.owna_id %>/undo" onsubmit="return confirm('Remove the timesheets this page created for <%= from %><%= to !== from ? ' to ' + to : '' %>?');">
+      <input type="hidden" name="from" value="<%= from %>" />
+      <input type="hidden" name="to" value="<%= to %>" />
+      <button class="btn" type="submit">Undo the push for this range</button>
+    </form>
+  </div>
+  <% } %>
+<% } %>
+
+<% if (history && history.length) { %>
+<div class="card">
+  <div class="card-head"><h2>Recent pushes</h2></div>
+  <div style="overflow-x:auto;">
+    <table>
+      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Dates</th><th class="num">Created</th><th class="num">Failed</th></tr></thead>
+      <tbody>
+      <% history.forEach(function (h) { %>
+        <tr><td><%= sydneyStamp(h.created_at) %></td><td><%= h.user_email || '—' %></td>
+            <td><%= h.action %></td><td><%= h.date_from %><%= h.date_to !== h.date_from ? ' → ' + h.date_to : '' %></td>
+            <td class="num"><%= h.created_count %></td><td class="num"><%= h.failed_count %></td></tr>
+      <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<%- include('partials/footer') %>

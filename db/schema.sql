@@ -756,3 +756,23 @@ CREATE TABLE IF NOT EXISTS survey_deliveries (
   updated_on TEXT                       -- YYYY-MM-DD. NEVER a time of day — see above
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_survey_deliveries_round ON survey_deliveries(round_id, status);
+
+-- ===== OWNA → Employment Hero timesheet push =====
+-- An audit row per press of the "Push timesheets" button. Payroll writes must be attributable.
+-- Deliberately holds NO staff names: the EH timesheet is the record of whose hours were posted;
+-- this table answers who pressed the button, for which centre and dates, and what came back.
+CREATE TABLE IF NOT EXISTS timesheet_push_log (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  owna_id         TEXT NOT NULL,
+  centre_name     TEXT,
+  date_from       TEXT NOT NULL,
+  date_to         TEXT NOT NULL,
+  action          TEXT NOT NULL,          -- 'push' | 'undo'
+  user_id         INTEGER,
+  user_email      TEXT,
+  created_count   INTEGER DEFAULT 0,
+  failed_count    INTEGER DEFAULT 0,
+  verified_count  INTEGER DEFAULT 0,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tspush_centre ON timesheet_push_log(owna_id, id DESC);

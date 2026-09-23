@@ -214,6 +214,21 @@
 
 <!-- ===================== ROSTERING ===================== -->
 <section class="tab-panel" data-panel="rostering">
+  <%# Payroll push. Admin and ops only — the same roles that may trigger a refresh. It links to a
+      preview page; nothing is sent to payroll from this button. %>
+  <% if (user && ['admin','ops_manager'].includes(user.role)) { %>
+  <div class="card">
+    <div class="pc-head">
+      <h2 style="margin:0;">Timesheets <span class="muted" style="font-weight:400;font-size:13px;">· OWNA → Employment Hero</span></h2>
+      <a class="btn" href="/timesheets/<%= centre.owna_id %>">Push timesheets →</a>
+    </div>
+    <p class="muted" style="margin:8px 0 0;font-size:13px;">Turns this centre's clock-in and clock-out records into
+      Employment Hero timesheets. Opens a preview first — you see exactly what would be created, and what is
+      being skipped because it is already there, before anything is sent. Everything posts as a draft for
+      approval.</p>
+  </div>
+  <% } %>
+
   <% if (typeof roster !== 'undefined' && roster) {
        const rl = roster.latest;
        const hnum = (n)=> n==null?'—':(Math.round(n*10)/10).toLocaleString('en-AU');
