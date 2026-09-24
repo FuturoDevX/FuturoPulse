@@ -26,8 +26,13 @@ const fmtTime = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit"
 const fmtDate = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
 const localTime = (iso) => fmtTime.format(new Date(iso));
 const localDate = (iso) => fmtDate.format(new Date(iso));
-const isIn = (s) => /checkin/i.test(s);
-const isOut = (s) => /checkout/i.test(s);
+// The filter below admits any "centre check…" status, so these must classify everything that filter
+// lets through. They used to be /checkin/i and /checkout/i — no space allowed — while the filter was
+// /centre\s*check/i, which does allow one. A status spelled "centre check in" therefore passed the
+// filter, matched neither of these, and was dropped: no span, no issue, no error. The educator simply
+// would not be paid for that day and nothing on any screen would say so.
+const isIn = (s) => /check\s*in/i.test(s);
+const isOut = (s) => /check\s*out/i.test(s);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -85,6 +90,9 @@ function pairSpans(events) {
       if (!open) { issues.push(`check-out ${localTime(e.statusDate)} with no matching check-in`); continue; }
       spans.push({ in: open.statusDate, out: e.statusDate }); open = null;
     }
+    // Belt and braces for the same failure: a clock event this code cannot classify is REPORTED, never
+    // discarded in silence. Losing a shift is invisible; losing it with a line on the screen is not.
+    else issues.push(`clock event "${String(e.status).slice(0, 40)}" at ${localTime(e.statusDate)} was not recognised as a check-in or check-out and has been ignored`);
   }
   if (open) issues.push(`check-in ${localTime(open.statusDate)} never checked out (missed tap or still on shift)`);
   return { spans, issues };

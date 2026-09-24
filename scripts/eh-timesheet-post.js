@@ -70,10 +70,9 @@ function parseArgs(argv) {
 }
 
 // A pay run whose period covers `date` and is finalised means those hours are already paid.
-function finalisedRunCovering(runs, date) {
-  return runs.find((r) => r.isFinalised &&
-    String(r.payPeriodStarting).slice(0, 10) <= date && date <= String(r.payPeriodEnding).slice(0, 10));
-}
+// Imported, not re-declared: this was a second copy of the rule, and a second copy is a rule that will
+// eventually disagree with itself. See services/timesheet-push.js for why it fails closed.
+const { finalisedRunCovering } = require(path.join(__dirname, "..", "services", "timesheet-push"));
 
 const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && bStart < aEnd;
 

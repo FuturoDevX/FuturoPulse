@@ -34,9 +34,29 @@ const EH_LOCATION = [
 const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && bStart < aEnd;
 const centreRow = (ownaId) => db.prepare("SELECT owna_id, name FROM centres WHERE owna_id = ?").get(ownaId);
 
+// A pay run whose period covers `date` and is finalised means those hours are already paid.
+//
+// FAILS CLOSED. This read r.payPeriodStarting directly, and that field name appears nowhere else in this
+// codebase: services/eh-labour.js, which runs against live Employment Hero data, uses only
+// payPeriodEnding and datePaid, and so does every payrun fixture in tests/. If KeyPay does not return
+// payPeriodStarting then String(undefined).slice(0,10) is "undefined", "undefined" <= "2026-09-23" is
+// false in JavaScript, the find() never matches, and the single guard standing between this tool and an
+// already-paid pay period silently does nothing.
+//
+// So a period whose START cannot be read is treated as covering everything up to its END. That refuses
+// more than strictly necessary, which is the right direction: the cost of a false refusal is a message
+// on a screen, and the cost of a false pass is paying someone twice.
+const DATE10 = /^\d{4}-\d{2}-\d{2}$/;
+const d10 = (v) => String(v == null ? "" : v).slice(0, 10);
+
 function finalisedRunCovering(runs, date) {
-  return (runs || []).find((r) => r.isFinalised &&
-    String(r.payPeriodStarting).slice(0, 10) <= date && date <= String(r.payPeriodEnding).slice(0, 10));
+  return (runs || []).find((r) => {
+    if (!r || !r.isFinalised) return false;
+    const end = d10(r.payPeriodEnding);
+    if (!DATE10.test(end) || date > end) return false;      // after the period, or unreadable: not covered
+    const start = d10(r.payPeriodStarting);
+    return !DATE10.test(start) || start <= date;            // unreadable start => treat as covering
+  });
 }
 
 // Everything the screen needs, and nothing written anywhere.
@@ -175,4 +195,4 @@ function history(ownaId, limit = 20) {
   } catch { return []; }
 }
 
-module.exports = { preview, push, undo, history, EH_LOCATION };
+module.exports = { preview, push, undo, history, finalisedRunCovering, EH_LOCATION };
