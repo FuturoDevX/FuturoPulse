@@ -110,17 +110,22 @@ function dedupeKey(staffId, span) {
 // while the dry run showed the prose "Submitted (draft — awaiting approval)". Reviewing the second and
 // shipping the first is how an unnoticed field name becomes a duplicate in somebody's pay.
 //
-// UNCONFIRMED, and it must be confirmed before this runs against real payroll: whether KeyPay's
-// idempotency field on a timesheet line is `externalId` (posted here) or `externalReference`. If it is
-// the latter, nothing is stored against the line, the "already posted" check matches nothing, and every
-// re-run posts the same shift again. One real GET of an existing timesheet settles it.
+// CONFIRMED against live Employment Hero, 25 September 2026, by reading back the 95 lines the first
+// live run created (scripts/eh-timesheet-audit.js): the idempotency field is `externalId`, and it comes
+// back populated with the `owna:` key. A re-push of the same range skips those lines. It was worth
+// checking — had it been `externalReference`, nothing would have been stored against the line, the
+// already-posted check would have matched nothing, and every re-run would have posted the shift again.
+//
+// The same read confirmed the wire format of startTime is naive Sydney local `YYYY-MM-DDTHH:MM:SS`
+// across all 1,852 timesheets in the window, which is what the overlap guard in
+// services/timesheet-push.js normalises to.
 function timesheetBody(line) {
   return {
     employeeId: line.employeeId,                 // EH numeric id (resolved from the employee's externalId)
     startTime: line.startLocalISO,               // actual clock-in, Australia/Sydney
     endTime: line.endLocalISO,                   // actual clock-out
     locationId: line.locationId,
-    externalId: line.dedupeKey,                  // (confirm) idempotency guard against double-posting
+    externalId: line.dedupeKey,                  // idempotency guard; field name confirmed live 25 Sep 2026
     comments: "Imported from OWNA clock-in/out",
     status: "Submitted",                         // draft — a director approves it. NEVER "Approved".
   };
