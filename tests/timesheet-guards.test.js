@@ -24,6 +24,7 @@ db.prepare("INSERT INTO centres(owna_id,name,capacity,opening) VALUES(?,?,100,0)
 
 // ---------------------------------------------------------------- fixture harness -------------
 const LOCATIONS = [{ id: 11, name: 'Futuro Austral' }, { id: 12, name: 'Futuro GWH' }];
+const realPayRunsCached = eh.payRunsCached;   // kept before any stub replaces it
 const real = {};
 function stub({ payRuns = [], timesheets = [], lines = [], unmapped = [], locations = LOCATIONS, onCreate, onDelete } = {}) {
   for (const k of ['payRunsCached', 'locationsCached', 'timesheetsBetween', 'createTimesheet', 'deleteTimesheet', 'hasCreds'])
@@ -201,6 +202,57 @@ test('guard 2: the clash is caught whatever the existing line\'s source or statu
       assert.equal(created.length, 0, `source ${src.source} / status ${src.status} must still block`);
     } finally { restore(); }
   }
+});
+
+test('guard 2: the clash is caught whatever time format EH returns', async () => {
+  // The comparison used to be raw text between our naive Sydney-local string and whatever EH sends.
+  // That is right for one wire format and silently wrong for others: the SAME 07:00-15:00 shift
+  // expressed in UTC, or with a space instead of the T, sorted differently as text, so no overlap was
+  // seen and the line was posted on top of the existing one. No warning — the screen showed no conflict.
+  const formats = {
+    'naive local':   ['2026-09-23T07:00:00', '2026-09-23T15:00:00'],
+    'offset +10:00': ['2026-09-23T07:00:00+10:00', '2026-09-23T15:00:00+10:00'],
+    'milliseconds':  ['2026-09-23T07:00:00.000', '2026-09-23T15:00:00.000'],
+    'UTC Z':         ['2026-09-22T21:00:00Z', '2026-09-23T05:00:00Z'],   // the same instants
+    'space instead of T': ['2026-09-23 07:00:00', '2026-09-23 15:00:00'],
+  };
+  for (const [name, [startTime, endTime]] of Object.entries(formats)) {
+    const { created } = stub({ lines: [line()], timesheets: [sheet({ id: 84, startTime, endTime })] });
+    try {
+      const r = await push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });
+      assert.equal(r.conflicts.length, 1, `${name}: the same shift must be seen as a clash`);
+      assert.equal(created.length, 0, `${name}: nothing may be posted over it`);
+    } finally { restore(); }
+  }
+});
+
+test('guard 2: a time this code cannot read counts as a clash, not as clear', async () => {
+  // If we cannot understand an existing timesheet's hours, the one thing we must not do is post more
+  // hours over them. Unreadable fails CLOSED.
+  for (const bad of [{ startTime: 'not-a-date', endTime: 'also-not' }, { startTime: null, endTime: null }, { startTime: '/Date(1758610800000)/', endTime: '/Date(1758639600000)/' }]) {
+    const { created } = stub({ lines: [line()], timesheets: [sheet({ id: 85, ...bad })] });
+    try {
+      const r = await push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });
+      assert.equal(created.length, 0, `unreadable ${bad.startTime} must block, not wave through`);
+      assert.equal(r.conflicts.length, 1);
+    } finally { restore(); }
+  }
+});
+
+test('guard 2: normalising does not invent clashes between genuinely separate shifts', async () => {
+  // The fix must not over-fire: a real split shift, and a different day, must still post.
+  const { created } = stub({
+    lines: [line({ startLocal: '13:00', endLocal: '17:00' })],
+    timesheets: [
+      sheet({ id: 86, startTime: '2026-09-23T07:00:00+10:00', endTime: '2026-09-23T11:00:00+10:00' }),
+      sheet({ id: 87, startTime: '2026-09-22 13:00:00', endTime: '2026-09-22 17:00:00' }),
+    ],
+  });
+  try {
+    const r = await push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });
+    assert.equal(r.conflicts.length, 0);
+    assert.equal(created.length, 1);
+  } finally { restore(); }
 });
 
 // ================================================================ GUARD 3: idempotency ===========
@@ -540,4 +592,35 @@ test('dateRange covers both ends and survives a single day', () => {
   assert.deepEqual(ts.dateRange('2026-09-23', '2026-09-23'), ['2026-09-23']);
   assert.deepEqual(ts.dateRange('2026-09-23'), ['2026-09-23']);
   assert.deepEqual(ts.dateRange('2026-09-25', '2026-09-23'), ['2026-09-25'], 'a reversed range must not silently pull a month');
+});
+
+// ============================================ the pay-run list is re-read before writing ========
+test('guard 1: push() re-reads the pay runs instead of trusting the preview\'s cached copy', async () => {
+  // preview() reads pay runs through a five-minute cache with no invalidation anywhere in the repo, and
+  // the Post button sits on the preview page — so the ordinary two-click flow decided against the
+  // snapshot taken when the screen rendered. A payroll officer finalising the run in that window was
+  // invisible to the guard. The CLI never had this; it uses the uncached call.
+  //
+  // The cache closes over a module-local allPages, so only global.fetch reaches it — the real cache is
+  // under test here, not a stub of it.
+  const realFetch = global.fetch;
+  let runs = [{ id: 1, isFinalised: false, payPeriodStarting: '2026-09-21', payPeriodEnding: '2026-09-27', datePaid: null }];
+  const { created } = stub({ lines: [line()] });
+  eh.payRunsCached = realPayRunsCached;          // the genuine cached reader
+  eh.clearCache();
+  global.fetch = async (url) => {
+    const skip = Number(new URL(url).searchParams.get('$skip') || 0);
+    return { ok: true, status: 200, text: async () => JSON.stringify(skip === 0 ? runs : []) };
+  };
+  try {
+    const pv = await push.preview({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });
+    assert.equal(pv.blocked, false, 'the run is still open when the screen renders');
+
+    // The payroll officer finalises it. No clock is advanced: this is inside the cache window.
+    runs = [{ id: 1, isFinalised: true, payPeriodStarting: '2026-09-21', payPeriodEnding: '2026-09-27', datePaid: '2026-09-29' }];
+
+    await assert.rejects(push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' }), /finalised pay run/,
+      'the write path must see the finalisation, not the snapshot from when the page loaded');
+    assert.equal(created.length, 0, 'nothing may reach payroll');
+  } finally { global.fetch = realFetch; eh.clearCache(); restore(); }
 });

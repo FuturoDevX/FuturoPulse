@@ -31,7 +31,42 @@ const EH_LOCATION = [
   { match: /cobbitty/i, ehName: "Futuro Cobbitty" },
 ];
 
-const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && bStart < aEnd;
+// COMPARING TWO TIMES THAT CAME FROM DIFFERENT SYSTEMS.
+//
+// This was a raw string comparison between our own naive Sydney-local `YYYY-MM-DDTHH:MM:SS` and
+// whatever string Employment Hero happens to put in startTime. That is correct for exactly one wire
+// format and silently wrong for others: an existing timesheet expressed in UTC (`2026-09-22T21:00:00Z`
+// — the same instant as 07:00 Sydney) or with a space instead of the T sorts differently as text, the
+// overlap is not seen, and the line is posted on top of it. No warning: the screen shows no conflict.
+// Both were demonstrated against the real preview() with only the format varied.
+//
+// So both sides are normalised to the same naive Sydney-local string before they are compared. And
+// anything that cannot be read is treated as a CLASH, never as "no conflict" — if we cannot understand
+// an existing timesheet's hours, the one thing we must not do is post more hours over them.
+const SYD_DATE = new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Sydney", year: "numeric", month: "2-digit", day: "2-digit" });
+const SYD_TIME = new Intl.DateTimeFormat("en-GB", { timeZone: "Australia/Sydney", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+function sydneyLocal(v) {
+  const s = String(v == null ? "" : v).trim();
+  if (!s) return null;
+  // Carries a zone (Z or ±HH:MM): it names an instant, so convert that instant into Sydney local.
+  if (/(?:[Zz]|[+-]\d{2}:?\d{2})$/.test(s)) {
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    return `${SYD_DATE.format(d)}T${SYD_TIME.format(d)}`;
+  }
+  // Naive: already Sydney local. Accept "T" or a space, optional seconds, optional fraction.
+  const m = s.replace(" ", "T").match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  return m ? `${m[1]}T${m[2]}:${m[3]}:${m[4] || "00"}` : null;
+}
+
+// True when the two spans overlap, AND true when either span cannot be read — failing closed.
+function overlaps(aStart, aEnd, bStart, bEnd) {
+  const a1 = sydneyLocal(aStart), a2 = sydneyLocal(aEnd);
+  const b1 = sydneyLocal(bStart), b2 = sydneyLocal(bEnd);
+  if (!a1 || !a2 || !b1 || !b2) return true;   // unreadable: treat as a clash and let a human look
+  return a1 < b2 && b1 < a2;
+}
 const centreRow = (ownaId) => db.prepare("SELECT owna_id, name FROM centres WHERE owna_id = ?").get(ownaId);
 
 // A pay run whose period covers `date` and is finalised means those hours are already paid.
@@ -127,6 +162,15 @@ const bodyFor = (line) => ts.timesheetBody(line);
 // Posts the lines preview() produced. Re-previews first so a stale screen cannot post something the
 // guards would now refuse.
 async function push({ ownaId, from, to, byUser }) {
+  // Re-read the pay runs from Employment Hero before writing anything.
+  //
+  // preview() reads them through payRunsCached(), a five-minute TTL with no invalidation anywhere in
+  // the repo. The Post button sits on the preview page, so the ordinary two-click flow always decided
+  // against the snapshot taken when the screen rendered: a pay run finalised in that window was
+  // invisible to the guard, and the comment below claiming the re-preview makes a stale screen safe
+  // was false for exactly the guard that matters most. The CLI never had this — it uses the uncached
+  // eh.payRuns() (scripts/eh-timesheet-post.js). One extra read on a payroll write is worth it.
+  eh.clearCache();
   const pv = await preview({ ownaId, from, to });
   if (pv.blocked) throw new Error(pv.blockedReason);
   if (!pv.lines.length) return { ...pv, created: [], failed: [], verified: 0 };
@@ -187,4 +231,4 @@ function history(ownaId, limit = 20) {
   } catch { return []; }
 }
 
-module.exports = { preview, push, undo, history, finalisedRunCovering, EH_LOCATION };
+module.exports = { preview, push, undo, history, finalisedRunCovering, overlaps, sydneyLocal, EH_LOCATION };
