@@ -120,17 +120,9 @@ async function preview({ ownaId, from, to }) {
   };
 }
 
-function bodyFor(line) {
-  return {
-    employeeId: line.employeeId,
-    startTime: line.startLocalISO,
-    endTime: line.endLocalISO,
-    locationId: line.locationId,
-    externalId: line.dedupeKey,
-    comments: "Imported from OWNA clock-in/out",
-    status: "Submitted", // draft — a director approves it in EH
-  };
-}
+// One definition, shared with the dry-run CLI, in services/eh-timesheet.js. See the note there about
+// which field name KeyPay actually uses for the idempotency key — it is not yet confirmed.
+const bodyFor = (line) => ts.timesheetBody(line);
 
 // Posts the lines preview() produced. Re-previews first so a stale screen cannot post something the
 // guards would now refuse.

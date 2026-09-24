@@ -263,6 +263,26 @@ test('guard 5: no source file anywhere posts an Approved status', () => {
   }
 });
 
+test('guard 5: the dry run prints exactly what gets posted', async () => {
+  // The dry-run payload is the artefact a human signs off before this runs against real payroll. It used
+  // to be a separate object from the one actually sent, and the two had already drifted on both fields
+  // that matter: the idempotency key's name, and the status. Reviewing one and shipping the other is how
+  // an unnoticed field name becomes a duplicate in somebody's pay.
+  const l = { ...line(), locationId: 11, locationName: 'Austral' };
+  const { created } = stub({ lines: [l] });
+  try {
+    await push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });
+    const posted = created[0];
+    const shown = ts.toPayload(l);
+    for (const k of ['employeeId', 'startTime', 'endTime', 'locationId', 'externalId', 'comments', 'status']) {
+      assert.deepEqual(shown[k], posted[k], `the dry run and the post disagree about "${k}"`);
+    }
+    assert.equal(posted.status, 'Submitted');
+    assert.ok('externalId' in posted, 'the idempotency key must be on the posted body');
+    assert.ok(!('externalReference' in posted), 'and under one name only');
+  } finally { restore(); }
+});
+
 // ================================================================ location mapping ===============
 test('a centre with no mapped EH location posts nothing', async () => {
   // Gledswood Hills is "Futuro GWH" in EH. If the location cannot be resolved, a line with no
@@ -365,6 +385,70 @@ test('an unknown centre and missing credentials both refuse before any EH call',
     await assert.rejects(push.preview({ ownaId: 'nope', from: '2026-09-23' }), /Unknown centre/);
     eh.hasCreds = () => false;
     await assert.rejects(push.preview({ ownaId: 'c-austral', from: '2026-09-23' }), /credentials are not configured/);
+  } finally { restore(); }
+});
+
+// ============================================ the list BOTH guards read ==========================
+// Guards 2 and 3 are only as good as eh.timesheetsBetween. If it returns fewer existing timesheets than
+// exist, both of them under-detect, and both fail in the direction that posts a duplicate into payroll.
+// It was the only EH list fetched in a single unchecked call ($top 2000, no pagination, no truncation
+// check) while every other list in the file walked its pages and threw on a short read.
+const realFetch = global.fetch;
+
+test('the existing-timesheet list is paginated, not one hopeful call', async () => {
+  const asked = [];
+  const all = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, employeeId: 501 }));
+  global.fetch = async (url) => {
+    const u = new URL(url);
+    const skip = Number(u.searchParams.get('$skip') || 0);
+    const top = Number(u.searchParams.get('$top') || 0);
+    asked.push({ skip, top, filter: u.searchParams.get('$filter') });
+    return { ok: true, status: 200, text: async () => JSON.stringify(all.slice(skip, skip + top)) };
+  };
+  try {
+    const got = await eh.timesheetsBetween('2026-09-21', '2026-09-27');
+    assert.equal(got.length, 250, 'every page, not just the first');
+    assert.ok(asked.length >= 3, 'it walked the pages: ' + asked.length + ' calls');
+    assert.ok(asked.every((a) => a.filter && a.filter.includes('2026-09-21')), 'the date filter travels with every page');
+  } finally { global.fetch = realFetch; }
+});
+
+test('a caller cannot widen $top and quietly turn pagination back off', async () => {
+  const seen = [];
+  global.fetch = async (url) => {
+    const u = new URL(url);
+    seen.push(Number(u.searchParams.get('$top')));
+    return { ok: true, status: 200, text: async () => JSON.stringify([]) };
+  };
+  try {
+    await eh.timesheetsBetween('2026-09-21', '2026-09-27');
+    assert.deepEqual([...new Set(seen)], [100], 'the page size is the module\'s, not the caller\'s');
+  } finally { global.fetch = realFetch; }
+});
+
+test('a truncated or repeated page is an error, never a short list', async () => {
+  // The whole point. A server that repeats a page would otherwise hand the guards a list that looks
+  // complete, and the duplicate it causes lands in somebody's pay.
+  const page = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, employeeId: 501 }));
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify(page) });
+  try {
+    await assert.rejects(eh.timesheetsBetween('2026-09-21', '2026-09-27'), /pagination was incomplete or repeated/);
+  } finally { global.fetch = realFetch; }
+
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => JSON.stringify([{ employeeId: 501 }]) });
+  try {
+    await assert.rejects(eh.timesheetsBetween('2026-09-21', '2026-09-27'), /pagination was incomplete or repeated/,
+      'a row with no id cannot be deduplicated, so it cannot be trusted');
+  } finally { global.fetch = realFetch; }
+});
+
+test('a failed read of that list stops the push rather than posting into the dark', async () => {
+  // If we cannot see what already exists, we cannot know whether we are about to duplicate it.
+  const { created } = stub({ lines: [line()] });
+  eh.timesheetsBetween = async () => { throw new Error('EH 500 /timesheet'); };
+  try {
+    await assert.rejects(push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' }), /EH 500/);
+    assert.equal(created.length, 0, 'no line may be posted when the conflict check could not run');
   } finally { restore(); }
 });
 

@@ -103,21 +103,38 @@ function dedupeKey(staffId, span) {
   return `owna:${staffId}:${Math.floor(new Date(span.in).getTime() / 1000)}`;
 }
 
-// The EXACT body we would POST to EH. Field names marked (confirm) are validated against the live
-// KeyPay API at go-live; the shape mirrors a KeyPay timesheet line. No break is included by design.
+// THE body posted to Employment Hero. One definition: services/timesheet-push.js posts this, and the
+// dry-run CLI prints it, so the artefact a human signs off before go-live is the thing that will
+// actually be sent. They were two separate objects and they had already drifted — the poster sent
+// `externalId` while the dry run showed `externalReference`, and the poster's status was "Submitted"
+// while the dry run showed the prose "Submitted (draft — awaiting approval)". Reviewing the second and
+// shipping the first is how an unnoticed field name becomes a duplicate in somebody's pay.
+//
+// UNCONFIRMED, and it must be confirmed before this runs against real payroll: whether KeyPay's
+// idempotency field on a timesheet line is `externalId` (posted here) or `externalReference`. If it is
+// the latter, nothing is stored against the line, the "already posted" check matches nothing, and every
+// re-run posts the same shift again. One real GET of an existing timesheet settles it.
+function timesheetBody(line) {
+  return {
+    employeeId: line.employeeId,                 // EH numeric id (resolved from the employee's externalId)
+    startTime: line.startLocalISO,               // actual clock-in, Australia/Sydney
+    endTime: line.endLocalISO,                   // actual clock-out
+    locationId: line.locationId,
+    externalId: line.dedupeKey,                  // (confirm) idempotency guard against double-posting
+    comments: "Imported from OWNA clock-in/out",
+    status: "Submitted",                         // draft — a director approves it. NEVER "Approved".
+  };
+}
+
+// What the dry run prints: the real body, plus the context a reviewer needs to read it.
 function toPayload(line) {
   return {
     endpoint: `POST /api/v2/business/${BID}/timesheet`,
-    employeeId: line.employeeId,                 // EH numeric id (resolved from externalId)
-    startTime: line.startLocalISO,               // actual clock-in, Australia/Sydney
-    endTime: line.endLocalISO,                   // actual clock-out
+    ...timesheetBody(line),
     unitType: "Hours",
     // location/workType: EH applies its award rules (incl. breaks) from these + the employee's setup.
-    locationName: line.locationName,             // (confirm) → map centre to EH locationId at go-live
-    externalReference: line.dedupeKey,           // (confirm) idempotency guard against double-posting
-    comments: "Imported from OWNA clock-in/out",
-    // status intent: create as DRAFT/Submitted for a centre director to APPROVE — never straight to a pay run.
-    status: "Submitted (draft — awaiting approval)",
+    locationName: line.locationName,
+    _note: "status Submitted = draft awaiting a director's approval; no break is deducted here (EH applies award rules)",
   };
 }
 
@@ -192,4 +209,4 @@ function dateRange(from, to) {
   return out.length ? out : [from];
 }
 
-module.exports = { buildTimesheets, pairSpans, toPayload, dedupeKey, staffAll, dateRange, localTime, localDate, TZ, MIN_SHIFT_MINUTES, MAX_SHIFT_HOURS };
+module.exports = { buildTimesheets, pairSpans, toPayload, timesheetBody, dedupeKey, staffAll, dateRange, localTime, localDate, TZ, MIN_SHIFT_MINUTES, MAX_SHIFT_HOURS };

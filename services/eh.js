@@ -50,10 +50,13 @@ async function apiGet(path, query) {
 }
 
 // Fetch every page; fail rather than silently accepting a truncated/repeated response.
-async function allPages(path) {
+//
+// `extraQuery` is spread FIRST so a caller can add a $filter without being able to overwrite the
+// pagination parameters: a caller that could set its own $top is a caller that can silently truncate.
+async function allPages(path, extraQuery) {
   const out = [], seen = new Set();
   for (let skip = 0; skip < 100000; ) {
-    const page = await apiGet(path, { "$orderby": "id asc", "$top": 100, "$skip": skip });
+    const page = await apiGet(path, { ...extraQuery, "$orderby": "id asc", "$top": 100, "$skip": skip });
     if (!Array.isArray(page)) throw new Error("EH returned an invalid list.");
     if (!page.length) return out;
     for (const row of page) {
@@ -105,9 +108,18 @@ const eh = {
 
   // --- Timesheets -------------------------------------------------------
   // The timesheet endpoint IGNORES fromDate/toDate params (they 500). It is OData-only.
-  timesheetsBetween: (fromDate, toDate) => apiGet("/timesheet", {
+  // Paginated, like every other list here — NOT a single $top:2000 call.
+  //
+  // This one list is what BOTH payroll guards read: the overlap check that stops an educator being paid
+  // twice, and the idempotency check that stops a re-run posting the same shift again. A short page
+  // makes both of them see fewer existing timesheets than exist, so both under-detect, and both fail in
+  // the direction that posts duplicates. It was the only EH list fetched in one unchecked call, with a
+  // $top of 2000 and nothing to notice if the server returned fewer.
+  //
+  // allPages walks every page and throws if one comes back repeated or missing an id, so a truncated
+  // read is an error on the screen instead of a duplicate in somebody's pay.
+  timesheetsBetween: (fromDate, toDate) => allPages("/timesheet", {
     "$filter": `startTime ge datetime'${fromDate}T00:00:00' and startTime lt datetime'${toDate}T23:59:59'`,
-    "$top": 2000,
   }),
   // Creates one timesheet line. Post status "Submitted" (draft, awaiting a director's approval).
   // NEVER post "Approved" — that puts hours straight into a pay run with no human check.
