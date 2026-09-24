@@ -94,6 +94,55 @@ function finalisedRunCovering(runs, date) {
   });
 }
 
+// ===== ONE PAYROLL WRITE AT A TIME =====
+//
+// Every guard here decides by READING Employment Hero and then acting on what it read. Two pushes
+// running at once both read before either writes: both see no existing timesheet, both see no
+// already-posted key, and both post. It is the one failure no amount of guard logic can catch from the
+// inside, and it needs nothing exotic to happen — two directors pressing Post in the same minute, or
+// one person double-clicking through a slow response.
+//
+// The lock lives in the database, not in this process. A module-level flag would protect one Node
+// process and silently protect nothing the day this runs on two instances — failing in exactly the way
+// it exists to prevent, with nothing on any screen to say so. SQLite serialises writers, so the
+// transaction below is atomic however many processes share the file.
+//
+// It is group-wide rather than per-centre. Serialising a few presses a week costs nothing, and per
+// centre would still let an educator who works at two centres be posted twice at once.
+const LOCK_STALE_MS = 15 * 60 * 1000;   // a push takes seconds; 15 minutes means the process died
+
+const acquireLock = db.transaction((info) => {
+  const held = db.prepare("SELECT * FROM timesheet_push_lock WHERE id = 1").get();
+  if (held) {
+    const age = Date.now() - Date.parse(String(held.acquired_at).replace(" ", "T") + "Z");
+    // A live holder: refuse. A stale one: the process that held it is gone, so take it over and say so.
+    if (Number.isFinite(age) && age < LOCK_STALE_MS) return { ok: false, held, ageMs: age };
+  }
+  db.prepare(`INSERT INTO timesheet_push_lock (id, acquired_at, action, owna_id, centre_name, user_email)
+              VALUES (1, datetime('now'), @action, @owna_id, @centre_name, @user_email)
+              ON CONFLICT(id) DO UPDATE SET acquired_at = datetime('now'), action = @action,
+                owna_id = @owna_id, centre_name = @centre_name, user_email = @user_email`).run(info);
+  return { ok: true, tookOverStale: !!held };
+});
+
+const releaseLock = () => { try { db.prepare("DELETE FROM timesheet_push_lock WHERE id = 1").run(); } catch { /* releasing must never mask the real error */ } };
+
+function lockBusyMessage(held, ageMs) {
+  const mins = Math.max(1, Math.round(ageMs / 60000));
+  const who = held.user_email ? ` by ${held.user_email}` : "";
+  const where = held.centre_name ? ` for ${held.centre_name}` : "";
+  return `A timesheet ${held.action || "push"}${where} is already running${who}, started ${mins} minute${mins === 1 ? "" : "s"} ago. ` +
+    `Only one runs at a time, so two cannot post the same hours twice. Wait for it to finish, then reload.`;
+}
+
+// Runs fn holding the lock, and always gives it back — including when fn throws.
+async function withLock(info, fn) {
+  const got = acquireLock(info);
+  if (!got.ok) { const e = new Error(lockBusyMessage(got.held, got.ageMs)); e.busy = true; throw e; }
+  try { return await fn({ tookOverStale: got.tookOverStale }); }
+  finally { releaseLock(); }
+}
+
 // Everything the screen needs, and nothing written anywhere.
 async function preview({ ownaId, from, to }) {
   const centre = centreRow(ownaId);
@@ -162,6 +211,12 @@ const bodyFor = (line) => ts.timesheetBody(line);
 // Posts the lines preview() produced. Re-previews first so a stale screen cannot post something the
 // guards would now refuse.
 async function push({ ownaId, from, to, byUser }) {
+  return withLock(
+    { action: "push", owna_id: ownaId, centre_name: (centreRow(ownaId) || {}).name || null, user_email: (byUser && byUser.email) || null },
+    () => pushLocked({ ownaId, from, to, byUser }));
+}
+
+async function pushLocked({ ownaId, from, to, byUser }) {
   // Re-read the pay runs from Employment Hero before writing anything.
   //
   // preview() reads them through payRunsCached(), a five-minute TTL with no invalidation anywhere in
@@ -198,6 +253,12 @@ async function push({ ownaId, from, to, byUser }) {
 
 // Deletes only what this tool created in the range.
 async function undo({ ownaId, from, to, byUser }) {
+  return withLock(
+    { action: "undo", owna_id: ownaId, centre_name: (centreRow(ownaId) || {}).name || null, user_email: (byUser && byUser.email) || null },
+    () => undoLocked({ ownaId, from, to, byUser }));
+}
+
+async function undoLocked({ ownaId, from, to, byUser }) {
   const centre = centreRow(ownaId);
   if (!centre) throw new Error("Unknown centre.");
   const existing = await eh.timesheetsBetween(from, to || from);
@@ -231,4 +292,4 @@ function history(ownaId, limit = 20) {
   } catch { return []; }
 }
 
-module.exports = { preview, push, undo, history, finalisedRunCovering, overlaps, sydneyLocal, EH_LOCATION };
+module.exports = { preview, push, undo, history, finalisedRunCovering, overlaps, sydneyLocal, releaseLock, LOCK_STALE_MS, EH_LOCATION };

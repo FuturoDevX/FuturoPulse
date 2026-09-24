@@ -72,6 +72,9 @@ router.post("/:ownaId/push", requireAdminOrOps, guardCentre, async (req, res) =>
     return backTo(res, ownaId, from, to, out.failed.length ? "err" : "msg",
       bits.join(" · ") + ". They need a director's approval in Employment Hero before they can be paid.");
   } catch (e) {
+    // A busy lock is not a failure and its message already explains itself — do not bury it behind a
+    // prefix or clip it. Nothing was posted either way.
+    if (e && e.busy) return backTo(res, ownaId, from, to, "err", String(e.message));
     return backTo(res, ownaId, from, to, "err", "Nothing was posted: " + String(e.message || e).slice(0, 250));
   }
 });
@@ -87,6 +90,7 @@ router.post("/:ownaId/undo", requireAdminOrOps, guardCentre, async (req, res) =>
       `Removed ${out.deleted.length} of ${out.found} timesheet(s) this tool had created.` +
       (out.failed.length ? ` ${out.failed.length} could not be removed — check Employment Hero.` : ""));
   } catch (e) {
+    if (e && e.busy) return backTo(res, ownaId, from, to, "err", String(e.message));
     return backTo(res, ownaId, from, to, "err", "Could not undo: " + String(e.message || e).slice(0, 250));
   }
 });

@@ -761,6 +761,29 @@ CREATE INDEX IF NOT EXISTS idx_survey_deliveries_round ON survey_deliveries(roun
 -- An audit row per press of the "Push timesheets" button. Payroll writes must be attributable.
 -- Deliberately holds NO staff names: the EH timesheet is the record of whose hours were posted;
 -- this table answers who pressed the button, for which centre and dates, and what came back.
+-- Only one timesheet push or undo at a time, across the whole group.
+--
+-- Every guard in services/timesheet-push.js decides by reading Employment Hero and then acting on what
+-- it read. Two pushes running at once both read before either writes, so both see no conflict and both
+-- post: the one case no amount of guard logic can catch from the inside. Two directors pressing Post in
+-- the same minute is all it takes, and the button is on every centre's page.
+--
+-- In the DATABASE rather than in the process, deliberately. A module-level flag protects one Node
+-- process and silently protects nothing the day this runs on two instances — and it would fail exactly
+-- the way it was meant to prevent, with no sign on any screen. SQLite serialises writers, so a
+-- transaction here is atomic however many processes share the file.
+--
+-- One row, id always 1. Held for the length of a push; a row older than the stale window means a process
+-- died mid-push and the next caller may take it over (and is told that it did).
+CREATE TABLE IF NOT EXISTS timesheet_push_lock (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  acquired_at  TEXT NOT NULL,          -- UTC, datetime('now')
+  action       TEXT,                   -- 'push' | 'undo'
+  owna_id      TEXT,
+  centre_name  TEXT,
+  user_email   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS timesheet_push_log (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   owna_id         TEXT NOT NULL,

@@ -624,3 +624,114 @@ test('guard 1: push() re-reads the pay runs instead of trusting the preview\'s c
     assert.equal(created.length, 0, 'nothing may reach payroll');
   } finally { global.fetch = realFetch; eh.clearCache(); restore(); }
 });
+
+// ============================================ one payroll write at a time ========================
+// Every guard here decides by READING Employment Hero and then acting on what it read. Two pushes at
+// once both read before either writes, so both see no conflict and both post — the one failure no
+// guard can catch from the inside. Two directors pressing Post in the same minute is all it takes.
+
+test('a second push while one is running is refused, and posts nothing', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  // Only the FIRST post parks. If the lock were absent the second push would reach here too, and if it
+  // parked as well the assertion below could never return — the test would hang the file instead of
+  // reporting a failure, which is no use to whoever breaks this next.
+  let posts = 0;
+  const { created } = stub({
+    lines: [line()],
+    onCreate: async (body) => { posts += 1; if (posts === 1) await held; return { id: 9100 + posts, status: body.status }; },
+  });
+  let first;
+  try {
+    first = push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23', byUser: { id: 1, email: 'a@futuro.test' } });
+    await new Promise((r) => setImmediate(r));   // let the first acquire the lock and reach the post
+
+    const second = push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23', byUser: { id: 2, email: 'b@futuro.test' } });
+    await assert.rejects(second, (e) => {
+      assert.equal(e.busy, true, 'the caller must be able to tell "busy" from "broken"');
+      assert.match(e.message, /already running/);
+      assert.match(e.message, /a@futuro.test/, 'it names who holds it');
+      return true;
+    });
+
+    release();
+    const out = await first;
+    assert.equal(out.created.length, 1, 'the first push still completes normally');
+    assert.equal(created.length, 1, 'and exactly one line reached payroll, not two');
+  } finally {
+    // Release before anything else: if the assertion above fails, the in-flight push is still parked on
+    // this promise, and leaving it parked hangs the whole file instead of reporting one failed test.
+    release();
+    if (first) await first.catch(() => {});
+    restore(); push.releaseLock();
+  }
+});
+
+test('the lock is given back after a push that throws', async () => {
+  const { created } = stub({ lines: [line()], onCreate: () => { throw new Error('EH 500'); } });
+  try {
+    await push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });  // failures are collected, not thrown
+    // and the next caller is not locked out
+    const again = await push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });
+    assert.ok(again, 'a finished push must never leave the lock held');
+  } finally { restore(); push.releaseLock(); }
+
+  // A push that throws outright (blocked range) must also release it.
+  stub({ payRuns: [{ id: 1, isFinalised: true, payPeriodStarting: '2026-09-21', payPeriodEnding: '2026-09-27', datePaid: '2026-09-29' }], lines: [line()] });
+  try {
+    await assert.rejects(push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' }), /finalised pay run/);
+    const row = db.prepare('SELECT * FROM timesheet_push_lock WHERE id = 1').get();
+    assert.equal(row, undefined, 'the lock must not survive a thrown push');
+  } finally { restore(); push.releaseLock(); }
+});
+
+test('undo takes the same lock as push', async () => {
+  const { deleted } = stub({ lines: [line({ employeeId: 501 })], timesheets: [sheet({ id: 96, employeeId: 501, externalId: 'owna:1:1758610800' })] });
+  try {
+    // A push already in flight, simulated by the row another process would have left.
+    db.prepare(`INSERT INTO timesheet_push_lock (id, acquired_at, action, owna_id, centre_name, user_email)
+                VALUES (1, datetime('now'), 'push', 'c-austral', 'Austral', 'someone@futuro.test')`).run();
+    await assert.rejects(push.undo({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' }), (e) => {
+      assert.equal(e.busy, true);
+      return true;
+    });
+    assert.deepEqual(deleted, [], 'undo must not run underneath a push');
+  } finally { restore(); push.releaseLock(); }
+});
+
+test('a lock left behind by a dead process is taken over, not waited on for ever', async () => {
+  // The holder crashed mid-push. Without a takeover the button is dead until someone finds the row.
+  const { created } = stub({ lines: [line()] });
+  try {
+    const stale = new Date(Date.now() - push.LOCK_STALE_MS - 60000).toISOString().replace('T', ' ').slice(0, 19);
+    db.prepare(`INSERT INTO timesheet_push_lock (id, acquired_at, action, owna_id, centre_name, user_email)
+                VALUES (1, ?, 'push', 'c-austral', 'Austral', 'gone@futuro.test')`).run(stale);
+    const out = await push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' });
+    assert.equal(out.created.length, 1, 'a stale lock must not block payroll for ever');
+    assert.equal(created.length, 1);
+  } finally { restore(); push.releaseLock(); }
+});
+
+test('a lock held by a LIVE process is not taken over', async () => {
+  const { created } = stub({ lines: [line()] });
+  try {
+    const fresh = new Date(Date.now() - 60000).toISOString().replace('T', ' ').slice(0, 19);  // a minute old
+    db.prepare(`INSERT INTO timesheet_push_lock (id, acquired_at, action, owna_id, centre_name, user_email)
+                VALUES (1, ?, 'push', 'c-austral', 'Austral', 'busy@futuro.test')`).run(fresh);
+    await assert.rejects(push.push({ ownaId: 'c-austral', from: '2026-09-23', to: '2026-09-23' }), /already running/);
+    assert.equal(created.length, 0);
+  } finally { restore(); push.releaseLock(); }
+});
+
+test('the lock is one row, whatever centre it is for', async () => {
+  // Group-wide on purpose: an educator who works at two centres could otherwise be posted twice at once.
+  const { created } = stub({ lines: [line()] });
+  try {
+    db.prepare(`INSERT INTO timesheet_push_lock (id, acquired_at, action, owna_id, centre_name, user_email)
+                VALUES (1, datetime('now'), 'push', 'c-austral', 'Austral', 'a@futuro.test')`).run();
+    await assert.rejects(push.push({ ownaId: 'c-gwh', from: '2026-09-23', to: '2026-09-23' }), /already running/,
+      'a push at another centre must still wait');
+    assert.equal(created.length, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM timesheet_push_lock').get().n, 1);
+  } finally { restore(); push.releaseLock(); }
+});
