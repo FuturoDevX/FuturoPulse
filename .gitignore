@@ -7,3 +7,7 @@ data/
 *.db-shm
 .pathcheck
 backups/
+
+# Local Claude Code settings — launch configs and per-machine preferences.
+# Nothing the app needs to run lives here.
+.claude/
